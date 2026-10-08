@@ -9,6 +9,7 @@ using System.Drawing.Imaging;
 public static class TorrentUI {
  public delegate bool Callback(IntPtr w,IntPtr context);
  [DllImport("user32.dll")] public static extern bool EnumWindows(Callback cb,IntPtr context);
+ [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr w);
  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr w,out uint pid);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr w,StringBuilder text,int size);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr w,StringBuilder text,int size);
@@ -20,7 +21,7 @@ public static class TorrentUI {
  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr w,IntPtr dc,uint flags);
  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr w,out Rect r);
  public struct Rect {public int left,top,right,bottom;}
- public static IntPtr Find(int process,string cls){IntPtr result=IntPtr.Zero;EnumWindows((w,c)=>{uint id;GetWindowThreadProcessId(w,out id);var text=new StringBuilder(256);GetClassName(w,text,256);if(id==process&&text.ToString()==cls)result=w;return true;},IntPtr.Zero);return result;}
+ public static IntPtr Find(int process,string cls){IntPtr result=IntPtr.Zero;EnumWindows((w,c)=>{uint id;GetWindowThreadProcessId(w,out id);var text=new StringBuilder(256);GetClassName(w,text,256);if(id==process&&text.ToString()==cls&&IsWindowVisible(w))result=w;return true;},IntPtr.Zero);return result;}
  public static string Caption(IntPtr w){var text=new StringBuilder(256);GetWindowText(w,text,256);return text.ToString();}
  public static void Click(IntPtr w,int x,int y){double scale=GetDpiForWindow(w)/96.0;PostMessage(w,0x202,IntPtr.Zero,new IntPtr(((int)(y*scale)<<16)|(int)(x*scale)));}
  public static void Save(IntPtr w,string path){Rect r;GetClientRect(w,out r);using(var bitmap=new Bitmap(r.right,r.bottom)){using(var g=Graphics.FromImage(bitmap)){var dc=g.GetHdc();bool ok=PrintWindow(w,dc,3);g.ReleaseHdc(dc);if(!ok)throw new Exception("Capture failed");}bitmap.Save(path,ImageFormat.Png);}}
@@ -43,10 +44,10 @@ function Choose-Second([IntPtr]$Window,[int]$Y) {
 try {
  $main=Wait-Window 'TorrentMain';$settings=Wait-Window 'TorrentDialog'
  $download=Join-Path $folder 'selected-downloads'
- [TorrentUI]::SetWindowText([TorrentUI]::GetDlgItem($settings,10),$download) | Out-Null
+ if(-not [TorrentUI]::SetWindowText([TorrentUI]::GetDlgItem($settings,10),$download)){throw "Download folder edit was not ready"}
  Start-Sleep -Milliseconds 100
  $preferences=Join-Path $folder 'ui-test-data/settings.txt'
- if((Get-Content -LiteralPath $preferences)[0] -ne $download){throw 'Folder did not apply immediately'}
+ if((Get-Content -LiteralPath $preferences)[0] -ne $download){throw ('Folder did not apply immediately: '+(Get-Content -LiteralPath $preferences -Raw)+'; expected '+$download)}
  [TorrentUI]::SetWindowText([TorrentUI]::GetDlgItem($settings,10),'relative-path') | Out-Null
  if((Get-Content -LiteralPath $preferences)[0] -ne $download){throw 'Invalid folder overwrote the valid setting'}
  [TorrentUI]::SetWindowText([TorrentUI]::GetDlgItem($settings,10),$download) | Out-Null
