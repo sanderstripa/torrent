@@ -20,7 +20,7 @@ Engine::Engine(std::filesystem::path directory):session(settings()),root(std::mo
  std::filesystem::create_directories(root);
  std::ifstream order(root/L"queue.txt"); std::string id; std::vector<std::string> ids; while(std::getline(order,id)) ids.push_back(id);
  for(auto const& entry:std::filesystem::directory_iterator(root)) if(entry.path().extension()==L".resume") { auto name=entry.path().stem().string(); if(std::find(ids.begin(),ids.end(),name)==ids.end()) ids.push_back(name); }
- for(auto const& name:ids) try { std::ifstream f(root/(name+".resume"),std::ios::binary); if(!f) continue; std::vector<char> bytes((std::istreambuf_iterator<char>(f)),{}); auto p=lt::read_resume_data(bytes); auto h=session.add_torrent(p); Item i{h,key(h)}; std::ifstream state(root/(i.key+".state")); state>>i.stopped>>i.selectPending; items.push_back(i); } catch(std::exception const& e) { errors.push_back(e.what()); }
+ for(auto const& name:ids) try { std::ifstream f(root/(name+".resume"),std::ios::binary); if(!f) continue; std::vector<char> bytes((std::istreambuf_iterator<char>(f)),{}); auto p=lt::read_resume_data(bytes); auto h=session.add_torrent(p); Item i{h,name}; std::ifstream state(root/(i.key+".state")); state>>i.stopped>>i.selectPending; items.push_back(i); } catch(std::exception const& e) { errors.push_back(e.what()); }
 }
 lt::torrent_handle Engine::add(std::string const& source,std::string const& destination,bool select) {
  lt::add_torrent_params p;
@@ -36,10 +36,13 @@ void Engine::save() { persistOrder(); if(outstanding==0) for(auto const& i:items
 void Engine::tick() {
  std::vector<lt::alert*> alerts; session.pop_alerts(&alerts);
  for(auto a:alerts) {
-  if(auto r=lt::alert_cast<lt::save_resume_data_alert>(a)) { --outstanding; auto id=key(r->handle); if(std::any_of(items.begin(),items.end(),[&](auto const& i){return i.key==id;})) try { atomicWrite(root/(id+".resume"),lt::write_resume_data_buf(r->params)); } catch(std::exception const& e) {errors.push_back(e.what());} }
+  if(auto r=lt::alert_cast<lt::save_resume_data_alert>(a)) { --outstanding; auto item=std::find_if(items.begin(),items.end(),[&](auto const& i){return i.handle==r->handle;}); if(item!=items.end()) try { atomicWrite(root/(item->key+".resume"),lt::write_resume_data_buf(r->params)); } catch(std::exception const& e) {errors.push_back(e.what());} }
   else if(auto r=lt::alert_cast<lt::save_resume_data_failed_alert>(a)) { --outstanding; errors.push_back(r->message()); }
   else if(auto r=lt::alert_cast<lt::torrent_error_alert>(a)) errors.push_back(r->message());
  }
 }
-void Engine::remove(lt::torrent_handle h) { auto id=key(h); session.remove_torrent(h); std::erase_if(items,[&](auto const& i){return i.handle==h;}); std::filesystem::remove(root/(id+".resume")); std::filesystem::remove(root/(id+".state")); persistOrder(); }
-void Engine::shutdown() { while(outstanding>0) { session.wait_for_alert(std::chrono::milliseconds(100)); tick(); } save(); while(outstanding>0) { session.wait_for_alert(std::chrono::milliseconds(100)); tick(); } }
+void Engine::remove(lt::torrent_handle h) { auto item=std::find_if(items.begin(),items.end(),[&](auto const& i){return i.handle==h;}); if(item==items.end())return; auto id=item->key; session.remove_torrent(h); std::erase_if(items,[&](auto const& i){return i.handle==h;}); std::filesystem::remove(root/(id+".resume")); std::filesystem::remove(root/(id+".state")); persistOrder(); }
+void Engine::shutdown() {
+ auto drain=[&] {auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(20);while(outstanding>0) {session.wait_for_alert(std::chrono::milliseconds(100));tick();if(std::chrono::steady_clock::now()>deadline)throw std::runtime_error("Resume save timed out; previous saved state is preserved");}};
+ drain();save();drain();
+}

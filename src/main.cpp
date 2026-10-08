@@ -30,6 +30,14 @@ static std::wstring textOf(HWND c) {int n=GetWindowTextLengthW(c); std::wstring 
 static void combo(HWND c,std::initializer_list<std::wstring> values,int selected) {for(auto const& v:values) SendMessageW(c,CB_ADDSTRING,0,LPARAM(v.c_str())); SendMessageW(c,CB_SETCURSEL,selected,0);}
 static bool browse(HWND owner,std::wstring& folder) {ComPtr<IFileDialog> d; if(FAILED(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&d)))) return false; d->SetOptions(FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM); if(FAILED(d->Show(owner))) return false; ComPtr<IShellItem> item; d->GetResult(&item); PWSTR p=nullptr; if(FAILED(item->GetDisplayName(SIGDN_FILESYSPATH,&p))) return false; folder=p; CoTaskMemFree(p); return true;}
 struct Dialog {int kind; bool done=false,accepted=false; lt::torrent_handle handle; std::wstring result; HWND window=nullptr,list=nullptr; std::vector<int> priorities;};
+static void fillFiles(Dialog& d) {
+ auto ti=d.handle.torrent_file();if(!ti)return; auto ps=d.handle.get_file_priorities();
+ for(int i=0;i<ti->num_files();++i) {auto index=lt::file_index_t(i);int p=i<int(ps.size())?static_cast<std::uint8_t>(ps[i]):4;
+  bool pending=std::any_of(engine->items.begin(),engine->items.end(),[&](auto const& item){return item.handle==d.handle&&item.selectPending;});if(pending&&p==0)p=4;
+  d.priorities.push_back(p);auto name=wide(ti->files().file_path(index));LVITEMW row{};row.mask=LVIF_TEXT;row.iItem=i;row.pszText=name.data();ListView_InsertItem(d.list,&row);
+  auto size=sizeText(ti->files().file_size(index));ListView_SetItemText(d.list,i,1,size.data());std::wstring priority=p==0?tr(L"Не скачивать",L"Skip"):p<=1?tr(L"Низкий",L"Low"):p>=7?tr(L"Высокий",L"High"):tr(L"Обычный",L"Normal");ListView_SetItemText(d.list,i,2,priority.data());ListView_SetCheckState(d.list,i,p!=0);
+ }
+}
 static LRESULT CALLBACK dialogProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
  auto d=reinterpret_cast<Dialog*>(GetWindowLongPtrW(w,GWLP_USERDATA));
  if(m==WM_NCCREATE) {d=static_cast<Dialog*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams); SetWindowLongPtrW(w,GWLP_USERDATA,LONG_PTR(d)); d->window=w;}
@@ -48,11 +56,12 @@ static LRESULT CALLBACK dialogProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
    d->list=control(w,WC_LISTVIEWW,L"",LVS_REPORT|LVS_SINGLESEL|WS_BORDER,20,50,640,300,20); ListView_SetExtendedListViewStyle(d->list,LVS_EX_CHECKBOXES|LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
    int widths[]={390,100,145}; std::wstring labels[]={tr(L"Имя файла",L"File"),tr(L"Размер",L"Size"),tr(L"Приоритет",L"Priority")};
    for(int c=0;c<3;++c) {LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH; col.pszText=labels[c].data(); col.cx=widths[c]; ListView_InsertColumn(d->list,c,&col);}
-   if(ti) {auto ps=d->handle.get_file_priorities(); for(int i=0;i<ti->num_files();++i) {auto index=lt::file_index_t(i); int p=i<int(ps.size())?static_cast<std::uint8_t>(ps[i]):4; d->priorities.push_back(p); auto name=wide(ti->files().file_path(index)); LVITEMW row{}; row.mask=LVIF_TEXT; row.iItem=i; row.pszText=name.data(); ListView_InsertItem(d->list,&row); auto size=sizeText(ti->files().file_size(index)); ListView_SetItemText(d->list,i,1,size.data()); std::wstring priority=p==0?tr(L"Не скачивать",L"Skip"):p<=1?tr(L"Низкий",L"Low"):p>=7?tr(L"Высокий",L"High"):tr(L"Обычный",L"Normal"); ListView_SetItemText(d->list,i,2,priority.data()); ListView_SetCheckState(d->list,i,p!=0);}}
+   fillFiles(*d);
    control(w,L"STATIC",tr(L"Приоритет выбранного файла",L"Selected file priority"),0,20,370,300,24,0); combo(control(w,L"COMBOBOX",L"",CBS_DROPDOWNLIST,340,366,185,180,21),{tr(L"Низкий",L"Low"),tr(L"Обычный",L"Normal"),tr(L"Высокий",L"High")},1); control(w,L"BUTTON",tr(L"Задать",L"Set"),0,540,366,120,28,22);
   }
   int y=d->kind==2?420:d->kind==1?228:102; int width=d->kind==2?660:450;
-  control(w,L"BUTTON",tr(L"Отмена",L"Cancel"),0,width-230,y,110,32,2); control(w,L"BUTTON",tr(L"Применить",L"Apply"),BS_DEFPUSHBUTTON,width-110,y,110,32,1); return 0;
+  control(w,L"BUTTON",tr(L"Отмена",L"Cancel"),0,width-230,y,110,32,2); control(w,L"BUTTON",tr(L"Применить",L"Apply"),BS_DEFPUSHBUTTON,width-110,y,110,32,1);
+  if(d->kind==2&&!d->handle.torrent_file()){EnableWindow(GetDlgItem(w,1),FALSE);SetTimer(w,2,500,nullptr);}return 0;
  }
  if(m==WM_COMMAND) {
   int id=LOWORD(wp);
@@ -61,10 +70,11 @@ static LRESULT CALLBACK dialogProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
   if(id==1) {
    if(d->kind==0) d->result=textOf(GetDlgItem(w,10));
    if(d->kind==1) {auto folder=textOf(GetDlgItem(w,10)); if(folder.empty()||!std::filesystem::path(folder).is_absolute()) {MessageBoxW(w,tr(L"Укажите полный путь к папке",L"Choose an absolute folder path").c_str(),L"Torrent",MB_OK); return 0;} prefs.folder=folder; prefs.action=int(SendDlgItemMessageW(w,12,CB_GETCURSEL,0,0)); prefs.dark=int(SendDlgItemMessageW(w,13,CB_GETCURSEL,0,0)); prefs.english=int(SendDlgItemMessageW(w,14,CB_GETCURSEL,0,0)); savePrefs();}
-   if(d->kind==2) {std::vector<lt::download_priority_t> p; for(int i=0;i<int(d->priorities.size());++i) p.push_back(lt::download_priority_t(ListView_GetCheckState(d->list,i)?(d->priorities[i]?d->priorities[i]:4):0)); d->handle.prioritize_files(p); for(auto& item:engine->items) if(item.handle==d->handle&&item.selectPending) {item.selectPending=false; item.handle.set_flags(lt::torrent_flags::auto_managed); item.handle.resume();} engine->save();}
+   if(d->kind==2) {std::vector<lt::download_priority_t> p; for(int i=0;i<int(d->priorities.size());++i) p.push_back(lt::download_priority_t(static_cast<std::uint8_t>(ListView_GetCheckState(d->list,i)?(d->priorities[i]?d->priorities[i]:4):0))); d->handle.prioritize_files(p); for(auto& item:engine->items) if(item.handle==d->handle&&item.selectPending) {item.selectPending=false; item.handle.unset_flags(lt::torrent_flags::default_dont_download);item.handle.set_flags(lt::torrent_flags::auto_managed); item.handle.resume();} engine->save();}
    d->accepted=true; DestroyWindow(w);
   } else if(id==2) DestroyWindow(w); return 0;
  }
+ if(m==WM_TIMER&&d->kind==2&&d->handle.torrent_file()){fillFiles(*d);EnableWindow(GetDlgItem(w,1),TRUE);KillTimer(w,2);return 0;}
  if(m==WM_CLOSE) {DestroyWindow(w);return 0;} if(m==WM_DESTROY) {d->done=true; return 0;} return DefWindowProcW(w,m,wp,lp);
 }
 static bool dialog(Dialog& d) {EnableWindow(mainWindow,FALSE); int width=d.kind==2?700:490,height=d.kind==2?510:d.kind==1?310:185; RECT r; GetWindowRect(mainWindow,&r); HWND w=CreateWindowExW(WS_EX_DLGMODALFRAME,L"TorrentDialog",d.kind==2?tr(L"Файлы торрента",L"Torrent files").c_str():d.kind==1?tr(L"Настройки",L"Settings").c_str():L"Magnet",WS_CAPTION|WS_SYSMENU,r.left+40,r.top+50,width,height,mainWindow,nullptr,instance,&d); ShowWindow(w,SW_SHOW); MSG m; while(!d.done&&GetMessageW(&m,nullptr,0,0)>0) {if(!IsDialogMessageW(w,&m)) {TranslateMessage(&m); DispatchMessageW(&m);}} EnableWindow(mainWindow,TRUE); SetForegroundWindow(mainWindow); InvalidateRect(mainWindow,nullptr,FALSE); return d.accepted;}
@@ -110,7 +120,7 @@ static LRESULT CALLBACK windowProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
  case WM_CLOSE:if(!closing){closing=true;KillTimer(w,1);EnableWindow(w,FALSE);engine->shutdown();DestroyWindow(w);}return 0;
  case WM_DESTROY:PostQuitMessage(0);return 0;
  }
- } catch(std::exception const& e) {error(e.what());}
+ } catch(std::exception const& e) {if(m==WM_CLOSE){closing=false;EnableWindow(w,TRUE);SetTimer(w,1,1000,nullptr);}error(e.what());}
  return DefWindowProcW(w,m,wp,lp);
 }
 int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR,int show) {

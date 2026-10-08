@@ -13,7 +13,7 @@ BrandingText " "
 ShowInstDetails nevershow
 ShowUninstDetails nevershow
 Page custom Welcome
-Page instfiles Progress
+Page instfiles "" Progress
 Page custom Finished FinishLeave
 UninstPage instfiles
 Var Dialog
@@ -28,6 +28,7 @@ Function .onInit
  File /oname=$PLUGINSDIR\app.ico "..\assets\app.ico"
 FunctionEnd
 Function Header
+ System::Call 'user32::SetWindowPos(p $Dialog, p 0, i 18, i 20, i 500, i 570, i 0x14)'
  GetDlgItem $0 $HWNDPARENT 1
  ShowWindow $0 ${SW_HIDE}
  GetDlgItem $0 $HWNDPARENT 2
@@ -38,6 +39,9 @@ Function Header
  ${NSD_CreateIcon} 103u 8u 96u 96u ""
  Pop $0
  ${NSD_SetIcon} $0 "$PLUGINSDIR\app.ico" $IconHandle
+FunctionEnd
+Function .onGUIInit
+ System::Call 'user32::SetWindowPos(p $HWNDPARENT, p 0, i 0, i 0, i 540, i 640, i 0x16)'
 FunctionEnd
 Function Welcome
  nsDialogs::Create 1018
@@ -70,14 +74,21 @@ Function Progress
  GetDlgItem $0 $HWNDPARENT 1016
  ShowWindow $0 ${SW_HIDE}
  FindWindow $Dialog "#32770" "" $HWNDPARENT
+ System::Call 'user32::SetWindowPos(p $Dialog, p 0, i 18, i 20, i 500, i 570, i 0x14)'
+ System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i 0x50000003, i 162, i 32, i 160, i 160, p $Dialog, p 0, p 0, p 0) p .r0'
+ System::Call 'user32::LoadImageW(p 0, w "$PLUGINSDIR\app.ico", i 1, i 160, i 160, i 0x10) p .r1'
+ SendMessage $0 ${STM_SETIMAGE} 1 $1
+ System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "Установка", i 0x50000001, i 20, i 230, i 440, i 48, p $Dialog, p 0, p 0, p 0) p .r0'
+ SendMessage $0 ${WM_SETFONT} $Font 1
+ System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "Копирование файлов…", i 0x50000001, i 20, i 290, i 440, i 32, p $Dialog, p 0, p 0, p 0) p .r0'
+ GetDlgItem $0 $Dialog 1004
+ System::Call 'user32::SetWindowPos(p r0, p 0, i 42, i 352, i 400, i 16, i 0x14)'
  GetDlgItem $0 $Dialog 1016
  ShowWindow $0 ${SW_HIDE}
  GetDlgItem $0 $Dialog 1006
  ShowWindow $0 ${SW_HIDE}
  GetDlgItem $0 $Dialog 1027
  ShowWindow $0 ${SW_HIDE}
- GetDlgItem $0 $Dialog 1004
- SendMessage $0 ${WM_SETTEXT} 0 "STR:Установка — копирование файлов…"
 FunctionEnd
 Function Finished
  nsDialogs::Create 1018
