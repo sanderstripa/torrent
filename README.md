@@ -7,7 +7,7 @@
 <p align="center">A lightweight, native BitTorrent client for Windows 11.</p>
 
 <p align="center">
-  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.1.0">Download v0.1.0</a>
+  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.1.1">Download v0.1.1</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/sanderstripa/torrent/actions/workflows/windows.yml">Windows builds</a>
   &nbsp;·&nbsp;
@@ -25,11 +25,11 @@ Torrent keeps the interface focused on your downloads: a name, size, status, pro
 
 ## Download
 
-**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.1.0/Torrent-Setup.exe)**
+**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.1.1/Torrent-Setup.exe)**
 
-Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.1.0/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
+Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.1.1/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
 
-| v0.1.0 package | Size |
+| v0.1.1 package | Size |
 |---|---:|
 | Installer | 2.8 MB |
 | Application, dependency licenses and uninstaller | About 9.7 MB |
@@ -37,6 +37,21 @@ Prefer to run the application without installing it? Download [Torrent-Windows-x
 The installer works for the current user without administrator privileges. It registers `.torrent` and magnet handlers with Windows. Select Torrent in Windows **Default apps** or **Open with** to make it your preferred handler.
 
 Version **0.1.0 is a public preview**. The installer currently uses Russian text; the client offers Russian and English in Settings.
+
+## Interface
+
+Version 0.1.1 redraws the client, file selection, settings and three setup screens to follow the product concepts. The torrent engine and product icon are unchanged.
+
+![Torrent client](docs/screenshots/main.png)
+
+<p align="center">
+  <img src="docs/screenshots/setup-welcome.png" width="240" alt="Install Torrent" />
+  <img src="docs/screenshots/setup-finish.png" width="240" alt="Installation complete" />
+</p>
+
+[File selection](docs/screenshots/files.png) · [Settings](docs/screenshots/settings.png) · [Installation progress](docs/screenshots/setup-progress.png)
+
+These images are captured from the compiled Windows UI with isolated sample data, rather than concept illustrations or live downloads.
 
 ## Features
 
@@ -91,13 +106,16 @@ To package the installer, copy the dependency `copyright` files from `build/vcpk
 Push-Location installer
 makensis /WX /INPUTCHARSET UTF8 Torrent.nsi
 Pop-Location
+cmake -S . -B build
+cmake --build build --config Release --target TorrentSetup --parallel 2
+Copy-Item build/Release/Torrent-Setup.exe dist/Torrent-Setup.exe
 ```
 
-The installer installs to `%LOCALAPPDATA%\Programs\Torrent`. Its three screens are Install, progress without a destination path, and Done with an optional launch checkbox and one Done button.
+The installer installs to `%LOCALAPPDATA%\Programs\Torrent`. Its three screens are Install, progress without a destination path, and Done with an optional launch checkbox and one Done button. The native Direct2D setup shell contains an NSIS payload; installation and association registration remain in the NSIS backend. Progress reflects completed installation stages.
 
 ## Validation and current status
 
-The [verified Windows build](https://github.com/sanderstripa/torrent/actions/runs/37806445647) passed compilation, linking, resource validation, torrent-engine integration tests, native-window creation, Direct2D rendering and clean shutdown.
+The [verified Windows build](https://github.com/sanderstripa/torrent/actions/runs/37811843901) passed compilation, linking, resource validation, torrent-engine integration tests, native-window creation, Direct2D rendering and clean shutdown.
 
 The engine tests transfer a known file over localhost using both `.torrent` and magnet, and check metadata retrieval, file priorities, payload selection, pause, stop, persistence and removal. The downloaded binary also passed a local Windows startup, rendering and shutdown check. Installer compilation and its three-screen flow were checked separately without modifying system associations.
 
@@ -105,8 +123,6 @@ For a local smoke check, run `Torrent.exe --smoke-test` from a writable folder. 
 
 Current preview limitations:
 
-- Dark theme applies to the main window; the file and settings dialogs still use native system styling.
-- The icon was redrawn from the reference in SVG and multi-resolution ICO. Exact pixel matching and further visual refinement remain in progress.
 - Installation and default-handler selection in a real user profile still need manual validation.
 - Long-running transfers, internet-tracker compatibility and RAM/CPU usage under load have not yet been measured.
 
