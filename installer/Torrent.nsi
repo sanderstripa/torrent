@@ -3,7 +3,7 @@ Unicode true
 !include "LogicLib.nsh"
 !include "WinMessages.nsh"
 Name "Torrent"
-OutFile "..\dist\Torrent-Setup.exe"
+OutFile "..\dist\Torrent-Payload.exe"
 InstallDir "$LOCALAPPDATA\Programs\Torrent"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma

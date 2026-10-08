@@ -61,6 +61,13 @@ jobs:
           & "${env:ProgramFiles(x86)}/NSIS/makensis.exe" /WX /INPUTCHARSET UTF8 Torrent.nsi
           if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
           Pop-Location
+      - name: Build visual setup shell
+        run: |
+          cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build build --config Release --target TorrentSetup --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "Setup shell build failed" }
+          Copy-Item build/Release/Torrent-Setup.exe dist/Torrent-Setup.exe
+          Remove-Item dist/Torrent-Payload.exe
       - uses: actions/upload-artifact@v4
         with:
           name: Torrent-Windows-x64
