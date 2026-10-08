@@ -2,6 +2,7 @@ Unicode true
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
 !include "WinMessages.nsh"
+!include "FileFunc.nsh"
 Name "Torrent"
 OutFile "..\dist\Torrent-Payload.exe"
 InstallDir "$LOCALAPPDATA\Programs\Torrent"
@@ -22,7 +23,11 @@ Var Launch
 Var IconHandle
 Var Label
 Var Font
+Var ProgressFile
+Var ProgressValue
 Function .onInit
+ ${GetParameters} $0
+ ${GetOptions} $0 "/PROGRESSFILE=" $ProgressFile
  StrCpy $Launch ${BST_CHECKED}
  InitPluginsDir
  File /oname=$PLUGINSDIR\app.ico "..\assets\app.ico"
@@ -119,10 +124,21 @@ Function FinishLeave
   Exec '"$INSTDIR\Torrent.exe"'
  ${EndIf}
 FunctionEnd
+Function ReportProgress
+ ${If} $ProgressFile != ""
+  FileOpen $9 $ProgressFile w
+  FileWrite $9 "$ProgressValue"
+  FileClose $9
+ ${EndIf}
+FunctionEnd
 Section
+ StrCpy $ProgressValue 10
+ Call ReportProgress
  SetDetailsPrint none
  SetOutPath "$INSTDIR"
  File /r "..\dist\app\*.*"
+ StrCpy $ProgressValue 85
+ Call ReportProgress
  WriteUninstaller "$INSTDIR\Uninstall.exe"
  CreateDirectory "$SMPROGRAMS\Torrent"
  CreateShortcut "$SMPROGRAMS\Torrent\Torrent.lnk" "$INSTDIR\Torrent.exe"
@@ -142,6 +158,8 @@ Section
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "UninstallString" '"$INSTDIR\Uninstall.exe"'
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "DisplayIcon" "$INSTDIR\Torrent.exe"
  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+ StrCpy $ProgressValue 100
+ Call ReportProgress
 SectionEnd
 Section "Uninstall"
  DeleteRegKey HKCU "Software\Classes\Torrent.File"
