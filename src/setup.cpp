@@ -21,9 +21,9 @@ static void paint(){PAINTSTRUCT ps;BeginPaint(window,&ps);if(canvas.begin(window
  if(page==2){c.color(0xffffff);c.rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(w/2+89,275),32,32),c.ink.Get());c.color(0x14c66a);c.rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(w/2+89,275),28,28),c.ink.Get());c.line(w/2+75,275,w/2+86,285,0xffffff,4);c.line(w/2+86,285,w/2+105,264,0xffffff,4);}
  c.label(page==0?L"Torrent":page==1?L"Установка":L"Готово",D2D1::RectF(28,331,w-28,385),40,true,0,DWRITE_TEXT_ALIGNMENT_CENTER);
  c.label(page==0?L"Простой торрент-клиент для Windows":page==1?L"Копирование файлов…":L"Приложение успешно установлено",D2D1::RectF(22,390,w-22,430),20,false,c.muted(),DWRITE_TEXT_ALIGNMENT_CENTER);
- if(page==0){c.button(L"Установить   →",D2D1::RectF(64,466,w-64,534),true,hover==1);c.label(L"Отмена",D2D1::RectF(64,549,w-64,585),18,false,c.muted(),DWRITE_TEXT_ALIGNMENT_CENTER);}
+ if(page==0){c.button(L"Установить   →",D2D1::RectF(64,466,w-64,534),true,hover==1,22,16);c.label(L"Отмена",D2D1::RectF(64,549,w-64,585),18,false,c.muted(),DWRITE_TEXT_ALIGNMENT_CENTER);}
  if(page==1){c.box(D2D1::RectF(38,470,w-96,484),0xdce7f5,7);if(progress>0)c.gradient(D2D1::RectF(38,470,38+(w-134)*progress/100.f,484),0x168fff,0x006bfa,7);c.label(std::to_wstring(progress)+L"%",D2D1::RectF(w-82,456,w-30,496),18,false,c.muted());}
- if(page==2){c.check(66,467,launch);c.label(L"Запустить Torrent после установки",D2D1::RectF(96,456,w-24,493),18);c.button(L"Готово",D2D1::RectF(64,518,w-64,586),true,hover==1);}
+ if(page==2){c.check(66,467,launch);c.label(L"Запустить Torrent после установки",D2D1::RectF(96,456,w-24,493),18);c.button(L"Готово",D2D1::RectF(64,518,w-64,586),true,hover==1,22,16);}
  c.end();}EndPaint(window,&ps);}
 static void startInstall(){if(preview){progress=72;page=1;SetTimer(window,1,40,nullptr);SetTimer(window,2,2000,nullptr);return;}
  wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);wchar_t unique[MAX_PATH];GetTempFileNameW(temp,L"Tor",0,unique);temporary=unique;progressPath=temporary;progressPath+=L".progress";
