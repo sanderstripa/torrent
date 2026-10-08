@@ -133,14 +133,14 @@ static void context(int row,POINT p) {std::vector<visual::MenuItem> entries;if(r
 static LRESULT CALLBACK windowProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
  try {
  switch(m) {
- case WM_CREATE: visual::frame(w,prefs.dark!=0);{UINT dpi=GetDpiForWindow(w);HICON small=HICON(LoadImageW(instance,MAKEINTRESOURCEW(1),IMAGE_ICON,GetSystemMetricsForDpi(SM_CXSMICON,dpi),GetSystemMetricsForDpi(SM_CYSMICON,dpi),LR_DEFAULTCOLOR));SendMessageW(w,WM_SETICON,ICON_SMALL,LPARAM(small));}mainWindow=w;SetTimer(w,1,1000,nullptr);DragAcceptFiles(w,TRUE);return 0;
+ case WM_CREATE: visual::frame(w,prefs.dark!=0);{UINT dpi=GetDpiForWindow(w);HICON titleIcon=HICON(LoadImageW(instance,MAKEINTRESOURCEW(1),IMAGE_ICON,GetSystemMetricsForDpi(SM_CXSMICON,dpi),GetSystemMetricsForDpi(SM_CYSMICON,dpi),LR_DEFAULTCOLOR));SendMessageW(w,WM_SETICON,ICON_SMALL,LPARAM(titleIcon));}mainWindow=w;SetTimer(w,1,1000,nullptr);DragAcceptFiles(w,TRUE);return 0;
  case WM_PAINT:paint(w);return 0;
  case WM_APP+1:if(interactionTesting){Dialog d{1};dialog(d);}return 0;
  case WM_APP+2:if(interactionTesting)add((std::filesystem::current_path()/L"pending.torrent").wstring());return 0;
  case WM_ERASEBKGND:return 1;
  case WM_GETMINMAXINFO: {auto info=reinterpret_cast<MINMAXINFO*>(lp);info->ptMinTrackSize={460,320};return 0;}
  case WM_SIZE:InvalidateRect(w,nullptr,FALSE);return 0;
- case WM_DPICHANGED: {auto r=reinterpret_cast<RECT*>(lp);SetWindowPos(w,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);mainCanvas.rt.Reset();mainCanvas.ink.Reset();HICON small=HICON(LoadImageW(instance,MAKEINTRESOURCEW(1),IMAGE_ICON,GetSystemMetricsForDpi(SM_CXSMICON,HIWORD(wp)),GetSystemMetricsForDpi(SM_CYSMICON,HIWORD(wp)),LR_DEFAULTCOLOR));HICON previous=HICON(SendMessageW(w,WM_SETICON,ICON_SMALL,LPARAM(small)));if(previous)DestroyIcon(previous);return 0;}
+ case WM_DPICHANGED: {auto r=reinterpret_cast<RECT*>(lp);SetWindowPos(w,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);mainCanvas.rt.Reset();mainCanvas.ink.Reset();HICON titleIcon=HICON(LoadImageW(instance,MAKEINTRESOURCEW(1),IMAGE_ICON,GetSystemMetricsForDpi(SM_CXSMICON,HIWORD(wp)),GetSystemMetricsForDpi(SM_CYSMICON,HIWORD(wp)),LR_DEFAULTCOLOR));HICON previous=HICON(SendMessageW(w,WM_SETICON,ICON_SMALL,LPARAM(titleIcon)));if(previous)DestroyIcon(previous);return 0;}
  case WM_MOUSEWHEEL: {RECT r;GetClientRect(w,&r);int viewport=int(r.bottom/(GetDpiForWindow(w)/96.f))-86; scroll=std::clamp(scroll-GET_WHEEL_DELTA_WPARAM(wp)/3,0,std::max(0,int(engine->items.size())*136-viewport));InvalidateRect(w,nullptr,FALSE);return 0;}
  case WM_LBUTTONUP: {float scale=GetDpiForWindow(w)/96.f;int x=int(GET_X_LPARAM(lp)/scale),y=int(GET_Y_LPARAM(lp)/scale);RECT r;GetClientRect(w,&r);int width=int(r.right/scale); if(y>=22&&y<=60&&x>=width-60) {Dialog d{1};dialog(d);} else if(y>=22&&y<=60&&x>=width-112) {POINT p;GetCursorPos(&p);context(-1,p);} else {int row=rowAt(y);if(row>=0) {Dialog d{2};d.handle=engine->items[row].handle;dialog(d);}}return 0;}
  case WM_CONTEXTMENU: {POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)},local=p;ScreenToClient(w,&local);context(rowAt(int(local.y/(GetDpiForWindow(w)/96.f))),p);return 0;}
