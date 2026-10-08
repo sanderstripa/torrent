@@ -28,7 +28,7 @@ static bool smokeTesting=false;static bool designPreview=false,interactionTestin
 static void stage(char const* value) {if(smokeTesting)std::ofstream("Torrent-startup-stages.txt",std::ios::app)<<value<<'\n';}
 static std::wstring tr(wchar_t const* ru,wchar_t const* en) {return prefs.english?en:ru;}
 static void error(std::string const& message) {MessageBoxW(mainWindow,wide(message).c_str(),L"Torrent",MB_OK|MB_ICONERROR);}
-static void savePrefs() { std::ofstream f(dataRoot/L"settings.txt",std::ios::binary); f<<utf8(prefs.folder)<<'\n'<<prefs.action<<' '<<prefs.dark<<' '<<prefs.english; }
+static bool savePrefs() {auto temporary=dataRoot/L"settings.tmp";{std::ofstream f(temporary,std::ios::binary|std::ios::trunc);f<<utf8(prefs.folder)<<'\n'<<prefs.action<<' '<<prefs.dark<<' '<<prefs.english;f.flush();if(!f)return false;}return MoveFileExW(temporary.c_str(),(dataRoot/L"settings.txt").c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0; }
 static std::wstring sizeText(std::int64_t size) { wchar_t b[64];double divisor=1024;std::wstring unit=tr(L"КБ",L"KB");if(size>=1024LL*1024*1024){divisor=1024LL*1024*1024;unit=tr(L"ГБ",L"GB");}else if(size>=1024*1024){divisor=1024*1024;unit=tr(L"МБ",L"MB");}swprintf_s(b,L"%.1f",double(size)/divisor);std::wstring value=b;if(!prefs.english)std::replace(value.begin(),value.end(),L'.',L',');return value+L" "+unit; }
 static HWND control(HWND parent,wchar_t const* cls,std::wstring const& text,DWORD style,int x,int y,int w,int h,int id) { HWND c=CreateWindowExW(0,cls,text.c_str(),WS_CHILD|WS_VISIBLE|style,x,y,w,h,parent,HMENU(INT_PTR(id)),instance,nullptr); SendMessageW(c,WM_SETFONT,WPARAM(GetStockObject(DEFAULT_GUI_FONT)),TRUE); return c; }
 static std::wstring textOf(HWND c) {int n=GetWindowTextLengthW(c); std::wstring t(n+1,0); GetWindowTextW(c,t.data(),n+1); t.resize(n); return t;}
@@ -37,7 +37,7 @@ static bool browse(HWND owner,std::wstring& folder) {ComPtr<IFileDialog> d; if(F
 struct Dialog {
  int kind; bool done=false,accepted=false; lt::torrent_handle handle; std::wstring result;
  HWND window=nullptr;std::vector<int> priorities,remembered;std::vector<std::wstring> names,sizes;
- visual::Canvas canvas;int offset=0,hover=-1,focused=1;Preferences draft;HFONT font=nullptr;HBRUSH background=nullptr;bool fixture=false,folderValid=true;
+ visual::Canvas canvas;int offset=0,hover=-1,focused=1;Preferences draft;HFONT font=nullptr;HBRUSH background=nullptr;bool fixture=false,folderValid=true,saveFailed=false;
 };
 static void fillFiles(Dialog& d) {
  auto ti=d.handle.torrent_file();if(!ti)return;auto ps=d.handle.get_file_priorities();
@@ -64,6 +64,7 @@ static void drawDialog(HWND w,Dialog& d){PAINTSTRUCT ps;BeginPaint(w,&ps);auto& 
  c.label(tr(L"Папка загрузок",L"Download folder"),D2D1::RectF(24,67,width-24,95),14,false,c.muted());c.box(D2D1::RectF(24,101,width-78,141),c.card(),7,c.lineColor());c.button(L"…",D2D1::RectF(width-66,101,width-24,141),false,d.hover==11);
  const std::wstring labels[]={tr(L"При добавлении",L"On adding"),tr(L"Тема",L"Theme"),tr(L"Язык",L"Language")};const std::wstring values[]={d.draft.action?tr(L"Выбрать файлы",L"Choose files"):tr(L"Начать загрузку",L"Start download"),d.draft.dark?tr(L"Тёмная",L"Dark"):tr(L"Светлая",L"Light"),d.draft.english?L"English":L"Русский"};
  for(int i=0;i<3;++i){float y=163.f+i*54;c.label(labels[i],D2D1::RectF(24,y,width-250,y+40),15);c.box(D2D1::RectF(width-250,y,width-24,y+40),c.card(),7,c.lineColor());c.label(values[i],D2D1::RectF(width-236,y,width-48,y+40),14);c.chevron(width-44,y+18);}
+ if(d.saveFailed)c.label(tr(L"Не удалось сохранить настройки",L"Could not save settings"),D2D1::RectF(24,312,width-24,333),12,false,0xc95050);
  if(!d.folderValid)c.label(tr(L"Укажите полный путь к папке",L"Enter an absolute folder path"),D2D1::RectF(24,141,width-24,160),12,false,0xc95050);
  }else {c.label(tr(L"Вставьте ссылку",L"Paste a magnet link"),D2D1::RectF(24,62,width-24,94),14,false,c.muted());c.box(D2D1::RectF(24,100,width-24,142),c.card(),7,c.lineColor());}
  if(d.kind!=1){if(GetFocus()==w&&(d.focused==1||d.focused==2)){float x=d.focused==1?width-131:width-243;c.box(D2D1::RectF(x,height-57,x+110,height-15),c.dark?0x233955:0xe5f0ff,11,0x8ebcff);}
@@ -73,7 +74,7 @@ static int dialogHit(Dialog& d,float x,float y){auto& c=d.canvas;if(d.kind!=1&&v
 static void liveSettings(HWND w,Dialog& d){
  auto folder=textOf(GetDlgItem(w,10));d.folderValid=!folder.empty()&&folder.find_first_of(L"\r\n")==std::wstring::npos&&std::filesystem::path(folder).is_absolute();
  if(d.folderValid)d.draft.folder=folder;else d.draft.folder=prefs.folder;
- prefs=d.draft;savePrefs();DeleteObject(d.background);d.background=CreateSolidBrush(prefs.dark?RGB(32,44,62):RGB(255,255,255));visual::frame(mainWindow,prefs.dark!=0);visual::frame(w,prefs.dark!=0,true);SetWindowTextW(w,tr(L"Настройки",L"Settings").c_str());InvalidateRect(GetDlgItem(w,10),nullptr,TRUE);InvalidateRect(w,nullptr,FALSE);InvalidateRect(mainWindow,nullptr,FALSE);
+ prefs=d.draft;d.saveFailed=!savePrefs();DeleteObject(d.background);d.background=CreateSolidBrush(prefs.dark?RGB(32,44,62):RGB(255,255,255));visual::frame(mainWindow,prefs.dark!=0);visual::frame(w,prefs.dark!=0,true);SetWindowTextW(w,tr(L"Настройки",L"Settings").c_str());InvalidateRect(GetDlgItem(w,10),nullptr,TRUE);InvalidateRect(w,nullptr,FALSE);InvalidateRect(mainWindow,nullptr,FALSE);
 }
 static LRESULT CALLBACK editProc(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR){if(m==WM_CONTEXTMENU){HWND owner=GetParent(w);DWORD start=0,end=0;SendMessageW(w,EM_GETSEL,WPARAM(&start),LPARAM(&end));POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};if(point.x==-1&&point.y==-1){RECT r;GetWindowRect(w,&r);point={r.left+12,r.bottom};}int id=visual::menu(owner,point,{{1,tr(L"Вырезать",L"Cut"),false,start!=end},{2,tr(L"Копировать",L"Copy"),false,start!=end},{3,tr(L"Вставить",L"Paste"),false,IsClipboardFormatAvailable(CF_UNICODETEXT)!=0},{4,tr(L"Выделить всё",L"Select all")}},prefs.dark!=0);if(id==1)SendMessageW(w,WM_CUT,0,0);if(id==2)SendMessageW(w,WM_COPY,0,0);if(id==3)SendMessageW(w,WM_PASTE,0,0);if(id==4)SendMessageW(w,EM_SETSEL,0,-1);SetFocus(w);return 0;}return DefSubclassProc(w,m,wp,lp);}
 static void acceptDialog(HWND w,Dialog& d){if(d.kind==1){liveSettings(w,d);return;}
