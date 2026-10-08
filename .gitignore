@@ -2,3 +2,5 @@
 /dist/
 /.vs/
 *.user
+/smoke-data/
+/Torrent-startup-*.txt
