@@ -16,12 +16,14 @@ jobs:
           New-Item "$env:RUNNER_TEMP/vcpkg-cache" -ItemType Directory -Force
           "VCPKG_DEFAULT_BINARY_CACHE=$env:RUNNER_TEMP/vcpkg-cache" >> $env:GITHUB_ENV
       - uses: actions/cache/restore@v4
+        id: dependency-cache
         with:
           path: ${{ runner.temp }}/vcpkg-cache
           key: vcpkg-20250613-x64-static-release-${{ hashFiles('vcpkg.json', 'triplets/*') }}
       - name: Configure
         run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
       - uses: actions/cache/save@v4
+        if: steps.dependency-cache.outputs.cache-hit != 'true'
         with:
           path: ${{ runner.temp }}/vcpkg-cache
           key: vcpkg-20250613-x64-static-release-${{ hashFiles('vcpkg.json', 'triplets/*') }}
