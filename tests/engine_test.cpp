@@ -44,7 +44,7 @@ int main() {
   {Engine e(root/"state");require(e.items.size()==1&&e.items[0].selectPending,"magnet state not restored");e.remove(e.items[0].handle);e.shutdown();}
   {
    Engine e(root/"magnet-state");auto h=e.add(magnet,utf8((root/"magnet-transfer").wstring()),true);h.connect_peer(lt::tcp::endpoint(lt::address_v4::loopback(),seed.listen_port()));waitFor([&]{return bool(h.torrent_file());},"magnet metadata not fetched");require(h.status().total_wanted_done==0,"payload downloaded before file selection");h.prioritize_files({lt::top_priority});h.unset_flags(lt::torrent_flags::default_dont_download);h.resume();waitFor([&]{return h.status().is_seeding;},"magnet transfer did not finish");e.shutdown();
-   std::ifstream file(root/"magnet-transfer"/"sample.bin",std::ios::binary);std::string content((std::istreambuf_iterator<char>(file)),{});require(content==std::string(65536,'T'),"downloaded payload differs from seed");
+   h.flush_cache();waitFor([&]{std::ifstream file(root/"magnet-transfer"/"sample.bin",std::ios::binary);std::string content((std::istreambuf_iterator<char>(file)),{});return content==std::string(65536,'T');},"downloaded payload differs from seed");
   }
   seed.remove_torrent(seedHandle);std::cout<<"torrent, magnet, loopback transfer, priorities, pause, stop, persistence, removal: PASS\nTest data: "<<root<<'\n';return 0;
  } catch(std::exception const& e) {std::cerr<<e.what()<<"\nTest data: "<<root<<'\n';return 1;}
