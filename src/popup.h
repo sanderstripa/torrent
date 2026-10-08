@@ -1,0 +1,23 @@
+#pragma once
+#include "visual.h"
+#include <windowsx.h>
+#include <vector>
+#include <algorithm>
+namespace visual {
+struct MenuItem {int id;std::wstring label;bool checked=false,enabled=true;};
+struct Popup {Canvas canvas;std::vector<MenuItem> items;int hovered=-1,result=0;bool done=false;HWND window=nullptr;};
+inline LRESULT CALLBACK popupProc(HWND w,UINT m,WPARAM wp,LPARAM lp){auto p=reinterpret_cast<Popup*>(GetWindowLongPtrW(w,GWLP_USERDATA));if(m==WM_NCCREATE){p=static_cast<Popup*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);p->window=w;SetWindowLongPtrW(w,GWLP_USERDATA,LONG_PTR(p));}if(!p)return DefWindowProcW(w,m,wp,lp);
+ auto choose=[&]{if(p->hovered>=0&&p->hovered<int(p->items.size())&&p->items[p->hovered].enabled&&p->items[p->hovered].id){p->result=p->items[p->hovered].id;DestroyWindow(w);}};
+ switch(m){case WM_ERASEBKGND:return 1;case WM_NCCALCSIZE:if(wp)return 0;break;case WM_NCACTIVATE:return TRUE;case WM_NCPAINT:return 0;
+ case WM_PAINT:{PAINTSTRUCT ps;BeginPaint(w,&ps);auto& c=p->canvas;if(c.begin(w)){c.box(D2D1::RectF(.5f,.5f,c.width-.5f,c.height-.5f),c.card(),9,c.lineColor());for(int i=0;i<int(p->items.size());++i){auto const& item=p->items[i];float y=6.f+i*34;if(!item.id){c.line(12,y+17,c.width-12,y+17,c.lineColor(),1);continue;}if(i==p->hovered&&item.enabled)c.box(D2D1::RectF(5,y,c.width-5,y+34),c.dark?0x2c3c52:0xf3f4f6,6);if(item.checked){c.line(13,y+17,17,y+21,0x087cff,1.7f);c.line(17,y+21,24,y+13,0x087cff,1.7f);}c.label(item.label,D2D1::RectF(34,y,c.width-12,y+34),14,false,item.enabled?c.fg():c.muted());}c.end();}EndPaint(w,&ps);return 0;}
+ case WM_MOUSEMOVE:{float s=GetDpiForWindow(w)/96.f;float x=GET_X_LPARAM(lp)/s,y=GET_Y_LPARAM(lp)/s;int index=int((y-6)/34);int h=x>=0&&x<p->canvas.width&&y>=6&&index<int(p->items.size())?index:-1;if(h!=p->hovered){p->hovered=h;InvalidateRect(w,nullptr,FALSE);}return 0;}
+ case WM_LBUTTONUP:case WM_RBUTTONUP:{RECT r;GetClientRect(w,&r);POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};if(!PtInRect(&r,point)){DestroyWindow(w);return 0;}int row=int((point.y/(GetDpiForWindow(w)/96.f)-6)/34);p->hovered=row;choose();return 0;}
+ case WM_KEYDOWN:if(wp==VK_ESCAPE){DestroyWindow(w);return 0;}if(wp==VK_RETURN||wp==VK_SPACE){choose();return 0;}if(wp==VK_UP||wp==VK_DOWN){int count=int(p->items.size());for(int i=0;i<count;++i){p->hovered=(p->hovered+(wp==VK_UP?count-1:1)+count)%count;if(p->items[p->hovered].id&&p->items[p->hovered].enabled)break;}InvalidateRect(w,nullptr,FALSE);return 0;}break;
+ case WM_KILLFOCUS:case WM_CANCELMODE:case WM_CLOSE:DestroyWindow(w);return 0;
+ case WM_DESTROY:p->done=true;if(GetCapture()==w)ReleaseCapture();return 0;
+ }return DefWindowProcW(w,m,wp,lp);}
+inline int menu(HWND owner,POINT point,std::vector<MenuItem> items,bool dark=false){Popup p;p.items=std::move(items);p.canvas.dark=dark;for(int i=0;i<int(p.items.size());++i)if(p.items[i].checked)p.hovered=i;
+ HINSTANCE module=GetModuleHandleW(nullptr);WNDCLASSW wc{};wc.hInstance=module;wc.lpfnWndProc=popupProc;wc.lpszClassName=L"TorrentStyledPopup";wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassW(&wc);
+ float scale=GetDpiForWindow(owner)/96.f;int width=int(260*scale),height=int((12+p.items.size()*34)*scale);MONITORINFO monitor{sizeof monitor};GetMonitorInfoW(MonitorFromPoint(point,MONITOR_DEFAULTTONEAREST),&monitor);point.x=std::clamp(point.x,monitor.rcWork.left,std::max(monitor.rcWork.left,monitor.rcWork.right-width));point.y=std::clamp(point.y,monitor.rcWork.top,std::max(monitor.rcWork.top,monitor.rcWork.bottom-height));
+ HWND w=CreateWindowExW(WS_EX_TOOLWINDOW,L"TorrentStyledPopup",L"",WS_POPUP,point.x,point.y,width,height,owner,nullptr,module,&p);if(!w)return 0;frame(w,dark,true);ShowWindow(w,SW_SHOWNOACTIVATE);SetFocus(w);SetCapture(w);UpdateWindow(w);MSG m;while(!p.done&&GetMessageW(&m,nullptr,0,0)>0){TranslateMessage(&m);DispatchMessageW(&m);}SetFocus(owner);return p.result;}
+}

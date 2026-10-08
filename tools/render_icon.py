@@ -47,20 +47,27 @@ def render(n):
         raw.append(0)
         for column in range(n):
             samples=[]
-            for sy,sx in ((.25,.25),(.25,.75),(.75,.25),(.75,.75)):
+            for sy,sx in (((j+.5)/4,(i+.5)/4) for j in range(4) for i in range(4)):
                 x=(column+sx)*256/n; y=(row+sy)*256/n
                 dx=max(66-x,0,x-190);dy=max(66-y,0,y-190)
                 c=(*gradient('tile',x/256,y/256),255) if 12<=x<=244 and 12<=y<=244 and dx*dx+dy*dy<=54**2 else (0,0,0,0)
                 for poly,fill in paths:
                     if inside(poly,x,y): c=(*gradient(fill[5:-1],x/256,y/256),255)
                 samples.append(c)
-            raw.extend(round(sum(c[j] for c in samples)/4) for j in range(4))
+            alpha=sum(c[3] for c in samples)
+            raw.extend(round(sum(c[j]*c[3] for c in samples)/alpha) if alpha else 0 for j in range(3))
+            raw.append(round(alpha/len(samples)))
     return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',n,n,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(raw,9))+chunk(b'IEND',b'')
 sizes=(16,24,32,48,64,128,256)
-images=[render(n) for n in sizes]
+# Keep the approved large artwork byte-for-byte; refine only small title/taskbar frames.
+existing=(ROOT/'assets/app.ico').read_bytes()
+images=[]
+for i,n in enumerate(sizes):
+    length,offset=struct.unpack_from('<II',existing,6+16*i+8)
+    images.append(render(n) if n<=48 else existing[offset:offset+length])
 offset=6+16*len(sizes); entries=[]
 for n,blob in zip(sizes,images):
     entries.append(struct.pack('<BBBBHHII',n if n<256 else 0,n if n<256 else 0,0,0,1,32,len(blob),offset));offset+=len(blob)
 (ROOT/'assets/app.ico').write_bytes(struct.pack('<HHH',0,1,len(images))+b''.join(entries)+b''.join(images))
-(ROOT/'assets/icon-preview.png').write_bytes(images[-1])
+# The approved large PNG is unchanged.
 print('Generated app.ico with',len(images),'sizes')
