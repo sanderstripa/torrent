@@ -1,0 +1,50 @@
+name: Windows build
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get dependency manager
+        run: |
+          git clone --branch 2025.06.13 --depth 1 https://github.com/microsoft/vcpkg.git "$env:RUNNER_TEMP/vcpkg"
+          & "$env:RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+      - name: Configure
+        run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+      - name: Build
+        run: cmake --build build --config Release --parallel 2
+      - name: Test engine
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Test native window
+        shell: pwsh
+        run: |
+          Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class NativeWindow { [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wp, IntPtr lp); }'
+          $process = Start-Process build/Release/Torrent.exe -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 4
+          $process.Refresh()
+          if ($process.HasExited -or $process.MainWindowHandle -eq 0) { throw "Native window failed to start" }
+          [NativeWindow]::PostMessage($process.MainWindowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+          if (-not $process.WaitForExit(30000)) { $process.Kill(); throw "Shutdown timed out" }
+          if ($process.ExitCode -ne 0) { throw "Application exited with error" }
+      - name: Stage and check size
+        shell: pwsh
+        run: |
+          cmake --install build --config Release --prefix dist/app
+          New-Item dist/app/licenses -ItemType Directory -Force
+          Get-ChildItem build/vcpkg_installed/x64-windows-static/share -Filter copyright -Recurse | ForEach-Object { Copy-Item $_.FullName ("dist/app/licenses/" + $_.Directory.Name + ".txt") }
+          $size = (Get-ChildItem dist/app -File -Recurse | Measure-Object Length -Sum).Sum
+          "Installed payload bytes: $size" | Tee-Object -FilePath dist/size.txt
+          if ($size -gt 50MB) { throw "Installed payload exceeds 50 MiB budget" }
+      - name: Build installer
+        run: |
+          choco install nsis --no-progress -y
+          Push-Location installer
+          & "${env:ProgramFiles(x86)}/NSIS/makensis.exe" Torrent.nsi
+          if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
+          Pop-Location
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Torrent-Windows-x64
+          path: dist/
