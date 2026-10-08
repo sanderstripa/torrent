@@ -33,7 +33,9 @@ for node in svg.iter():
     if node.tag.endswith('linearGradient'):
         stops = [(float(s.get('offset','0')), rgb(s.get('stop-color'))) for s in node]
         gradients[node.get('id')] = (float(node.get('x2','1')), float(node.get('y2','0')), stops)
-paths = [(polygon(node.get('d')),node.get('fill')) for node in svg if node.tag.endswith('path') and node.get('fill') != 'none']
+paths = [(polygon(node.get('d')),node.get('fill')) for node in svg.iter() if node.tag.endswith('path') and node.get('fill','').startswith('url(')]
+cutouts=[polygon(node.get('d')) for node in svg.iter() if node.get('data-cutout')=='true']
+vx,vy,vw,vh=map(float,svg.get('viewBox').split())
 def gradient(name,x,y):
     gx,gy,stops=gradients[name]; t=max(0,min(1,(x*gx+y*gy)/(gx*gx+gy*gy)))
     for (a,ca),(b,cb) in zip(stops,stops[1:]):
@@ -48,22 +50,22 @@ def render(n):
         for column in range(n):
             samples=[]
             for sy,sx in (((j+.5)/4,(i+.5)/4) for j in range(4) for i in range(4)):
-                x=(column+sx)*256/n; y=(row+sy)*256/n
-                dx=max(54-x,0,x-202);dy=max(54-y,0,y-202)
-                c=(*gradient('tile',x/256,y/256),255) if dx*dx+dy*dy<=54**2 else (0,0,0,0)
+                x=vx+(column+sx)*vw/n; y=vy+(row+sy)*vh/n
+                c=(0,0,0,0)
                 for poly,fill in paths:
-                    if inside(poly,128+(x-128)/1.2,142.5+(y-128)/1.2): c=(*gradient(fill[5:-1],(128+(x-128)/1.2)/256,(142.5+(y-128)/1.2)/256),255)
+                    if inside(poly,x,y): c=(*gradient(fill[5:-1],x/256,y/256),255)
+                if any(inside(poly,x,y) for poly in cutouts): c=(0,0,0,0)
                 samples.append(c)
             alpha=sum(c[3] for c in samples)
             raw.extend(round(sum(c[j]*c[3] for c in samples)/alpha) if alpha else 0 for j in range(3))
             raw.append(round(alpha/len(samples)))
     return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',n,n,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(raw,9))+chunk(b'IEND',b'')
 sizes=(16,24,32,48,64,128,256)
-# Windows icons maximize the original ribbon within the canvas. Installer artwork stays unchanged.
+# The same tightly framed transparent ribbon is used in every product asset.
 images=[render(n) for n in sizes]
 offset=6+16*len(sizes); entries=[]
 for n,blob in zip(sizes,images):
     entries.append(struct.pack('<BBBBHHII',n if n<256 else 0,n if n<256 else 0,0,0,1,32,len(blob),offset));offset+=len(blob)
 (ROOT/'assets/app.ico').write_bytes(struct.pack('<HHH',0,1,len(images))+b''.join(entries)+b''.join(images))
-# The approved large PNG is unchanged.
+(ROOT/'assets/icon-preview.png').write_bytes(images[-1])
 print('Generated app.ico with',len(images),'sizes')

@@ -7,7 +7,7 @@
 <p align="center">A lightweight, native BitTorrent client for Windows 11.</p>
 
 <p align="center">
-  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.1.3">Download v0.1.3</a>
+  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.1.4">Download v0.1.4</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/sanderstripa/torrent/actions/workflows/windows.yml">Windows builds</a>
   &nbsp;·&nbsp;
@@ -25,26 +25,26 @@ Torrent keeps the interface focused on your downloads: a name, size, status, pro
 
 ## Download
 
-**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.1.3/Torrent-Setup.exe)**
+**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.1.4/Torrent-Setup.exe)**
 
-Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.1.3/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
+Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.1.4/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
 
-| v0.1.3 package | Size |
+| v0.1.4 package | Size |
 |---|---:|
 | Installer | About 3.2 MB |
 | Application, dependency licenses and uninstaller | About 9.7 MB |
 
 The installer works for the current user without administrator privileges. It registers `.torrent` and magnet handlers with Windows. Select Torrent in Windows **Default apps** or **Open with** to make it your preferred handler.
 
-Version **0.1.3 is a public preview**. The installer currently uses Russian text; the client offers Russian and English in Settings.
+Version **0.1.4 is a public preview**. The installer currently uses Russian text; the client offers Russian and English in Settings.
 
 ## Interface
 
-Version 0.1.3 uses an opaque matte-white palette, flat buttons, app-styled context menus and a compact 380 × 460 setup window (before display scaling). Typography uses Segoe UI Variable Text/Display when available, with Segoe UI as the fallback.
+Version 0.1.4 uses an opaque matte-white palette, flat buttons, app-styled context menus and a compact 380 × 460 setup window (before display scaling). Typography uses Segoe UI Variable Text/Display when available, with Segoe UI as the fallback.
 
 Settings apply and save immediately without Apply or Cancel buttons. The language and theme update the open settings window and the client. Incomplete folder input keeps the last valid absolute path. File selection retains its separate Apply/Cancel workflow.
 
-Pending file selection no longer displays an empty selection as 100% complete. The torrent engine and original ribbon artwork are unchanged. Windows icon frames now use more of the canvas at every resolution. Settings remain writable after restarting the application.
+Pending file selection no longer displays an empty selection as 100% complete. The ribbon icon now has a transparent background and transparent central opening, with no white tile or border. The symbol fills the available height across the application, installer and Windows icons. The torrent engine is unchanged. Settings remain writable after restarting the application.
 
 Click a torrent once to select it. Press **Space** to pause or resume, or **Delete** to remove it from the list while keeping downloaded files. Double-click to open its files. The context menu remains available.
 

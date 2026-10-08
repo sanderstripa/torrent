@@ -17,8 +17,15 @@ for i in range(count):
         assert zlib.crc32(name+data)&0xffffffff==struct.unpack_from('>I',blob,pos+8+n)[0]
         if name==b'IDAT': compressed+=data
         pos+=12+n
-    assert len(zlib.decompress(compressed))==(w or 256)*4*(h or 256)+(h or 256)
+    raw=zlib.decompress(compressed);size=w or 256;stride=size*4+1
+    assert len(raw)==stride*(h or 256)
+    assert all(raw[y*stride]==0 for y in range(size))
+    assert raw[4]==0, 'Icon corner must be transparent'
+    assert raw[(size//2)*stride+1+(size//2)*4+3]==0, 'Ribbon opening must be transparent'
+    visible=[(x,y) for y in range(size) for x in range(size) if raw[y*stride+1+x*4+3]>0]
+    assert visible and max(y for x,y in visible)-min(y for x,y in visible)+1>=size-2, 'Ribbon must fill the icon height'
+    assert all(raw[y*stride+1+x*4]<=62 for x,y in visible), 'White framing must be absent'
     assert planes==1 and bpp==32
 for name in ('src/main.cpp','src/engine.cpp','src/engine.h','installer/Torrent.nsi','.github/workflows/windows.yml'):
     assert (root/name).stat().st_size>0
-print('PASS: JSON, XML, 7 ICO frames, PNG CRC/decompression, required sources')
+print('PASS: JSON, XML, 7 ICO frames, PNG CRC/decompression, transparency, tight framing, required sources')
