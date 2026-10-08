@@ -38,6 +38,7 @@ function Wait-Window([string]$Class) {
 function Choose-Second([IntPtr]$Window,[int]$Y) {
  [TorrentUI]::Click($Window,390,$Y)
  $menu=Wait-Window 'TorrentStyledPopup'
+ Start-Sleep -Milliseconds 100
  [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x23,[IntPtr]::Zero) | Out-Null
  [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x0D,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 200
@@ -53,7 +54,7 @@ try {
  if((Get-Content -LiteralPath $preferences)[0] -ne $download){throw 'Invalid folder overwrote the valid setting'}
  [TorrentUI]::SetWindowText([TorrentUI]::GetDlgItem($settings,10),$download) | Out-Null
  Choose-Second $settings 237
- if((Get-Content -LiteralPath $preferences)[1] -ne '0 1 0'){throw 'Theme did not apply immediately'}
+ if((Get-Content -LiteralPath $preferences)[1] -ne '0 1 0'){throw ('Theme did not apply immediately: '+(Get-Content -LiteralPath $preferences -Raw))}
  Choose-Second $settings 291
  if([TorrentUI]::Caption($settings) -ne 'Settings'){throw 'Language did not update the open settings window'}
  Choose-Second $settings 183
@@ -74,6 +75,7 @@ try {
  if([TorrentUI]::Caption($settings) -ne 'Settings'){throw 'Reopened settings lost language'}
  # Switch back to light through the same custom menu, using Up from selected Dark.
  [TorrentUI]::Click($settings,390,237);$menu=Wait-Window 'TorrentStyledPopup'
+ Start-Sleep -Milliseconds 100
  [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x24,[IntPtr]::Zero) | Out-Null
  [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x0D,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 100
