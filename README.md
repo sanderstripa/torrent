@@ -7,7 +7,7 @@
 <p align="center">A lightweight, native BitTorrent client for Windows 11.</p>
 
 <p align="center">
-  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.1.1">Download v0.1.1</a>
+  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.1.2">Download v0.1.2</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/sanderstripa/torrent/actions/workflows/windows.yml">Windows builds</a>
   &nbsp;·&nbsp;
@@ -25,11 +25,11 @@ Torrent keeps the interface focused on your downloads: a name, size, status, pro
 
 ## Download
 
-**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.1.1/Torrent-Setup.exe)**
+**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.1.2/Torrent-Setup.exe)**
 
-Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.1.1/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
+Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.1.2/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
 
-| v0.1.1 package | Size |
+| v0.1.2 package | Size |
 |---|---:|
 | Installer | 2.8 MB |
 | Application, dependency licenses and uninstaller | About 9.7 MB |
@@ -40,7 +40,11 @@ Version **0.1.0 is a public preview**. The installer currently uses Russian text
 
 ## Interface
 
-Version 0.1.1 redraws the client, file selection, settings and three setup screens to follow the product concepts. The torrent engine and product icon are unchanged.
+Version 0.1.2 uses an opaque matte-white palette, flat buttons, app-styled context menus and a compact 380 × 460 setup window (before display scaling). Typography uses Segoe UI Variable Text/Display when available, with Segoe UI as the fallback.
+
+Settings apply and save immediately without Apply or Cancel buttons. The language and theme update the open settings window and the client. Incomplete folder input keeps the last valid absolute path. File selection retains its separate Apply/Cancel workflow.
+
+Pending file selection no longer displays an empty selection as 100% complete. The torrent engine and approved icon artwork are unchanged; small ICO frames have improved alpha handling and antialiasing, and the title-bar icon is loaded for the current DPI.
 
 ![Torrent client](docs/screenshots/main.png)
 
@@ -49,7 +53,7 @@ Version 0.1.1 redraws the client, file selection, settings and three setup scree
   <img src="docs/screenshots/setup-finish.png" width="240" alt="Installation complete" />
 </p>
 
-[File selection](docs/screenshots/files.png) · [Settings](docs/screenshots/settings.png) · [Installation progress](docs/screenshots/setup-progress.png)
+[File selection](docs/screenshots/files.png) · [Settings](docs/screenshots/settings.png) · [Live dark/English settings](docs/screenshots/settings-dark-live.png) · [Styled menu](docs/screenshots/menu-dark.png) · [Pending selection](docs/screenshots/pending-selection.png) · [Installation progress](docs/screenshots/setup-progress.png)
 
 These images are captured from the compiled Windows UI with isolated sample data, rather than concept illustrations or live downloads.
 
@@ -115,7 +119,9 @@ The installer installs to `%LOCALAPPDATA%\Programs\Torrent`. Its three screens a
 
 ## Validation and current status
 
-The [verified Windows build](https://github.com/sanderstripa/torrent/actions/runs/37811843901) passed compilation, linking, resource validation, torrent-engine integration tests, native-window creation, Direct2D rendering and clean shutdown.
+The [verified Windows build](https://github.com/sanderstripa/torrent/actions/runs/37817518949) passed compilation, linking, resource validation, torrent-engine integration tests, native-window creation, Direct2D rendering and clean shutdown.
+
+Additional UI interaction checks change the folder, action, theme and language in the running application; validate incomplete paths; navigate and cancel custom menus; reopen settings to verify persistence; and capture the inactive settings frame and a real torrent awaiting file selection. These checks also passed locally in an isolated profile.
 
 The engine tests transfer a known file over localhost using both `.torrent` and magnet, and check metadata retrieval, file priorities, payload selection, pause, stop, persistence and removal. The downloaded binary also passed a local Windows startup, rendering and shutdown check. Installer compilation and its three-screen flow were checked separately without modifying system associations.
 
