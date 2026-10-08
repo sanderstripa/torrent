@@ -14,7 +14,7 @@ inline LRESULT CALLBACK popupProc(HWND w,UINT m,WPARAM wp,LPARAM lp){auto p=rein
  case WM_LBUTTONUP:case WM_RBUTTONUP:{RECT r;GetClientRect(w,&r);POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};if(!PtInRect(&r,point)){DestroyWindow(w);return 0;}int row=int((point.y/(GetDpiForWindow(w)/96.f)-6)/34);p->hovered=row;choose();return 0;}
  case WM_KEYDOWN:if(wp==VK_ESCAPE){DestroyWindow(w);return 0;}if(wp==VK_RETURN||wp==VK_SPACE){choose();return 0;}if(wp==VK_UP||wp==VK_DOWN){int count=int(p->items.size());for(int i=0;i<count;++i){p->hovered=(p->hovered+(wp==VK_UP?count-1:1)+count)%count;if(p->items[p->hovered].id&&p->items[p->hovered].enabled)break;}InvalidateRect(w,nullptr,FALSE);return 0;}break;
  case WM_KILLFOCUS:case WM_CANCELMODE:case WM_CLOSE:DestroyWindow(w);return 0;
- case WM_DESTROY:p->done=true;if(GetCapture()==w)ReleaseCapture();return 0;
+ case WM_DESTROY:p->done=true;PostMessageW(GetWindow(w,GW_OWNER),WM_NULL,0,0);if(GetCapture()==w)ReleaseCapture();return 0;
  }return DefWindowProcW(w,m,wp,lp);}
 inline int menu(HWND owner,POINT point,std::vector<MenuItem> items,bool dark=false){Popup p;p.items=std::move(items);p.canvas.dark=dark;for(int i=0;i<int(p.items.size());++i)if(p.items[i].checked)p.hovered=i;
  HINSTANCE module=GetModuleHandleW(nullptr);WNDCLASSW wc{};wc.hInstance=module;wc.lpfnWndProc=popupProc;wc.lpszClassName=L"TorrentStyledPopup";wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassW(&wc);
