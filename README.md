@@ -18,7 +18,7 @@
   <a href="https://github.com/sanderstripa/torrent/actions/workflows/windows.yml"><img src="https://github.com/sanderstripa/torrent/actions/workflows/windows.yml/badge.svg" alt="Windows build status"></a>
   <img src="https://img.shields.io/badge/platform-Windows%2011%20x64-0078D4" alt="Windows 11 x64">
   <img src="https://img.shields.io/badge/C%2B%2B-20-00599C" alt="C++20">
-  <img src="https://img.shields.io/badge/status-public%20preview-328CFF" alt="Public preview">
+  <img src="https://img.shields.io/badge/status-release-328CFF" alt="Release">
 </p>
 
 Torrent keeps the interface focused on your downloads: a name, size, status, progress and remaining time. It uses C++20, Win32, Direct2D/DirectWrite and libtorrent, with no Electron, WebView, Qt or advertising.
@@ -36,7 +36,7 @@ Prefer to run the application without installing it? Download [Torrent-Windows-x
 
 The installer works for the current user without administrator privileges. It registers `.torrent` and magnet handlers with Windows. Select Torrent in Windows **Default apps** or **Open with** to make it your preferred handler.
 
-Version **0.1.4 is a public preview**. The installer currently uses Russian text; the client offers Russian and English in Settings.
+Version **0.1.4 is the current release**. The installer currently uses Russian text; the client offers Russian and English in Settings.
 
 ## Interface
 
