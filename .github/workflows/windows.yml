@@ -68,6 +68,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Setup shell build failed" }
           Copy-Item build/Release/Torrent-Setup.exe dist/Torrent-Setup.exe
           Remove-Item dist/Torrent-Payload.exe
+      - name: Capture actual UI screens
+        shell: pwsh
+        run: |
+          New-Item dist/screenshots -ItemType Directory -Force
+          $app = (Resolve-Path build/Release/Torrent.exe).Path
+          $setup = (Resolve-Path dist/Torrent-Setup.exe).Path
+          Push-Location dist/screenshots
+          foreach ($exe in @($app, $setup)) {
+            $process = Start-Process $exe -ArgumentList '--visual-test' -PassThru -WindowStyle Hidden
+            if (-not $process.WaitForExit(30000)) { $process.Kill(); throw "Visual capture timed out" }
+            if ($process.ExitCode -ne 0) { throw "Visual capture failed" }
+          }
+          if ((Get-ChildItem *.png).Count -ne 6) { throw "Missing visual screenshots" }
+          Pop-Location
       - uses: actions/upload-artifact@v4
         with:
           name: Torrent-Windows-x64
