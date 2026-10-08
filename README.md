@@ -55,7 +55,7 @@ Click a torrent once to select it. Press **Space** to pause or resume, or **Dele
   <img src="docs/screenshots/setup-finish.png" width="240" alt="Installation complete" />
 </p>
 
-[File selection](docs/screenshots/files.png) · [Settings](docs/screenshots/settings.png) · [Live dark/English settings](docs/screenshots/settings-dark-live.png) · [Styled menu](docs/screenshots/menu-dark.png) · [Pending selection](docs/screenshots/pending-selection.png) · [Installation progress](docs/screenshots/setup-progress.png)
+[Selected torrent](docs/screenshots/selected-torrent.png) · [Settings after restart](docs/screenshots/settings-after-restart.png) · [File selection](docs/screenshots/files.png) · [Settings](docs/screenshots/settings.png) · [Live dark/English settings](docs/screenshots/settings-dark-live.png) · [Styled menu](docs/screenshots/menu-dark.png) · [Pending selection](docs/screenshots/pending-selection.png) · [Installation progress](docs/screenshots/setup-progress.png)
 
 These images are captured from the compiled Windows UI with isolated sample data, rather than concept illustrations or live downloads.
 
