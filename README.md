@@ -1,36 +1,121 @@
-# Torrent · Windows 11
+<p align="center">
+  <img src="assets/icon-preview.png" width="144" height="144" alt="Torrent product icon">
+</p>
 
-Первая исходная версия нативного клиента: C++20, Win32, Direct2D/DirectWrite, libtorrent. Без Qt, Electron, WebView, рекламы и автозапуска.
+<h1 align="center">Torrent</h1>
 
-## Использование
+<p align="center">A lightweight, native BitTorrent client for Windows 11.</p>
 
-Единственный «+» открывает меню `.torrent` / magnet. Файлы `.torrent` также можно перетащить в окно. Щелчок по карточке открывает файлы с чекбоксами; выделите строку, выберите низкий/обычный/высокий приоритет и нажмите «Задать», затем «Применить». Правый щелчок по карточке: пауза, возобновление, остановка, удаление из списка, изменение места в очереди. Удаление сохраняет скачанные данные. Остановка снимает автоматическое управление и прекращает обмен; возобновление возвращает в очередь. Одновременно активны до двух загрузок и одной раздачи.
+<p align="center">
+  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.1.0">Download v0.1.0</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/sanderstripa/torrent/actions/workflows/windows.yml">Windows builds</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/sanderstripa/torrent/issues">Report an issue</a>
+</p>
 
-Настройки содержат только папку, действие при добавлении, тему, язык. Новая папка применяется к новым торрентам. Состояние и настройки: `%LOCALAPPDATA%\Torrent`. Быстрое возобновление записывается атомарно каждые 30 секунд, после действий и при закрытии. Magnet при выборе файлов получает только метаданные, затем ожидает выбора файлов; окно списка автоматически обновляется после получения метаданных.
+<p align="center">
+  <a href="https://github.com/sanderstripa/torrent/actions/workflows/windows.yml"><img src="https://github.com/sanderstripa/torrent/actions/workflows/windows.yml/badge.svg" alt="Windows build status"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2011%20x64-0078D4" alt="Windows 11 x64">
+  <img src="https://img.shields.io/badge/C%2B%2B-20-00599C" alt="C++20">
+  <img src="https://img.shields.io/badge/status-public%20preview-328CFF" alt="Public preview">
+</p>
 
-## Сборка
+Torrent keeps the interface focused on your downloads: a name, size, status, progress and remaining time. It uses C++20, Win32, Direct2D/DirectWrite and libtorrent, with no Electron, WebView, Qt or advertising.
 
-Нужны Visual Studio 2022 (Desktop development with C++, Windows SDK), CMake 3.24+, Git, vcpkg и NSIS 3. Сборка GitHub Actions автоматически создаёт ZIP артефакт `Torrent-Windows-x64` с программой и `Torrent-Setup.exe`.
+## Download
+
+**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.1.0/Torrent-Setup.exe)**
+
+Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.1.0/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
+
+| v0.1.0 package | Size |
+|---|---:|
+| Installer | 2.8 MB |
+| Application, dependency licenses and uninstaller | About 9.7 MB |
+
+The installer works for the current user without administrator privileges. It registers `.torrent` and magnet handlers with Windows. Select Torrent in Windows **Default apps** or **Open with** to make it your preferred handler.
+
+Version **0.1.0 is a public preview**. The installer currently uses Russian text; the client offers Russian and English in Settings.
+
+## Features
+
+- Open `.torrent` files and magnet links, or drag a `.torrent` file into the window.
+- Pause, resume, stop and remove torrents.
+- Change torrent priority by moving it up or down in the download queue.
+- Select individual files and assign low, normal or high download priorities.
+- Fetch magnet metadata before choosing which files to download.
+- Restore downloads and file selections after restarting the application.
+- Switch between light and dark themes, and Russian and English.
+- Use four settings only: download folder, action on adding, theme and language.
+
+No ads, Windows startup entry or notification system. There is one add button and no seed, peer or speed statistics in the main list.
+
+## Using Torrent
+
+Click **+** to open a torrent file or add a magnet link. Click a torrent card to open its file list. Check the files you want, select a row, choose a priority, click **Set**, then **Apply**.
+
+Right-click a torrent card to pause, resume, stop, remove it from the list or change its queue position. Removing a torrent keeps its downloaded files. Stopping disables automatic management and stops transfers; resuming returns the torrent to the queue.
+
+The default queue allows up to two active downloads and one active seeding torrent. The download-folder setting applies to newly added torrents.
+
+Settings and session data are stored in `%LOCALAPPDATA%\Torrent`. Resume data is saved every 30 seconds, after relevant actions and during shutdown. Choosing files for a magnet link keeps its payload disabled until the selection is applied.
+
+## Build from source
+
+Requirements: Visual Studio 2022 with **Desktop development with C++** and the Windows SDK, CMake 3.24 or newer, Git, Python 3 and NSIS 3 for installer packaging.
 
 ```powershell
+git clone https://github.com/sanderstripa/torrent.git
+cd torrent
 git clone --branch 2025.06.13 --depth 1 https://github.com/microsoft/vcpkg.git work/vcpkg
 ./work/vcpkg/bootstrap-vcpkg.bat -disableMetrics
-cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$PWD/work/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+
+cmake -S . -B build -A x64 `
+  -DCMAKE_TOOLCHAIN_FILE="$PWD/work/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+  -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+  -DVCPKG_OVERLAY_TRIPLETS="$PWD/triplets" `
+  -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+
 cmake --build build --config Release --parallel 2
 ctest --test-dir build -C Release --output-on-failure
 cmake --install build --config Release --prefix dist/app
+python tools/validate_project.py
 ```
 
-Для упаковки скопируйте файлы `copyright` зависимостей из `build/vcpkg_installed/x64-windows-static/share` в `dist/app/licenses` (CI делает это автоматически), затем запустите `makensis Torrent.nsi` из `installer`. Все зависимости линкуются статически. CI проверяет лимит полезной нагрузки 50 МиБ; фактический установленный размер включает также деинсталлятор. Цель 50 МБ и потребление памяти требуют измерения готовой сборки.
+Dependencies are linked statically. The checked-in triplet builds Release dependencies only. The Windows workflow caches dependencies, runs the checks, enforces a 50 MiB application-payload budget and produces the installer and ZIP artifact.
 
-Установщик работает без администратора, устанавливает в `%LOCALAPPDATA%\Programs\Torrent`, регистрирует `.torrent` и magnet через Windows Capabilities и «Открыть с помощью». Windows 11 сохраняет выбор пользователя: назначение программы по умолчанию выполняется в системных настройках приложений. Установщик не переписывает защищённый UserChoice. Три состояния: установка по кнопке, прогресс без пути, «Готово» с запуском и одной кнопкой «Готово».
+To package the installer, copy the dependency `copyright` files from `build/vcpkg_installed/x64-windows-static/share` into `dist/app/licenses`, naming each file after its dependency. The workflow contains the complete packaging procedure. Then run:
 
-## Граница проверки
+```powershell
+Push-Location installer
+makensis /WX /INPUTCHARSET UTF8 Torrent.nsi
+Pop-Location
+```
 
-На исходной машине отсутствуют CMake, MSVC и Windows SDK. Проект реально собран MSVC в [Windows CI](https://github.com/sanderstripa/torrent/actions/runs/37806445647), исходный commit `26526b21df157fe096c3345ed549d26504839b05`. Все этапы прошли: ресурсы, компиляция, передача собственного файла через localhost для `.torrent` и magnet, приоритеты, пауза, остановка, сохранение/восстановление, удаление, создание окна, рисование Direct2D и завершение. Готовый EXE также прошёл локальную проверку создания окна, рисования и сохранения тестового состояния. `--smoke-test` создаёт тестовые данные в `smoke-data` текущей папки, не загружает пользовательскую сессию и завершает клиент после проверки.
+The installer installs to `%LOCALAPPDATA%\Programs\Torrent`. Its three screens are Install, progress without a destination path, and Done with an optional launch checkbox and one Done button.
 
-Полезная нагрузка с лицензиями: 9 609 013 байт. Вместе с извлечённым деинсталлятором: 9 671 096 байт (около 9,7 МБ). Установщик: 2 795 919 байт. Проверены компиляция сценария NSIS без предупреждений, целостность его архива и переходы трёх экранов на безопасном тестовом варианте без изменения системы. Установка и ассоциации в реальном пользовательском профиле ещё не проверялись; RAM/CPU под нагрузкой не измерялись.
+## Validation and current status
 
-Это версия 0.1.0. Основное окно рисуется Direct2D; окна файлов и настроек используют нативные Win32 controls. Тёмная тема применяется к главному окну, вспомогательные окна пока используют системный стиль. Иконка заново построена по референсу как SVG и многоразмерный ICO; точное пиксельное совпадение не заявляется. Для публичного релиза остаются ручная проверка установки/ассоциаций, оформление вспомогательных окон и визуальная шлифовка по референсам.
+The [verified Windows build](https://github.com/sanderstripa/torrent/actions/runs/37806445647) passed compilation, linking, resource validation, torrent-engine integration tests, native-window creation, Direct2D rendering and clean shutdown.
 
-API сохранения и очереди сверены с [документацией libtorrent](https://www.libtorrent.org/reference-Torrent_Handle.html).
+The engine tests transfer a known file over localhost using both `.torrent` and magnet, and check metadata retrieval, file priorities, payload selection, pause, stop, persistence and removal. The downloaded binary also passed a local Windows startup, rendering and shutdown check. Installer compilation and its three-screen flow were checked separately without modifying system associations.
+
+For a local smoke check, run `Torrent.exe --smoke-test` from a writable folder. It uses a separate `smoke-data` folder, creates and renders the window, then exits without loading your normal session.
+
+Current preview limitations:
+
+- Dark theme applies to the main window; the file and settings dialogs still use native system styling.
+- The icon was redrawn from the reference in SVG and multi-resolution ICO. Exact pixel matching and further visual refinement remain in progress.
+- Installation and default-handler selection in a real user profile still need manual validation.
+- Long-running transfers, internet-tracker compatibility and RAM/CPU usage under load have not yet been measured.
+
+## Product icon
+
+The product icon is included as [SVG](assets/icon.svg), [PNG](assets/icon-preview.png) and a [multi-resolution Windows ICO](assets/app.ico). The application and installer share the same icon.
+
+## Issues
+
+[Open an issue](https://github.com/sanderstripa/torrent/issues) with the application version, your Windows version and steps to reproduce the problem. Do not include private magnet links, downloaded content or personal paths unless they are necessary to reproduce the issue.
+
+Torrent uses [libtorrent](https://www.libtorrent.org/). Dependency license notices are included with the Windows packages.
