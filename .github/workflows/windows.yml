@@ -13,8 +13,18 @@ jobs:
         run: |
           git clone --branch 2025.06.13 --depth 1 https://github.com/microsoft/vcpkg.git "$env:RUNNER_TEMP/vcpkg"
           & "$env:RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+          New-Item "$env:RUNNER_TEMP/vcpkg-cache" -ItemType Directory -Force
+          "VCPKG_DEFAULT_BINARY_CACHE=$env:RUNNER_TEMP/vcpkg-cache" >> $env:GITHUB_ENV
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-20250613-x64-static-release-${{ hashFiles('vcpkg.json', 'triplets/*') }}
       - name: Configure
-        run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+        run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+      - uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-20250613-x64-static-release-${{ hashFiles('vcpkg.json', 'triplets/*') }}
       - name: Build
         run: cmake --build build --config Release --parallel 2
       - name: Test engine
@@ -22,12 +32,13 @@ jobs:
       - name: Test native window
         shell: pwsh
         run: |
-          Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class NativeWindow { [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wp, IntPtr lp); }'
+          Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class NativeWindow { [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string className, string title); [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wp, IntPtr lp); }'
           $process = Start-Process build/Release/Torrent.exe -PassThru -WindowStyle Hidden
           Start-Sleep -Seconds 4
           $process.Refresh()
-          if ($process.HasExited -or $process.MainWindowHandle -eq 0) { throw "Native window failed to start" }
-          [NativeWindow]::PostMessage($process.MainWindowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+          $window = [NativeWindow]::FindWindow('TorrentMain', $null)
+          if ($process.HasExited -or $window -eq [IntPtr]::Zero) { throw "Native window failed to start" }
+          [NativeWindow]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
           if (-not $process.WaitForExit(30000)) { $process.Kill(); throw "Shutdown timed out" }
           if ($process.ExitCode -ne 0) { throw "Application exited with error" }
       - name: Stage and check size
@@ -43,7 +54,7 @@ jobs:
         run: |
           choco install nsis --no-progress -y
           Push-Location installer
-          & "${env:ProgramFiles(x86)}/NSIS/makensis.exe" Torrent.nsi
+          & "${env:ProgramFiles(x86)}/NSIS/makensis.exe" /WX /INPUTCHARSET UTF8 Torrent.nsi
           if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
           Pop-Location
       - uses: actions/upload-artifact@v4

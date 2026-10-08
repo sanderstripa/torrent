@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 namespace lt = libtorrent;
-struct Item { lt::torrent_handle handle; std::string key; bool stopped=false; bool selectPending=false; };
+struct Item { lt::torrent_handle handle; std::string key; bool stopped=false; bool selectPending=false; bool selectionShown=false; };
 class Engine {
 public:
  explicit Engine(std::filesystem::path directory);

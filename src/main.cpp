@@ -78,7 +78,7 @@ static LRESULT CALLBACK dialogProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
  if(m==WM_CLOSE) {DestroyWindow(w);return 0;} if(m==WM_DESTROY) {d->done=true; return 0;} return DefWindowProcW(w,m,wp,lp);
 }
 static bool dialog(Dialog& d) {EnableWindow(mainWindow,FALSE); int width=d.kind==2?700:490,height=d.kind==2?510:d.kind==1?310:185; RECT r; GetWindowRect(mainWindow,&r); HWND w=CreateWindowExW(WS_EX_DLGMODALFRAME,L"TorrentDialog",d.kind==2?tr(L"Файлы торрента",L"Torrent files").c_str():d.kind==1?tr(L"Настройки",L"Settings").c_str():L"Magnet",WS_CAPTION|WS_SYSMENU,r.left+40,r.top+50,width,height,mainWindow,nullptr,instance,&d); ShowWindow(w,SW_SHOW); MSG m; while(!d.done&&GetMessageW(&m,nullptr,0,0)>0) {if(!IsDialogMessageW(w,&m)) {TranslateMessage(&m); DispatchMessageW(&m);}} EnableWindow(mainWindow,TRUE); SetForegroundWindow(mainWindow); InvalidateRect(mainWindow,nullptr,FALSE); return d.accepted;}
-static void add(std::wstring const& source) {try {auto h=engine->add(utf8(source),utf8(prefs.folder),prefs.action==1); if(prefs.action==1&&h.torrent_file()) {Dialog d{2};d.handle=h;dialog(d);} InvalidateRect(mainWindow,nullptr,FALSE);} catch(std::exception const& e) {error(e.what());}}
+static void add(std::wstring const& source) {try {auto h=engine->add(utf8(source),utf8(prefs.folder),prefs.action==1); if(prefs.action==1&&h.torrent_file()) {for(auto& item:engine->items)if(item.handle==h)item.selectionShown=true;Dialog d{2};d.handle=h;dialog(d);} InvalidateRect(mainWindow,nullptr,FALSE);} catch(std::exception const& e) {error(e.what());}}
 static void openTorrent() {wchar_t file[32768]{}; OPENFILENAMEW o{}; o.lStructSize=sizeof(o); o.hwndOwner=mainWindow; o.lpstrFilter=L"Torrent\0*.torrent\0"; o.lpstrFile=file; o.nMaxFile=32768; o.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR; if(GetOpenFileNameW(&o)) add(file);}
 static void color(D2D1_COLOR_F c) {brush->SetColor(c);}
 static void text(std::wstring const& s,D2D1_RECT_F r,bool heading=false) {color(prefs.dark?D2D1::ColorF(0xe8edf5):D2D1::ColorF(0x172033)); target->DrawText(s.c_str(),UINT32(s.size()),heading?title.Get():normal.Get(),r,brush.Get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);}
@@ -109,6 +109,7 @@ static LRESULT CALLBACK windowProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
  case WM_CREATE: mainWindow=w;SetTimer(w,1,1000,nullptr);DragAcceptFiles(w,TRUE);return 0;
  case WM_PAINT:paint(w);return 0;
  case WM_ERASEBKGND:return 1;
+ case WM_GETMINMAXINFO: {auto info=reinterpret_cast<MINMAXINFO*>(lp);info->ptMinTrackSize={460,320};return 0;}
  case WM_SIZE:if(target)target->Resize(D2D1::SizeU(LOWORD(lp),HIWORD(lp)));InvalidateRect(w,nullptr,FALSE);return 0;
  case WM_DPICHANGED: {auto r=reinterpret_cast<RECT*>(lp);SetWindowPos(w,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);target.Reset();brush.Reset();return 0;}
  case WM_MOUSEWHEEL: {RECT r;GetClientRect(w,&r);int viewport=int(r.bottom/(GetDpiForWindow(w)/96.f))-90; scroll=std::clamp(scroll-GET_WHEEL_DELTA_WPARAM(wp)/3,0,std::max(0,int(engine->items.size())*112-viewport));InvalidateRect(w,nullptr,FALSE);return 0;}
@@ -116,7 +117,7 @@ static LRESULT CALLBACK windowProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
  case WM_CONTEXTMENU: {POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)},local=p;ScreenToClient(w,&local);context(rowAt(int(local.y/(GetDpiForWindow(w)/96.f))),p);return 0;}
  case WM_DROPFILES: {HDROP drop=HDROP(wp);UINT count=DragQueryFileW(drop,0xffffffff,nullptr,0);for(UINT i=0;i<count;++i){wchar_t path[32768];DragQueryFileW(drop,i,path,32768);add(path);}DragFinish(drop);return 0;}
  case WM_COPYDATA: {auto c=reinterpret_cast<COPYDATASTRUCT*>(lp);if(c->dwData==1&&c->cbData>=sizeof(wchar_t)&&c->cbData<=65536&&reinterpret_cast<wchar_t*>(c->lpData)[c->cbData/sizeof(wchar_t)-1]==0) add(static_cast<wchar_t*>(c->lpData));SetForegroundWindow(w);return TRUE;}
- case WM_TIMER: {engine->tick(); static int seconds=0;if(++seconds%30==0)engine->save();if(!engine->errors.empty()){auto e=engine->errors.back();engine->errors.clear();error(e);}InvalidateRect(w,nullptr,FALSE);return 0;}
+ case WM_TIMER: {engine->tick(); static int seconds=0;if(++seconds%30==0)engine->save();if(!engine->errors.empty()){auto e=engine->errors.back();engine->errors.clear();error(e);}InvalidateRect(w,nullptr,FALSE);if(IsWindowEnabled(w)){for(auto& item:engine->items)if(item.selectPending&&!item.selectionShown&&item.handle.torrent_file()){item.selectionShown=true;Dialog d{2};d.handle=item.handle;dialog(d);break;}}return 0;}
  case WM_CLOSE:if(!closing){closing=true;KillTimer(w,1);EnableWindow(w,FALSE);engine->shutdown();DestroyWindow(w);}return 0;
  case WM_DESTROY:PostQuitMessage(0);return 0;
  }
