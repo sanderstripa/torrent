@@ -36,7 +36,7 @@ function Wait-Window([string]$Class) {
 function Choose-Second([IntPtr]$Window,[int]$Y) {
  [TorrentUI]::Click($Window,390,$Y)
  $menu=Wait-Window 'TorrentStyledPopup'
- [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x28,[IntPtr]::Zero) | Out-Null
+ [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x23,[IntPtr]::Zero) | Out-Null
  [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x0D,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 200
 }
@@ -72,7 +72,7 @@ try {
  if([TorrentUI]::Caption($settings) -ne 'Settings'){throw 'Reopened settings lost language'}
  # Switch back to light through the same custom menu, using Up from selected Dark.
  [TorrentUI]::Click($settings,390,237);$menu=Wait-Window 'TorrentStyledPopup'
- [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x26,[IntPtr]::Zero) | Out-Null
+ [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x24,[IntPtr]::Zero) | Out-Null
  [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x0D,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 100
  [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
