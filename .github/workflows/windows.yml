@@ -7,6 +7,8 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
+      - name: Validate assets
+        run: python tools/validate_project.py
       - name: Get dependency manager
         run: |
           git clone --branch 2025.06.13 --depth 1 https://github.com/microsoft/vcpkg.git "$env:RUNNER_TEMP/vcpkg"

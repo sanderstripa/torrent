@@ -1,0 +1,24 @@
+"""Offline resource and package validation; does not substitute for C++ compilation."""
+import json, struct, zlib
+from pathlib import Path
+import xml.etree.ElementTree as ET
+root=Path(__file__).resolve().parents[1]
+json.loads((root/'vcpkg.json').read_text())
+ET.parse(root/'assets/icon.svg');ET.parse(root/'assets/app.manifest')
+ico=(root/'assets/app.ico').read_bytes()
+reserved,kind,count=struct.unpack_from('<HHH',ico)
+assert (reserved,kind,count)==(0,1,7)
+for i in range(count):
+    w,h,_,_,planes,bpp,length,offset=struct.unpack_from('<BBBBHHII',ico,6+16*i)
+    blob=ico[offset:offset+length];assert len(blob)==length and blob.startswith(b'\x89PNG\r\n\x1a\n')
+    pos=8; compressed=b''
+    while pos<len(blob):
+        n=struct.unpack_from('>I',blob,pos)[0];name=blob[pos+4:pos+8];data=blob[pos+8:pos+8+n]
+        assert zlib.crc32(name+data)&0xffffffff==struct.unpack_from('>I',blob,pos+8+n)[0]
+        if name==b'IDAT': compressed+=data
+        pos+=12+n
+    assert len(zlib.decompress(compressed))==(w or 256)*4*(h or 256)+(h or 256)
+    assert planes==1 and bpp==32
+for name in ('src/main.cpp','src/engine.cpp','src/engine.h','installer/Torrent.nsi','.github/workflows/windows.yml'):
+    assert (root/name).stat().st_size>0
+print('PASS: JSON, XML, 7 ICO frames, PNG CRC/decompression, required sources')
