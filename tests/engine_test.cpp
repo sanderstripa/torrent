@@ -5,6 +5,8 @@
 #include <libtorrent/torrent_info.hpp>
 #include <libtorrent/torrent_status.hpp>
 #include <libtorrent/settings_pack.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <fstream>
 #include <iostream>
 #include <thread>
@@ -19,7 +21,8 @@ int main() {
   lt::file_storage files; files.add_file("sample.bin",65536); lt::create_torrent creator(files,16384,lt::create_torrent::v1_only);lt::set_piece_hashes(creator,utf8((root/"seed").wstring()));
   std::vector<char> bytes;lt::bencode(std::back_inserter(bytes),creator.generate()); auto torrent=root/"sample.torrent"; {std::ofstream f(torrent,std::ios::binary);f.write(bytes.data(),bytes.size());}
   std::string magnet;
-  lt::settings_pack seedSettings;seedSettings.set_str(lt::settings_pack::listen_interfaces,"127.0.0.1:0");seedSettings.set_bool(lt::settings_pack::enable_dht,false);seedSettings.set_bool(lt::settings_pack::enable_lsd,false);seedSettings.set_bool(lt::settings_pack::enable_upnp,false);seedSettings.set_bool(lt::settings_pack::enable_natpmp,false);
+  boost::asio::io_context probeContext;boost::asio::ip::tcp::acceptor probe(probeContext,{boost::asio::ip::address_v4::loopback(),0});auto port=probe.local_endpoint().port();probe.close();
+  lt::settings_pack seedSettings;seedSettings.set_str(lt::settings_pack::listen_interfaces,"127.0.0.1:"+std::to_string(port));seedSettings.set_bool(lt::settings_pack::enable_dht,false);seedSettings.set_bool(lt::settings_pack::enable_lsd,false);seedSettings.set_bool(lt::settings_pack::enable_upnp,false);seedSettings.set_bool(lt::settings_pack::enable_natpmp,false);
   lt::session seed(seedSettings);lt::add_torrent_params seedParams;seedParams.ti=std::make_shared<lt::torrent_info>(utf8(torrent.wstring()));seedParams.save_path=utf8((root/"seed").wstring());seedParams.flags|=lt::torrent_flags::seed_mode;seedParams.flags&=~(lt::torrent_flags::paused|lt::torrent_flags::auto_managed);auto seedHandle=seed.add_torrent(seedParams);
   auto waitFor=[&](auto predicate,char const* message) {auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(25);while(!predicate()){if(std::chrono::steady_clock::now()>deadline)throw std::runtime_error(message);std::this_thread::sleep_for(std::chrono::milliseconds(100));}};
   waitFor([&]{return seed.listen_port()!=0;},"loopback seed did not listen");
