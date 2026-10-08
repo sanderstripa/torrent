@@ -33,11 +33,19 @@ jobs:
         shell: pwsh
         run: |
           Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class NativeWindow { [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string className, string title); [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wp, IntPtr lp); }'
-          $process = Start-Process build/Release/Torrent.exe -PassThru -WindowStyle Hidden
-          Start-Sleep -Seconds 4
-          $process.Refresh()
-          $window = [NativeWindow]::FindWindow('TorrentMain', $null)
-          if ($process.HasExited -or $window -eq [IntPtr]::Zero) { throw "Native window failed to start" }
+          $process = Start-Process build/Release/Torrent.exe -ArgumentList '--smoke-test' -PassThru -WindowStyle Hidden
+          $deadline = [DateTime]::UtcNow.AddSeconds(25)
+          do {
+            Start-Sleep -Milliseconds 250
+            $process.Refresh()
+            $window = [NativeWindow]::FindWindow('TorrentMain', $null)
+          } while (-not $process.HasExited -and $window -eq [IntPtr]::Zero -and [DateTime]::UtcNow -lt $deadline)
+          if ($process.HasExited -or $window -eq [IntPtr]::Zero) {
+            if (Test-Path Torrent-startup-error.txt) { Get-Content Torrent-startup-error.txt }
+            throw "Native window failed to start"
+          }
+          [NativeWindow]::PostMessage($window, 0x000F, [IntPtr]::Zero, [IntPtr]::Zero)
+          Start-Sleep -Seconds 1
           [NativeWindow]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
           if (-not $process.WaitForExit(30000)) { $process.Kill(); throw "Shutdown timed out" }
           if ($process.ExitCode -ne 0) { throw "Application exited with error" }
