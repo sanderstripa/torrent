@@ -37,8 +37,8 @@ void Engine::tick() {
  std::vector<lt::alert*> alerts; session.pop_alerts(&alerts);
  for(auto a:alerts) {
   if(auto r=lt::alert_cast<lt::save_resume_data_alert>(a)) { --outstanding; auto item=std::find_if(items.begin(),items.end(),[&](auto const& i){return i.handle==r->handle;}); if(item!=items.end()) try { atomicWrite(root/(item->key+".resume"),lt::write_resume_data_buf(r->params)); } catch(std::exception const& e) {errors.push_back(e.what());} }
-  else if(auto r=lt::alert_cast<lt::save_resume_data_failed_alert>(a)) { --outstanding; errors.push_back(r->message()); }
-  else if(auto r=lt::alert_cast<lt::torrent_error_alert>(a)) errors.push_back(r->message());
+  else if(auto failure=lt::alert_cast<lt::save_resume_data_failed_alert>(a)) { --outstanding; errors.push_back(failure->message()); }
+  else if(auto torrentError=lt::alert_cast<lt::torrent_error_alert>(a)) errors.push_back(torrentError->message());
  }
 }
 void Engine::remove(lt::torrent_handle h) { auto item=std::find_if(items.begin(),items.end(),[&](auto const& i){return i.handle==h;}); if(item==items.end())return; auto id=item->key; session.remove_torrent(h); std::erase_if(items,[&](auto const& i){return i.handle==h;}); std::filesystem::remove(root/(id+".resume")); std::filesystem::remove(root/(id+".state")); persistOrder(); }
