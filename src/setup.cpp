@@ -1,4 +1,5 @@
 #include "visual.h"
+#include "popup.h"
 #include <windowsx.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -34,7 +35,7 @@ static void startInstall(){if(preview){progress=72;page=1;SetTimer(window,1,40,n
  if(!CreateProcessW(temporary.c_str(),cmd.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&si,&pi)){std::filesystem::remove(temporary);MessageBoxW(window,L"Не удалось запустить установку",L"Torrent",MB_ICONERROR);return;}
  CloseHandle(pi.hThread);installer=pi.hProcess;page=1;SetTimer(window,1,40,nullptr);}
 static void finish(){if(page==2&&launch&&!preview){PWSTR folder=nullptr;if(SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData,0,nullptr,&folder))){auto app=std::filesystem::path(folder)/L"Programs"/L"Torrent"/L"Torrent.exe";CoTaskMemFree(folder);ShellExecuteW(window,L"open",app.c_str(),nullptr,nullptr,SW_SHOWNORMAL);}}DestroyWindow(window);}
-static LRESULT CALLBACK proc(HWND w,UINT m,WPARAM wp,LPARAM lp){switch(m){case WM_CREATE:window=w;visual::frame(w,false,true);return 0;case WM_NCCALCSIZE:if(wp)return 0;break;case WM_NCPAINT:return 0;case WM_NCACTIVATE:return TRUE;case WM_PAINT:paint();return 0;case WM_ERASEBKGND:return 1;
+static LRESULT CALLBACK proc(HWND w,UINT m,WPARAM wp,LPARAM lp){switch(m){case WM_CREATE:window=w;visual::frame(w,false,true);return 0;case WM_SYSCOMMAND:if((wp&0xfff0)==SC_KEYMENU||(wp&0xfff0)==SC_MOUSEMENU){RECT r;GetWindowRect(w,&r);POINT point{r.left+8,r.top+32};visual::windowMenu(w,point,false,false);return 0;}break;case WM_NCCALCSIZE:if(wp)return 0;break;case WM_NCPAINT:return 0;case WM_NCACTIVATE:return TRUE;case WM_PAINT:paint();return 0;case WM_ERASEBKGND:return 1;
  case WM_NCHITTEST:{POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&p);float s=GetDpiForWindow(w)/96.f;RECT r;GetClientRect(w,&r);if(p.y<60*s&&p.x<r.right-100*s)return HTCAPTION;return HTCLIENT;}
  case WM_MOUSEMOVE:{float s=GetDpiForWindow(w)/96.f,x=GET_X_LPARAM(lp)/s,y=GET_Y_LPARAM(lp)/s;int h=page!=1&&visual::hit(x,y,primaryRect());if(h!=hover){hover=h;InvalidateRect(w,nullptr,FALSE);}return 0;}
  case WM_LBUTTONUP:{float s=GetDpiForWindow(w)/96.f,x=GET_X_LPARAM(lp)/s,y=GET_Y_LPARAM(lp)/s;

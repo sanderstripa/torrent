@@ -87,6 +87,8 @@ static void acceptDialog(HWND w,Dialog& d){if(d.kind==1){liveSettings(w,d);retur
 static LRESULT CALLBACK dialogProc(HWND w,UINT m,WPARAM wp,LPARAM lp){auto d=reinterpret_cast<Dialog*>(GetWindowLongPtrW(w,GWLP_USERDATA));if(m==WM_NCCREATE){d=static_cast<Dialog*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);SetWindowLongPtrW(w,GWLP_USERDATA,LONG_PTR(d));d->window=w;}if(!d)return DefWindowProcW(w,m,wp,lp);
  switch(m){case WM_CREATE:{d->draft=prefs;visual::frame(w,prefs.dark!=0,true);float scale=GetDpiForWindow(w)/96.f;RECT r;GetClientRect(w,&r);int width=int(r.right/scale);d->font=CreateFontW(-int(15*scale),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI Variable Text");d->background=CreateSolidBrush(prefs.dark?RGB(32,44,62):RGB(255,255,255));
  if(d->kind!=2){HWND edit=control(w,L"EDIT",d->kind==1?prefs.folder:L"",ES_AUTOHSCROLL|WS_TABSTOP,int(34*scale),int(111*scale),int((width-(d->kind==1?122:68))*scale),int(22*scale),10);SendMessageW(edit,WM_SETFONT,WPARAM(d->font),TRUE);SetWindowSubclass(edit,editProc,1,0);SetFocus(edit);d->focused=10;}else if(!d->fixture){fillFiles(*d);if(!d->handle.torrent_file())SetTimer(w,2,500,nullptr);}if(designPreview)SetTimer(w,99,250,nullptr);return 0;}
+ case WM_SYSCOMMAND:if((wp&0xfff0)==SC_KEYMENU||(wp&0xfff0)==SC_MOUSEMENU){RECT r;GetWindowRect(w,&r);POINT point{r.left+8,r.top+32};if((wp&0xfff0)==SC_MOUSEMENU)GetCursorPos(&point);visual::windowMenu(w,point,prefs.dark!=0,prefs.english!=0);return 0;}break;
+ case WM_NCRBUTTONUP:if(wp==HTCAPTION||wp==HTSYSMENU){POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};visual::windowMenu(w,point,prefs.dark!=0,prefs.english!=0);return 0;}break;
  case WM_NCCALCSIZE:if(wp)return 0;break;
  case WM_NCPAINT:return 0;case WM_NCACTIVATE:return TRUE;
  case WM_PAINT:drawDialog(w,*d);return 0;case WM_ERASEBKGND:return 1;
@@ -135,6 +137,8 @@ static LRESULT CALLBACK windowProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
  try {
  switch(m) {
  case WM_CREATE: visual::frame(w,prefs.dark!=0);{UINT dpi=GetDpiForWindow(w);HICON titleIcon=HICON(LoadImageW(instance,MAKEINTRESOURCEW(1),IMAGE_ICON,GetSystemMetricsForDpi(SM_CXSMICON,dpi),GetSystemMetricsForDpi(SM_CYSMICON,dpi),LR_DEFAULTCOLOR));SendMessageW(w,WM_SETICON,ICON_SMALL,LPARAM(titleIcon));}mainWindow=w;SetTimer(w,1,1000,nullptr);DragAcceptFiles(w,TRUE);return 0;
+ case WM_SYSCOMMAND:if((wp&0xfff0)==SC_KEYMENU||(wp&0xfff0)==SC_MOUSEMENU){RECT r;GetWindowRect(w,&r);POINT point{r.left+8,r.top+32};if((wp&0xfff0)==SC_MOUSEMENU)GetCursorPos(&point);visual::windowMenu(w,point,prefs.dark!=0,prefs.english!=0);return 0;}break;
+ case WM_NCRBUTTONUP:if(wp==HTCAPTION||wp==HTSYSMENU){POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};visual::windowMenu(w,point,prefs.dark!=0,prefs.english!=0);return 0;}break;
  case WM_PAINT:paint(w);return 0;
  case WM_APP+1:if(interactionTesting){Dialog d{1};dialog(d);}return 0;
  case WM_APP+2:if(interactionTesting)add((std::filesystem::current_path()/L"pending.torrent").wstring());return 0;
