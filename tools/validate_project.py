@@ -23,7 +23,7 @@ for i in range(count):
     assert raw[4]==0, 'Icon corner must be transparent'
     assert raw[(size//2)*stride+1+(size//2)*4+3]==0, 'Ribbon opening must be transparent'
     visible=[(x,y) for y in range(size) for x in range(size) if raw[y*stride+1+x*4+3]>0]
-    assert visible and max(y for x,y in visible)-min(y for x,y in visible)+1>=size-2, 'Ribbon must fill the icon height'
+    assert visible and max(y for x,y in visible)-min(y for x,y in visible)+1>=size*.98, 'Ribbon must fill the icon height'
     assert all(raw[y*stride+1+x*4]<=62 for x,y in visible), 'White framing must be absent'
     assert planes==1 and bpp==32
 for name in ('src/main.cpp','src/engine.cpp','src/engine.h','installer/Torrent.nsi','.github/workflows/windows.yml'):
