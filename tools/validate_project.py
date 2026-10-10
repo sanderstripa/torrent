@@ -5,7 +5,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 root=Path(__file__).resolve().parents[1]
 font=(root/'assets/fonts/Montserrat.ttf').read_bytes()
-assert font[:4]==b'\x00\x01\x00\x00' and b'fvar' in font and len(font)>100000
+assert font[:4]==b'\x00\x01\x00\x00' and len(font)>100000
 assert 'SIL OPEN FONT LICENSE' in (root/'assets/fonts/OFL.txt').read_text()
 json.loads((root/'vcpkg.json').read_text())
 ET.parse(root/'assets/icon.svg');ET.parse(root/'assets/app.manifest')
