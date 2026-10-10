@@ -1,9 +1,10 @@
 #include <windows.h>
 1 ICON "app.ico"
+4 RCDATA "fonts/Montserrat.ttf"
 1 RT_MANIFEST "app.manifest"
 1 VERSIONINFO
- FILEVERSION 0,1,0,0
- PRODUCTVERSION 0,1,0,0
+ FILEVERSION 0,1,5,0
+ PRODUCTVERSION 0,1,5,0
  FILETYPE VFT_APP
 BEGIN
  BLOCK "StringFileInfo"
@@ -12,7 +13,7 @@ BEGIN
   BEGIN
    VALUE "FileDescription", "Torrent\0"
    VALUE "ProductName", "Torrent\0"
-   VALUE "FileVersion", "0.1.0\0"
+   VALUE "FileVersion", "0.1.5\0"
   END
  END
  BLOCK "VarFileInfo"

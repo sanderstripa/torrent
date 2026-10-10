@@ -89,6 +89,20 @@ jobs:
           python -c "import hashlib,pathlib; data=b'T'*16384; info=b'd6:lengthi16384e4:name21:Before file selection12:piece lengthi16384e6:pieces20:'+hashlib.sha1(data).digest()+b'e';pathlib.Path('dist/screenshots/pending.torrent').write_bytes(b'd4:info'+info+b'e')"
           powershell -NoProfile -ExecutionPolicy Bypass -File tools/test_ui.ps1 -Executable build/Release/Torrent.exe -WorkingFolder $folder
           if ($LASTEXITCODE -ne 0) { throw "UI interaction test failed" }
+      - name: Capture dark theme with embedded font
+        shell: pwsh
+        run: |
+          New-Item dist/screenshots/dark -ItemType Directory -Force
+          $app = (Resolve-Path build/Release/Torrent.exe).Path
+          $setup = (Resolve-Path dist/Torrent-Setup.exe).Path
+          Push-Location dist/screenshots/dark
+          foreach ($exe in @($app, $setup)) {
+            $process = Start-Process $exe -ArgumentList '--visual-test-dark' -PassThru -WindowStyle Hidden
+            if (-not $process.WaitForExit(30000)) { $process.Kill(); throw "Dark capture timed out" }
+            if ($process.ExitCode -ne 0) { throw "Dark capture failed" }
+          }
+          if ((Get-ChildItem *.png).Count -ne 6) { throw "Missing dark screenshots" }
+          Pop-Location
       - uses: actions/upload-artifact@v4
         if: always()
         with:

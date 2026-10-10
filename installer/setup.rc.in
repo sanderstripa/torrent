@@ -2,3 +2,5 @@
 1 24 "@TORRENT_SOURCE@/assets/app.manifest"
 2 RCDATA "@TORRENT_SOURCE@/dist/Torrent-Payload.exe"
 3 RCDATA "@TORRENT_SOURCE@/assets/icon-preview.png"
+
+4 RCDATA "@TORRENT_SOURCE@/assets/fonts/Montserrat.ttf"

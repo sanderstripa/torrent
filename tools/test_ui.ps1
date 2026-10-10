@@ -26,6 +26,7 @@ public static class TorrentUI {
  public static string Caption(IntPtr w){var text=new StringBuilder(256);GetWindowText(w,text,256);return text.ToString();}
  public static void Click(IntPtr w,int x,int y){double scale=GetDpiForWindow(w)/96.0;PostMessage(w,0x202,IntPtr.Zero,new IntPtr(((int)(y*scale)<<16)|(int)(x*scale)));}
  public static void Save(IntPtr w,string path){Rect r;GetClientRect(w,out r);using(var bitmap=new Bitmap(r.right,r.bottom)){using(var g=Graphics.FromImage(bitmap)){var dc=g.GetHdc();bool ok=PrintWindow(w,dc,3);g.ReleaseHdc(dc);if(!ok)throw new Exception("Capture failed");}bitmap.Save(path,ImageFormat.Png);}}
+ public static void CheckBackground(string path,int rgb){using(var bitmap=new Bitmap(path)){if((bitmap.GetPixel(1,1).ToArgb()&0xFFFFFF)!=rgb)throw new Exception("Unexpected theme background: "+path);}}
 }
 "@
 $exe=(Resolve-Path -LiteralPath $Executable).Path
@@ -67,6 +68,7 @@ try {
  [TorrentUI]::SendMessage($settings,0x85,[IntPtr]1,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 100
  [TorrentUI]::Save($settings,(Join-Path $folder 'settings-dark-live.png'))
+ [TorrentUI]::CheckBackground((Join-Path $folder 'settings-dark-live.png'),0x0C0C0C)
  [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 100
  if((Get-Content -LiteralPath $preferences)[1] -ne '1 1 1'){throw 'Closing settings lost changes'}
@@ -120,6 +122,7 @@ try {
  Start-Sleep -Milliseconds 100
  if((Get-Content -LiteralPath $preferences)[0] -ne $secondDownload){throw 'Existing settings file could not be replaced after restart'}
  [TorrentUI]::Save($settings,(Join-Path $folder 'settings-after-restart.png'))
+ [TorrentUI]::CheckBackground((Join-Path $folder 'settings-after-restart.png'),0xF5F5F4)
  [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 100
  [TorrentUI]::PostMessage($main,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
