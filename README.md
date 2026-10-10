@@ -7,7 +7,7 @@
 <p align="center">A lightweight, native BitTorrent client for Windows 11.</p>
 
 <p align="center">
-  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.1.5">Download v0.1.5</a>
+  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.1.6">Download v0.1.6</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/sanderstripa/torrent/actions/workflows/windows.yml">Windows builds</a>
   &nbsp;·&nbsp;
@@ -25,22 +25,22 @@ Torrent keeps the interface focused on your downloads: a name, size, status, pro
 
 ## Download
 
-**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.1.5/Torrent-Setup.exe)**
+**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.1.6/Torrent-Setup.exe)**
 
-Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.1.5/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
+Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.1.6/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
 
-| v0.1.5 package | Size |
+| v0.1.6 package | Size |
 |---|---:|
 | Installer | About 3.7 MB |
 | Application, dependency licenses and uninstaller | About 10.1 MB |
 
 The installer works for the current user without administrator privileges. It registers `.torrent` and magnet handlers with Windows. Select Torrent in Windows **Default apps** or **Open with** to make it your preferred handler.
 
-Version **0.1.5 is the current release**. The installer currently uses Russian text; the client offers Russian and English in Settings.
+Version **0.1.6 is the current release**. The installer currently uses Russian text; the client offers Russian and English in Settings.
 
 ## Interface
 
-Version 0.1.5 uses neutral off-white and near-black themes, fine gray borders, monochrome buttons and embedded Montserrat typography inspired by the supplied references. Uppercase dialog headings use subtle letter spacing. The compact 380 × 460 installer follows the Windows app theme; its typography matches the client. The product icon remains unchanged. Montserrat is bundled under the SIL Open Font License; no system font installation is required.
+Version 0.1.6 uses neutral off-white and near-black themes, fine gray borders, monochrome buttons and embedded Montserrat typography inspired by the supplied references. Uppercase dialog headings use subtle letter spacing. The compact 380 × 460 installer follows the Windows app theme; its typography matches the client. The product icon remains unchanged. Montserrat is bundled under the SIL Open Font License; no system font installation is required.
 
 Settings apply and save immediately without Apply or Cancel buttons. The language and theme update the open settings window and the client. Incomplete folder input keeps the last valid absolute path. File selection retains its separate Apply/Cancel workflow.
 

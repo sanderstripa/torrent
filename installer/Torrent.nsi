@@ -62,7 +62,7 @@ Function Welcome
  ${NSD_CreateLabel} 0u 141u 300u 24u "Простой торрент-клиент для Windows"
  Pop $0
  ${NSD_AddStyle} $0 ${SS_CENTER}
- ${NSD_CreateButton} 34u 174u 232u 30u "Установить  →"
+ ${NSD_CreateButton} 34u 174u 232u 30u "Установить"
  Pop $0
  ${NSD_OnClick} $0 InstallClick
  nsDialogs::Show
@@ -154,7 +154,7 @@ Section
  WriteRegStr HKCU "Software\Torrent\Capabilities\URLAssociations" "magnet" "Torrent.Magnet"
  WriteRegStr HKCU "Software\RegisteredApplications" "Torrent" "Software\Torrent\Capabilities"
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "DisplayName" "Torrent"
- WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "DisplayVersion" "0.1.5"
+ WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "DisplayVersion" "0.1.6"
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "UninstallString" '"$INSTDIR\Uninstall.exe"'
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "DisplayIcon" "$INSTDIR\Torrent.exe"
  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'

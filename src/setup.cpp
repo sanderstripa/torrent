@@ -23,7 +23,7 @@ static void paint(){PAINTSTRUCT ps;BeginPaint(window,&ps);if(canvas.begin(window
  if(page==2){c.color(c.background());c.rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(w/2+57,177),23,23),c.ink.Get());c.color(c.fg());c.rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(w/2+57,177),20,20),c.ink.Get());c.line(w/2+47,177,w/2+55,184,c.background(),2.5f);c.line(w/2+55,184,w/2+68,169,c.background(),2.5f);}
  c.label(page==0?L"Torrent":page==1?L"УСТАНОВКА":L"ГОТОВО",D2D1::RectF(20,223,w-20,265),25,false,0,DWRITE_TEXT_ALIGNMENT_CENTER,1.5f);
  c.label(page==0?L"Простой торрент-клиент для Windows":page==1?L"Копирование файлов…":L"Приложение успешно установлено",D2D1::RectF(16,271,w-16,300),13,false,c.muted(),DWRITE_TEXT_ALIGNMENT_CENTER);
- if(page==0){c.button(L"Установить   →",primaryRect(),true,hover==1,15,14);c.label(L"Отмена",D2D1::RectF(40,395,w-40,427),13,false,c.muted(),DWRITE_TEXT_ALIGNMENT_CENTER);}
+ if(page==0){c.button(L"Установить",primaryRect(),true,hover==1,15,14);c.label(L"Отмена",D2D1::RectF(40,395,w-40,427),13,false,c.muted(),DWRITE_TEXT_ALIGNMENT_CENTER);}
  if(page==1){c.box(D2D1::RectF(28,338,w-75,346),c.track(),4);if(progress>0)c.box(D2D1::RectF(28,338,28+(w-103)*progress/100.f,346),c.fg(),4);c.label(std::to_wstring(progress)+L"%",D2D1::RectF(w-64,326,w-22,358),14,false,c.muted());}
  if(page==2){c.check(26,328,launch);c.label(L"Запустить Torrent после установки",D2D1::RectF(52,317,w-20,355),14);c.button(L"Готово",primaryRect(),true,hover==1,15,14);}
  c.end();if(!canvas.rt)icon.Reset();}EndPaint(window,&ps);}
