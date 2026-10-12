@@ -118,7 +118,7 @@ static int selectedIndex(){for(int i=0;i<int(engine->items.size());++i)if(engine
 static int rowAt(int y){int row=(y-86+scroll)/136;return y>=86&&row>=0&&row<int(engine->items.size())&&(y-86+scroll)%136<124?row:-1;}
 static void paint(HWND w){PAINTSTRUCT ps;BeginPaint(w,&ps);auto& c=mainCanvas;c.dark=prefs.dark!=0;
  if(c.begin(w)){float width=c.width;
- c.label(L"Torrent",D2D1::RectF(24,18,width-150,62),25,false,0,DWRITE_TEXT_ALIGNMENT_LEADING,1.f);
+ c.label(L"TORRENT.",D2D1::RectF(24,18,width-150,62),25,false,0,DWRITE_TEXT_ALIGNMENT_LEADING,1.f);
  c.box(D2D1::RectF(width-112,22,width-74,60),c.dark?0x191919:0xf0f0ee,9);c.line(width-100,41,width-86,41,c.muted());c.line(width-93,34,width-93,48,c.muted());
  c.box(D2D1::RectF(width-60,22,width-22,60),c.dark?0x191919:0xf0f0ee,9);
  for(int i=0;i<3;++i){float y=33.f+i*7;c.line(width-49,y,width-33,y,c.muted());float x=i==1?width-37:width-45;c.box(D2D1::RectF(x-2,y-2,x+2,y+2),c.card(),2,c.muted());}
