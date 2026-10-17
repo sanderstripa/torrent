@@ -27,9 +27,11 @@ The Montserrat TTF is byte-for-byte unchanged. The invariant check also protects
 - Compact custom runtime error notices with a real error indicator and the same modal action styling. Startup failures before the application window exists retain a native emergency fallback; standard OS file/folder pickers remain OS dialogs.
 - System/Light/Dark and RU/EN inside settings. System mode reads Windows AppsUseLightTheme and responds to theme notifications. Old saved Light=0 and Dark=1 settings keep their meaning; System=2 is added without changing the file structure.
 
-## Missing approved asset
+## Approved settings icon
 
-The published reference and CONNECT source trees did not contain the original approved gear #8 or an approved exact vector of it. The pre-existing Torrent settings symbol is retained without its background tile. It is explicitly **not claimed to be gear #8**. No substitute gear is drawn. Applying the exact approved gear remains dependent on receiving that asset (and its vector approval if reconstruction is required).
+The original [CONNECT-settings-08.svg](../assets/CONNECT-settings-08.svg) is copied unchanged from `sanderstripa/connect`, branch `connect-ui-system-v1-reference`, path `docs/assets/CONNECT-settings-08.svg`. SHA256: `3f14c9094a96c13584a5514ef648a25cfbcb95371668036279ef4cb8051baf18`.
+
+The renderer compiles its cubic curves, elliptical arcs, even-odd opening and center circle exactly to Direct2D geometry. No path is approximated or redrawn by hand. The 24px SVG viewport and currentColor semantics are preserved using the existing theme colors. There is no tile even on hover; keyboard focus uses the shared outline. CI verifies generated geometry against the source SVG.
 
 ## Verification
 
