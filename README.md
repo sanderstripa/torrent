@@ -7,7 +7,7 @@
 <p align="center">A lightweight, native BitTorrent client for Windows 11.</p>
 
 <p align="center">
-  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.1.7">Download v0.1.7</a>
+  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.1.8">Download v0.1.8</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/sanderstripa/torrent/actions/workflows/windows.yml">Windows builds</a>
   &nbsp;·&nbsp;
@@ -25,22 +25,28 @@ Torrent keeps the interface focused on your downloads: a name, size, status, pro
 
 ## Download
 
-**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.1.7/Torrent-Setup.exe)**
+**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.1.8/Torrent-Setup.exe)**
 
-Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.1.7/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
+Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.1.8/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
 
-| v0.1.7 package | Size |
+| v0.1.8 package | Size |
 |---|---:|
 | Installer | About 3.7 MB |
 | Application, dependency licenses and uninstaller | About 10.1 MB |
 
 The installer works for the current user without administrator privileges. It registers `.torrent` and magnet handlers with Windows. Select Torrent in Windows **Default apps** or **Open with** to make it your preferred handler.
 
-Version **0.1.7 is the current release**. The installer currently uses Russian text; the client offers Russian and English in Settings.
+Version **0.1.8 is the current release**. The installer currently uses Russian text; the client offers Russian and English in Settings.
+
+## CONNECT UI System
+
+Version 0.1.8 adds a custom header with minimize and close, shared 36px controls, 8px radii, keyboard focus outlines, compact runtime notices and 4px progress. Torrent's existing palette, Montserrat, window dimensions, engine and list density are preserved. System theme follows Windows; RU/EN and theme remain in Settings.
+
+The approved gear #8 source was unavailable. The existing settings symbol remains without a background tile; no substitute gear is introduced. See [implementation and asset status](docs/CONNECT-UI-SYSTEM.md).
 
 ## Interface
 
-Version 0.1.7 uses neutral off-white and near-black themes, fine gray borders, monochrome buttons and embedded Montserrat typography inspired by the supplied references. Uppercase dialog headings use subtle letter spacing. The compact 380 × 460 installer follows the Windows app theme; its typography matches the client. The product icon remains unchanged. Montserrat is bundled under the SIL Open Font License; no system font installation is required.
+Version 0.1.8 uses neutral off-white and near-black themes, fine gray borders, monochrome buttons and embedded Montserrat typography inspired by the supplied references. Uppercase dialog headings use subtle letter spacing. The compact 380 × 460 installer follows the Windows app theme; its typography matches the client. The product icon remains unchanged. Montserrat is bundled under the SIL Open Font License; no system font installation is required.
 
 Settings apply and save immediately without Apply or Cancel buttons. The language and theme update the open settings window and the client. Incomplete folder input keeps the last valid absolute path. File selection retains its separate Apply/Cancel workflow.
 
@@ -67,7 +73,7 @@ These images are captured from the compiled Windows UI with isolated sample data
 - Select individual files and assign low, normal or high download priorities.
 - Fetch magnet metadata before choosing which files to download.
 - Restore downloads and file selections after restarting the application.
-- Switch between light and dark themes, and Russian and English.
+- Choose System, Light or Dark in Settings, and switch between RU and EN.
 - Use four settings only: download folder, action on adding, theme and language.
 
 No ads, Windows startup entry or notification system. There is one add button and no seed, peer or speed statistics in the main list.

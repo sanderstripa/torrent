@@ -21,6 +21,13 @@ public static class TorrentUI {
  [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr w);
  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr w,IntPtr dc,uint flags);
  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr w,out Rect r);
+ [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr w,out Rect r);
+ [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW")] public static extern IntPtr Style(IntPtr w,int index);
+ [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr w);
+ [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr w);
+ [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr w,int command);
+ public static int Width(IntPtr w){Rect r;GetClientRect(w,out r);return (int)Math.Round(r.right*96.0/GetDpiForWindow(w));}
+ public static void ShellCheck(IntPtr w){long style=Style(w,-16).ToInt64();if((style&0xC10000)!=0)throw new Exception("System caption or maximize box remains");Rect r;GetWindowRect(w,out r);double scale=GetDpiForWindow(w)/96.0;if(Math.Abs((r.right-r.left)/scale-840)>1||Math.Abs((r.bottom-r.top)/scale-610)>1)throw new Exception("Outer size changed");int x=r.left+(int)(250*scale),y=r.top+(int)(30*scale);if(SendMessage(w,0x84,IntPtr.Zero,new IntPtr((y<<16)|(x&65535))).ToInt32()!=2)throw new Exception("Custom header is not draggable");SendMessage(w,0x112,new IntPtr(0xF030),IntPtr.Zero);if(IsZoomed(w))throw new Exception("Unexpected maximize");}
  public struct Rect {public int left,top,right,bottom;}
  public static IntPtr Find(int process,string cls){IntPtr result=IntPtr.Zero;EnumWindows((w,c)=>{uint id;GetWindowThreadProcessId(w,out id);var text=new StringBuilder(256);GetClassName(w,text,256);if(id==process&&text.ToString()==cls&&IsWindowVisible(w))result=w;return true;},IntPtr.Zero);return result;}
  public static string Caption(IntPtr w){var text=new StringBuilder(256);GetWindowText(w,text,256);return text.ToString();}
@@ -46,6 +53,7 @@ function Choose-Second([IntPtr]$Window,[int]$Y) {
 }
 try {
  $main=Wait-Window 'TorrentMain';$settings=Wait-Window 'TorrentDialog'
+ [TorrentUI]::ShellCheck($main)
  $download=Join-Path $folder 'selected-downloads'
  if(-not [TorrentUI]::SetWindowText([TorrentUI]::GetDlgItem($settings,10),$download)){throw "Download folder edit was not ready"}
  Start-Sleep -Milliseconds 100
@@ -79,9 +87,37 @@ try {
  [TorrentUI]::Click($settings,390,237);$menu=Wait-Window 'TorrentStyledPopup'
  Start-Sleep -Milliseconds 100
  [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x24,[IntPtr]::Zero) | Out-Null
+ # System is first; verify both branches without changing the user's Windows settings.
+ [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x0D,[IntPtr]::Zero) | Out-Null
+ Start-Sleep -Milliseconds 100
+ if((Get-Content -LiteralPath $preferences)[1] -ne '1 2 1'){throw 'System theme did not persist'}
+ [TorrentUI]::SendMessage($main,0x8004,[IntPtr]1,[IntPtr]::Zero) | Out-Null
+ Start-Sleep -Milliseconds 100
+ [TorrentUI]::Save($settings,(Join-Path $folder 'settings-system-dark.png'))
+ [TorrentUI]::CheckBackground((Join-Path $folder 'settings-system-dark.png'),0x0C0C0C)
+ [TorrentUI]::SendMessage($main,0x8004,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
+ Start-Sleep -Milliseconds 100
+ [TorrentUI]::Save($settings,(Join-Path $folder 'settings-system-light.png'))
+ [TorrentUI]::CheckBackground((Join-Path $folder 'settings-system-light.png'),0xF5F5F4)
+ [TorrentUI]::Click($settings,390,237);$menu=Wait-Window 'TorrentStyledPopup'
+ [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x24,[IntPtr]::Zero) | Out-Null
+ [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x28,[IntPtr]::Zero) | Out-Null
  [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x0D,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 100
  [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
+ Start-Sleep -Milliseconds 100
+ $mainWidth=[TorrentUI]::Width($main)
+ [TorrentUI]::Click($main,($mainWidth-70),32);Start-Sleep -Milliseconds 100
+ if(-not [TorrentUI]::IsIconic($main)){throw 'Custom minimize button did not minimize'}
+ [TorrentUI]::ShowWindow($main,9) | Out-Null
+ [TorrentUI]::Click($main,($mainWidth-110),32);$settings=Wait-Window 'TorrentDialog'
+ [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
+ Start-Sleep -Milliseconds 100
+ [TorrentUI]::PostMessage($main,0x8005,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
+ $notice=Wait-Window 'TorrentDialog'
+ if([TorrentUI]::Caption($notice) -ne 'Error'){throw 'Error notice is not localized'}
+ [TorrentUI]::Save($notice,(Join-Path $folder 'notice.png'))
+ [TorrentUI]::PostMessage($notice,0x100,[IntPtr]0x0D,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 100
  [TorrentUI]::PostMessage($main,0x8002,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
  $files=Wait-Window 'TorrentDialog';Start-Sleep -Milliseconds 1100
