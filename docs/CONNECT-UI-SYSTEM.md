@@ -40,3 +40,5 @@ Windows CI builds the client and installer, checks the preserved design tokens, 
 Physical monitor/DPI transitions and installation over the real user profile require separate manual verification. Screenshot PR #1 is untouched; this implementation is isolated in Torrent's own PR.
 
 Version 0.1.10 removes hover tiles from all header actions, keeps the settings close glyph untiled, and clears titlebar focus after dismissing dialogs. Keyboard navigation retains focus outlines while navigating; pointer clicks leave no outline behind. Appearance buttons apply immediately without opening menus.
+
+Version 0.2.1 replaces the earlier theme icon approximations with the exact Monitor, Sun and Moon nodes from CONNECT VPN's pinned lucide-vue-next 0.468.0 package. Original 13px size, width-2 round stroke and 5px centered icon/text gap are preserved. See [source provenance](../assets/connect-theme/README.md).
