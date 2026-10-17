@@ -12,6 +12,7 @@ jobs:
           python tools/validate_project.py
           python tools/check_ui_contract.py
           python tools/compile_settings_icon.py --check
+          python tools/compile_theme_icons.py --check
       - name: Get dependency manager
         run: |
           git clone --branch 2025.06.13 --depth 1 https://github.com/microsoft/vcpkg.git "$env:RUNNER_TEMP/vcpkg"
