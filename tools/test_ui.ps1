@@ -92,9 +92,11 @@ try {
  Start-Sleep -Milliseconds 100
  if((Get-Content -LiteralPath $preferences)[1] -ne '1 2 1'){throw 'System theme did not persist'}
  [TorrentUI]::SendMessage($main,0x8004,[IntPtr]1,[IntPtr]::Zero) | Out-Null
+ Start-Sleep -Milliseconds 100
  [TorrentUI]::Save($settings,(Join-Path $folder 'settings-system-dark.png'))
  [TorrentUI]::CheckBackground((Join-Path $folder 'settings-system-dark.png'),0x0C0C0C)
  [TorrentUI]::SendMessage($main,0x8004,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
+ Start-Sleep -Milliseconds 100
  [TorrentUI]::Save($settings,(Join-Path $folder 'settings-system-light.png'))
  [TorrentUI]::CheckBackground((Join-Path $folder 'settings-system-light.png'),0xF5F5F4)
  [TorrentUI]::Click($settings,390,237);$menu=Wait-Window 'TorrentStyledPopup'
