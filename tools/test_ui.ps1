@@ -117,7 +117,7 @@ try {
  $notice=Wait-Window 'TorrentDialog'
  if([TorrentUI]::Caption($notice) -ne 'Error'){throw 'Error notice is not localized'}
  [TorrentUI]::Save($notice,(Join-Path $folder 'notice.png'))
- [TorrentUI]::SendMessage($notice,0x100,[IntPtr]0x0D,[IntPtr]::Zero) | Out-Null
+ [TorrentUI]::PostMessage($notice,0x100,[IntPtr]0x0D,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 100
  [TorrentUI]::PostMessage($main,0x8002,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
  $files=Wait-Window 'TorrentDialog';Start-Sleep -Milliseconds 1100
