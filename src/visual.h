@@ -56,7 +56,7 @@ struct Canvas {
  void settingsIcon(float x,float y,float size,bool hover=false){if(!settingsGeometry){ComPtr<ID2D1GeometrySink> sink;if(FAILED(factory->CreatePathGeometry(&settingsGeometry))||FAILED(settingsGeometry->Open(&sink)))return;sink->SetFillMode(D2D1_FILL_MODE_ALTERNATE);
 #include "../assets/settings08.inc"
  if(FAILED(sink->Close())){settingsGeometry.Reset();return;}}
- D2D1_MATRIX_3X2_F previous;rt->GetTransform(&previous);float scale=size/85.f;rt->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*D2D1::Matrix3x2F::Translation(x-5*scale,y)*previous);color(hover?fg():muted());rt->FillGeometry(settingsGeometry.Get(),ink.Get());rt->SetTransform(previous);}
+ D2D1::Matrix3x2F previous;rt->GetTransform(&previous);float scale=size/85.f;rt->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*D2D1::Matrix3x2F::Translation(x-5*scale,y)*previous);color(hover?fg():muted());rt->FillGeometry(settingsGeometry.Get(),ink.Get());rt->SetTransform(previous);}
  void switchControl(float x,float y,bool on){box(D2D1::RectF(x,y,x+40,y+23),on?fg():card(),11.5f,lineColor());color(on?background():muted());rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x+(on?28.5f:11.5f),y+11.5f),7.5f,7.5f),ink.Get());}
  void slider(float x,float y,float length,float value){line(x,y,x+length,y,track(),2);line(x,y,x+length*value,y,fg(),2);color(fg());rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x+length*value,y),6,6),ink.Get());}
  void paragraph(std::wstring const& text,D2D1_RECT_F r){ComPtr<IDWriteTextFormat> f;writing->CreateTextFormat(fontFamily(),productFont.collection.Get(),DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,ui::body,L"",&f);if(f){color(fg());rt->DrawText(text.c_str(),UINT32(text.size()),f.Get(),r,ink.Get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);}}
