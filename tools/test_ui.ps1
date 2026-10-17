@@ -34,6 +34,7 @@ public static class TorrentUI {
  public static void Click(IntPtr w,int x,int y){double scale=GetDpiForWindow(w)/96.0;PostMessage(w,0x202,IntPtr.Zero,new IntPtr(((int)(y*scale)<<16)|(int)(x*scale)));}
  public static void Save(IntPtr w,string path){Rect r;GetClientRect(w,out r);using(var bitmap=new Bitmap(r.right,r.bottom)){using(var g=Graphics.FromImage(bitmap)){var dc=g.GetHdc();bool ok=PrintWindow(w,dc,3);g.ReleaseHdc(dc);if(!ok)throw new Exception("Capture failed");}bitmap.Save(path,ImageFormat.Png);}}
  public static void CheckBackground(string path,int rgb){using(var bitmap=new Bitmap(path)){if((bitmap.GetPixel(1,1).ToArgb()&0xFFFFFF)!=rgb)throw new Exception("Unexpected theme background: "+path);}}
+ public static void CheckPixel(IntPtr w,string path,int x,int y,int rgb){double scale=GetDpiForWindow(w)/96.0;using(var bitmap=new Bitmap(path)){if((bitmap.GetPixel((int)(x*scale),(int)(y*scale)).ToArgb()&0xFFFFFF)!=rgb)throw new Exception("Unexpected header tile/focus pixel: "+path);}}
 }
 "@
 $exe=(Resolve-Path -LiteralPath $Executable).Path
@@ -62,9 +63,9 @@ try {
  [TorrentUI]::SetWindowText([TorrentUI]::GetDlgItem($settings,10),'relative-path') | Out-Null
  if((Get-Content -LiteralPath $preferences)[0] -ne $download){throw 'Invalid folder overwrote the valid setting'}
  [TorrentUI]::SetWindowText([TorrentUI]::GetDlgItem($settings,10),$download) | Out-Null
- Choose-Second $settings 237
+ [TorrentUI]::Click($settings,395,267);Start-Sleep -Milliseconds 200
  if((Get-Content -LiteralPath $preferences)[1] -ne '0 1 0'){throw ('Theme did not apply immediately: '+(Get-Content -LiteralPath $preferences -Raw))}
- Choose-Second $settings 291
+ [TorrentUI]::Click($settings,450,225);Start-Sleep -Milliseconds 200
  if([TorrentUI]::Caption($settings) -ne 'Settings'){throw 'Language did not update the open settings window'}
  Choose-Second $settings 183
  if((Get-Content -LiteralPath $preferences)[1] -ne '1 1 1'){throw 'Add action did not apply immediately'}
@@ -83,13 +84,8 @@ try {
  [TorrentUI]::PostMessage($main,0x8001,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
  $settings=Wait-Window 'TorrentDialog'
  if([TorrentUI]::Caption($settings) -ne 'Settings'){throw 'Reopened settings lost language'}
- # Switch back to light through the same custom menu, using Up from selected Dark.
- [TorrentUI]::Click($settings,390,237);$menu=Wait-Window 'TorrentStyledPopup'
- Start-Sleep -Milliseconds 100
- [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x24,[IntPtr]::Zero) | Out-Null
- # System is first; verify both branches without changing the user's Windows settings.
- [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x0D,[IntPtr]::Zero) | Out-Null
- Start-Sleep -Milliseconds 100
+ # Select System directly through the new theme segment.
+ [TorrentUI]::Click($settings,95,267);Start-Sleep -Milliseconds 100
  if((Get-Content -LiteralPath $preferences)[1] -ne '1 2 1'){throw 'System theme did not persist'}
  [TorrentUI]::SendMessage($main,0x8004,[IntPtr]1,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 100
@@ -99,10 +95,7 @@ try {
  Start-Sleep -Milliseconds 100
  [TorrentUI]::Save($settings,(Join-Path $folder 'settings-system-light.png'))
  [TorrentUI]::CheckBackground((Join-Path $folder 'settings-system-light.png'),0xF5F5F4)
- [TorrentUI]::Click($settings,390,237);$menu=Wait-Window 'TorrentStyledPopup'
- [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x24,[IntPtr]::Zero) | Out-Null
- [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x28,[IntPtr]::Zero) | Out-Null
- [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x0D,[IntPtr]::Zero) | Out-Null
+ [TorrentUI]::Click($settings,245,267)
  Start-Sleep -Milliseconds 100
  [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 100
@@ -113,6 +106,15 @@ try {
  [TorrentUI]::Click($main,($mainWidth-110),32);$settings=Wait-Window 'TorrentDialog'
  [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 100
+ [TorrentUI]::Save($main,(Join-Path $folder 'header-after-settings.png'))
+ [TorrentUI]::CheckPixel($main,(Join-Path $folder 'header-after-settings.png'),($mainWidth-110),14,0xF5F5F4)
+ foreach($offset in @(150,70,30)) {
+  $scale=[TorrentUI]::GetDpiForWindow($main)/96.0
+  [TorrentUI]::SendMessage($main,0x200,[IntPtr]::Zero,[IntPtr](([int](32*$scale) -shl 16) -bor [int](($mainWidth-$offset)*$scale))) | Out-Null
+  $path=Join-Path $folder ('header-hover-'+$offset+'.png')
+  [TorrentUI]::Save($main,$path)
+  [TorrentUI]::CheckPixel($main,$path,($mainWidth-$offset),18,0xF5F5F4)
+ }
  [TorrentUI]::PostMessage($main,0x8005,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
  $notice=Wait-Window 'TorrentDialog'
  if([TorrentUI]::Caption($notice) -ne 'Error'){throw 'Error notice is not localized'}
