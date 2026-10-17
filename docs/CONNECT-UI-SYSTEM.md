@@ -25,7 +25,7 @@ The Montserrat TTF is byte-for-byte unchanged. The invariant check also protects
 - Contrasting monochrome primary actions, neutral secondary actions, subtle press/hover with 140ms transitions respecting Windows reduced-motion settings.
 - Four-pixel monochrome progress; existing checkbox semantics for file selection. Shared switch/slider primitives are available but no unused controls are shown in Torrent.
 - Compact custom runtime error notices with a real error indicator and the same modal action styling. Startup failures before the application window exists retain a native emergency fallback; standard OS file/folder pickers remain OS dialogs.
-- System/Light/Dark and RU/EN inside settings. System mode reads Windows AppsUseLightTheme and responds to theme notifications. Old saved Light=0 and Dark=1 settings keep their meaning; System=2 is added without changing the file structure.
+- CONNECT-style System/Light/Dark segments and compact RU/EN buttons inside settings. System mode reads Windows AppsUseLightTheme and responds to theme notifications. Old saved Light=0 and Dark=1 settings keep their meaning; System=2 is added without changing the file structure.
 
 ## Approved settings icon
 
@@ -38,3 +38,5 @@ The renderer compiles its cubic curves, elliptical arcs, even-odd opening and ce
 Windows CI builds the client and installer, checks the preserved design tokens, runs engine and UI regressions, and captures both themes. UI checks cover caption/maximize removal, outer dimensions, header hit testing, minimize/settings actions, settings persistence, System theme updates without modifying Windows preferences, RU/EN, custom notices, torrent selection and keyboard actions.
 
 Physical monitor/DPI transitions and installation over the real user profile require separate manual verification. Screenshot PR #1 is untouched; this implementation is isolated in Torrent's own PR.
+
+Version 0.1.10 removes hover tiles from all header actions, keeps the settings close glyph untiled, and clears titlebar focus after dismissing dialogs. Keyboard navigation retains focus outlines while navigating; pointer clicks leave no outline behind. Appearance buttons apply immediately without opening menus.
