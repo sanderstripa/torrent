@@ -113,6 +113,12 @@ try {
  [TorrentUI]::Click($main,($mainWidth-110),32);$settings=Wait-Window 'TorrentDialog'
  [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
  Start-Sleep -Milliseconds 100
+ [TorrentUI]::PostMessage($main,0x8005,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
+ $notice=Wait-Window 'TorrentDialog'
+ if([TorrentUI]::Caption($notice) -ne 'Error'){throw 'Error notice is not localized'}
+ [TorrentUI]::Save($notice,(Join-Path $folder 'notice.png'))
+ [TorrentUI]::SendMessage($notice,0x100,[IntPtr]0x0D,[IntPtr]::Zero) | Out-Null
+ Start-Sleep -Milliseconds 100
  [TorrentUI]::PostMessage($main,0x8002,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
  $files=Wait-Window 'TorrentDialog';Start-Sleep -Milliseconds 1100
  [TorrentUI]::Save($main,(Join-Path $folder 'pending-selection.png'))
