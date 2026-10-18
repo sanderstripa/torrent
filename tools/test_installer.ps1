@@ -1,4 +1,4 @@
-param([string]$Setup,[string]$Payload)
+﻿param([string]$Setup,[string]$Payload)
 $ErrorActionPreference="Stop"
 if(-not $env:GITHUB_ACTIONS){throw "Disposable GitHub runner only"}
 Add-Type -ReferencedAssemblies System.Drawing @"
@@ -57,26 +57,63 @@ foreach($d in @(0,1)){foreach($m in @(0,1)){
  $p=Start-Process $payloadExe -ArgumentList @('/S',"/DESKTOPSHORTCUT=$d","/STARTMENUSHORTCUT=$m") -PassThru -WindowStyle Hidden
  Wait-Exit $p;Check-Links ([bool]$d) ([bool]$m)
  $version=(Get-ItemProperty 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/Torrent').DisplayVersion
- if($version -ne '0.2.4'){throw "Unexpected installed version $version"}
+ if($version -ne '0.2.5'){throw "Unexpected installed version $version"}
  Uninstall
 }}
-# Exercise the real shell: desktop enabled, Start menu disabled; choose in settings.
-$p=Start-Process $setupExe -PassThru -WindowStyle Hidden
-try {
- $w=[IntPtr]::Zero
- for($i=0;$i -lt 100;$i++){$w=[TorrentUI]::Find($p.Id,'TorrentSetupVisual');if($w -ne [IntPtr]::Zero){break};Start-Sleep -Milliseconds 100}
- if($w -eq [IntPtr]::Zero){throw 'Setup window missing'}
- [TorrentUI]::ShowWindow($w,4)|Out-Null
- Start-Sleep -Milliseconds 100
- [TorrentUI]::Click($w,130,365);Start-Sleep -Milliseconds 100
- [TorrentUI]::Click($w,60,290);Start-Sleep -Milliseconds 100
- [TorrentUI]::Click($w,150,350)
- for($i=0;$i -lt 300;$i++){if(Test-Path $desktop){break};Start-Sleep -Milliseconds 100}
- Check-Links $true $false
- Start-Sleep -Seconds 2
- # Disable launch before Done: do not start the user's torrent session in CI.
- [TorrentUI]::Click($w,290,370);[TorrentUI]::Click($w,420,310)
- Wait-Exit $p
- Uninstall
- 'PASS: four shortcut combinations, version registration, complete native setup flow, launch disabled, uninstall cleanup.'
-}finally{if(-not $p.HasExited){$p.Kill();$p.WaitForExit()}}
+# Real shell: custom Unicode/spaced path, retained preferences, both themes, actual post-install launch.
+$profile=Join-Path $env:LOCALAPPDATA 'Torrent'
+New-Item $profile -ItemType Directory -Force|Out-Null
+$preferences=Join-Path $profile 'settings.txt'
+$download=Join-Path $env:RUNNER_TEMP 'Kept Downloads'
+foreach($theme in @('light','dark')) {
+ $install=Join-Path $env:RUNNER_TEMP ('Torrent Custom Юникод '+$theme)
+ [IO.File]::WriteAllText($preferences,$download+"`n1 2 1",[Text.UTF8Encoding]::new($false))
+ $p=Start-Process $setupExe -PassThru -WindowStyle Hidden
+ try {
+  $w=[IntPtr]::Zero
+  for($i=0;$i -lt 100;$i++){$w=[TorrentUI]::Find($p.Id,'TorrentSetupVisual');if($w -ne [IntPtr]::Zero){break};Start-Sleep -Milliseconds 100}
+  if($w -eq [IntPtr]::Zero){throw 'Setup window missing'}
+  [TorrentUI]::ShowWindow($w,4)|Out-Null
+  Start-Sleep -Milliseconds 100
+  [TorrentUI]::Click($w,130,365);Start-Sleep -Milliseconds 200
+  $edit=[TorrentUI]::GetDlgItem($w,101)
+  if($edit -eq [IntPtr]::Zero){throw 'Editable installation path missing'}
+  if(-not [TorrentUI]::SetWindowText($edit,$install)){throw 'Could not enter custom installation path'}
+  $x=if($theme -eq 'dark'){400}else{330}
+  [TorrentUI]::Click($w,$x,130);Start-Sleep -Milliseconds 100
+  [TorrentUI]::Click($w,60,290);Start-Sleep -Milliseconds 100
+  [TorrentUI]::Click($w,150,350)
+  $value=if($theme -eq 'dark'){1}else{0}
+  for($i=0;$i -lt 300;$i++){
+   if((Test-Path (Join-Path $install 'Torrent.exe')) -and (Test-Path $preferences) -and ((Get-Content $preferences)[1] -eq "1 $value 1")){break}
+   Start-Sleep -Milliseconds 100
+  }
+  if(-not (Test-Path (Join-Path $install 'Torrent.exe'))){throw 'Custom directory was ignored'}
+  if((Get-Content $preferences)[0] -ne $download -or (Get-Content $preferences)[1] -ne "1 $value 1"){throw 'Theme was not applied or other preferences were overwritten'}
+  Check-Links $true $false
+  $shell=New-Object -ComObject WScript.Shell
+  if($shell.CreateShortcut($desktop).TargetPath -ne (Join-Path $install 'Torrent.exe')){throw 'Shortcut points to wrong directory'}
+  $registration=Get-ItemProperty 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/Torrent'
+  if($registration.UninstallString -notlike ('*'+$install+'*')){throw 'Uninstall registration points to wrong directory'}
+  Start-Sleep -Milliseconds 300
+  [TorrentUI]::Click($w,420,310)
+  Wait-Exit $p
+  $app=$null;$main=[IntPtr]::Zero
+  for($i=0;$i -lt 150;$i++){
+   $app=Get-Process Torrent -ErrorAction SilentlyContinue|Where-Object Path -eq (Join-Path $install 'Torrent.exe')|Select-Object -First 1
+   if($app){$main=[TorrentUI]::Find($app.Id,'TorrentMain');if($main -ne [IntPtr]::Zero){break}}
+   Start-Sleep -Milliseconds 100
+  }
+  if($main -eq [IntPtr]::Zero){throw 'Post-install launch did not use custom directory'}
+  Start-Sleep -Milliseconds 300
+  New-Item dist/installer-check -ItemType Directory -Force|Out-Null
+  $capture=(Join-Path (Get-Location) "dist/installer-check/first-launch-$theme.png")
+  [TorrentUI]::Save($main,$capture)
+  $color=if($theme -eq 'dark'){0x0C0C0C}else{0xF5F5F4}
+  [TorrentUI]::CheckBackground($capture,$color)
+  [TorrentUI]::PostMessage($main,0x10,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
+  Wait-Exit $app
+  Uninstall
+ }finally{if(-not $p.HasExited){$p.Kill();$p.WaitForExit()};if($app -and -not $app.HasExited){$app.Kill();$app.WaitForExit()}}
+}
+'PASS: four shortcut combinations, custom Unicode/spaced paths, registration, preserved preferences, light/dark first launch, uninstall cleanup.'
