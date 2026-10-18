@@ -8,6 +8,6 @@ Ribbon: supplied beige reference, cut out using the built-in image tool. Prompt:
 
 Four screens in light/dark: welcome, installation settings, progress and finish. No Chrome extension controls or copy. Version label is 0.2.4. Montserrat remains resource embedded.
 
-Existing backend has a fixed per-user installation path and automatically creates a Start menu shortcut. Settings shows those facts rather than adding unsupported folder/desktop switches. Language and theme controls affect only setup presentation; the existing launch checkbox is rendered as a switch.
+Settings now includes interactive Desktop and Start menu shortcut switches, matching CONNECT, both enabled by default. Their selection is retained while navigating the visual preview. Connecting these choices to shortcut creation in the installation backend is deferred until visual approval, together with the full build. Existing install execution is untouched in this review.
 
 Visual-only executable has no installation payload and always forces preview mode. It cannot install, change associations or launch an installed application. The normal full build is disabled on this review branch. No stable release/tag, no full installer or app build, and no merge to main until user visual approval.
