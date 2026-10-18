@@ -7,7 +7,13 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Drawing;
 using System.Drawing.Imaging;
+[ComImport,Guid("000214F9-0000-0000-C000-000000000046"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface UnicodeShellLink {
+ [PreserveSig] int GetPath([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder path,int count,IntPtr findData,uint flags);
+}
 public static class TorrentUI {
+ public static string LinkTarget(string path){object link=Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("00021401-0000-0000-C000-000000000046")));try{((System.Runtime.InteropServices.ComTypes.IPersistFile)link).Load(path,0);var text=new StringBuilder(32768);int error=((UnicodeShellLink)link).GetPath(text,text.Capacity,IntPtr.Zero,0);Marshal.ThrowExceptionForHR(error);return text.ToString();}finally{Marshal.FinalReleaseComObject(link);}}
+
  public delegate bool Callback(IntPtr w,IntPtr context);
  [DllImport("user32.dll")] public static extern bool EnumWindows(Callback cb,IntPtr context);
  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr w);
@@ -91,8 +97,7 @@ foreach($theme in @('light','dark')) {
   if(-not (Test-Path (Join-Path $install 'Torrent.exe'))){throw 'Custom directory was ignored'}
   if((Get-Content $preferences)[0] -ne $download -or (Get-Content $preferences)[1] -ne "1 $value 1"){throw 'Theme was not applied or other preferences were overwritten'}
   Check-Links $true $false
-  $shell=New-Object -ComObject WScript.Shell
-  $shortcutTarget=$shell.CreateShortcut($desktop).TargetPath
+  $shortcutTarget=[TorrentUI]::LinkTarget($desktop)
   $expectedTarget=Join-Path $install 'Torrent.exe'
   if($shortcutTarget -ne $expectedTarget){throw ("Shortcut target mismatch: ["+$shortcutTarget+"] expected ["+$expectedTarget+"]")}
   $registration=Get-ItemProperty 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/Torrent'
