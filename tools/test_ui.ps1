@@ -108,12 +108,32 @@ try {
  Start-Sleep -Milliseconds 100
  [TorrentUI]::Save($main,(Join-Path $folder 'header-after-settings.png'))
  [TorrentUI]::CheckPixel($main,(Join-Path $folder 'header-after-settings.png'),($mainWidth-110),14,0xF5F5F4)
- foreach($offset in @(150,70,30)) {
+ foreach($theme in @('dark','light')) {
+  [TorrentUI]::Click($main,($mainWidth-110),32);$settings=Wait-Window 'TorrentDialog'
+  $themeX=if($theme -eq 'dark'){395}else{245}
+  [TorrentUI]::Click($settings,$themeX,267)
+  [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
+  Start-Sleep -Milliseconds 100
+ foreach($offset in @(150,110,70,30)) {
   $scale=[TorrentUI]::GetDpiForWindow($main)/96.0
+  [TorrentUI]::SendMessage($main,0x2A3,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
+  $before=Join-Path $folder 'header-rest.png';[TorrentUI]::Save($main,$before)
   [TorrentUI]::SendMessage($main,0x200,[IntPtr]::Zero,[IntPtr](([int](32*$scale) -shl 16) -bor [int](($mainWidth-$offset)*$scale))) | Out-Null
-  $path=Join-Path $folder ('header-hover-'+$offset+'.png')
+  $path=Join-Path $folder ('header-hover-'+$theme+'-'+$offset+'.png')
   [TorrentUI]::Save($main,$path)
-  [TorrentUI]::CheckPixel($main,$path,($mainWidth-$offset),18,0xF5F5F4)
+  $background=if($theme -eq 'dark'){0x0C0C0C}else{0xF5F5F4}
+  [TorrentUI]::CheckPixel($main,$path,($mainWidth-$offset),18,$background)
+  $a=New-Object Drawing.Bitmap $before;$b=New-Object Drawing.Bitmap $path
+  try {
+   $changed=0
+   for($x=[int](($mainWidth-$offset-14)*$scale);$x -lt [int](($mainWidth-$offset+14)*$scale);$x++){
+    for($y=[int](20*$scale);$y -lt [int](44*$scale);$y++){
+     if($a.GetPixel($x,$y).ToArgb() -ne $b.GetPixel($x,$y).ToArgb()){$changed++}
+    }
+   }
+   if($changed -lt 5){throw "Header icon did not highlight: $theme $offset"}
+  } finally {$a.Dispose();$b.Dispose()}
+ }
  }
  [TorrentUI]::PostMessage($main,0x8005,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
  $notice=Wait-Window 'TorrentDialog'

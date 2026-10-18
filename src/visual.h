@@ -69,7 +69,7 @@ struct Canvas {
  void paragraph(std::wstring const& text,D2D1_RECT_F r){ComPtr<IDWriteTextFormat> f;writing->CreateTextFormat(fontFamily(),productFont.collection.Get(),DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,ui::body,L"",&f);if(f){color(fg());rt->DrawText(text.c_str(),UINT32(text.size()),f.Get(),r,ink.Get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);}}
  void check(float x,float y,bool checked){box(D2D1::RectF(x,y,x+16,y+16),checked?fg():card(),4,checked?0:lineColor());if(checked){line(x+4,y+8,x+7,y+11,background(),1.7f);line(x+7,y+11,x+12,y+5,background(),1.7f);}}
  void chevron(float x,float y){line(x,y,x+4,y+4,muted());line(x+4,y+4,x+8,y,muted());}
- void close(float x,float y){line(x,y,x+10,y+10,muted());line(x+10,y,x,y+10,muted());}
+ void close(float x,float y,bool hover=false){line(x,y,x+10,y+10,hover?fg():muted());line(x+10,y,x,y+10,hover?fg():muted());}
  void titlebar(std::wstring const&s,bool minimize=false){auto title=s;CharUpperBuffW(title.data(),DWORD(title.size()));label(title,D2D1::RectF(24,14,width-65,50),ui::title,false,0,DWRITE_TEXT_ALIGNMENT_LEADING,1.6f);close(width-31,24);if(minimize)line(width-76,29,width-65,29,muted());}
  void success(float x,float y){color(fg());rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x,y),11,11),ink.Get());line(x-5,y,x-1,y+4,background(),2);line(x-1,y+4,x+5,y-4,background(),2);}
 };
