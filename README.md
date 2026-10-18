@@ -7,7 +7,7 @@
 <p align="center">A lightweight, native BitTorrent client for Windows 11.</p>
 
 <p align="center">
-  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.2.1">Download v0.2.1</a>
+  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.2.2">Download v0.2.2</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/sanderstripa/torrent/actions/workflows/windows.yml">Windows builds</a>
   &nbsp;·&nbsp;
@@ -25,28 +25,28 @@ Torrent keeps the interface focused on your downloads: a name, size, status, pro
 
 ## Download
 
-**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.2.1/Torrent-Setup.exe)**
+**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.2.2/Torrent-Setup.exe)**
 
-Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.2.1/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
+Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.2.2/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
 
-| v0.2.1 package | Size |
+| v0.2.2 package | Size |
 |---|---:|
 | Installer | About 3.7 MB |
 | Application, dependency licenses and uninstaller | About 10.1 MB |
 
 The installer works for the current user without administrator privileges. It registers `.torrent` and magnet handlers with Windows. Select Torrent in Windows **Default apps** or **Open with** to make it your preferred handler.
 
-Version **0.2.1 is the current release**. The installer currently uses Russian text; the client offers Russian and English in Settings.
+Version **0.2.2 is the current release**. The installer currently uses Russian text; the client offers Russian and English in Settings.
 
 ## CONNECT UI System
 
-Version 0.2.1 adds a custom header with minimize and close, shared 36px controls, 8px radii, keyboard focus outlines, compact runtime notices and 4px progress. Torrent's existing palette, Montserrat, window dimensions, engine and list density are preserved. System theme follows Windows; RU/EN and theme remain in Settings.
+Version 0.2.2 adds a custom header with minimize and close, shared 36px controls, 8px radii, keyboard focus outlines, compact runtime notices and 4px progress. Torrent's existing palette, Montserrat, window dimensions, engine and list density are preserved. System theme follows Windows; RU/EN and theme remain in Settings.
 
 Settings now uses the approved CONNECT icon #8, rendered directly from the supplied SVG geometry without a background tile. See [implementation and asset provenance](docs/CONNECT-UI-SYSTEM.md).
 
 ## Interface
 
-Version 0.2.1 uses neutral off-white and near-black themes, fine gray borders, monochrome buttons and embedded Montserrat typography inspired by the supplied references. Uppercase dialog headings use subtle letter spacing. The compact 380 × 460 installer follows the Windows app theme; its typography matches the client. The product icon remains unchanged. Montserrat is bundled under the SIL Open Font License; no system font installation is required.
+Version 0.2.2 uses neutral off-white and near-black themes, fine gray borders, monochrome buttons and embedded Montserrat typography inspired by the supplied references. Uppercase dialog headings use subtle letter spacing. The compact 380 × 460 installer follows the Windows app theme; its typography matches the client. The product icon remains unchanged. Montserrat is bundled under the SIL Open Font License; no system font installation is required.
 
 Settings apply and save immediately without Apply or Cancel buttons. The language and theme update the open settings window and the client. Incomplete folder input keeps the last valid absolute path. File selection retains its separate Apply/Cancel workflow.
 
@@ -149,3 +149,5 @@ The product icon is included as [SVG](assets/icon.svg), [PNG](assets/icon-previe
 [Open an issue](https://github.com/sanderstripa/torrent/issues) with the application version, your Windows version and steps to reproduce the problem. Do not include private magnet links, downloaded content or personal paths unless they are necessary to reproduce the issue.
 
 Torrent uses [libtorrent](https://www.libtorrent.org/). Dependency license notices are included with the Windows packages.
+
+The main window remembers its last position across restarts. Position is stored separately in `%LOCALAPPDATA%\Torrent\window-position.txt`; minimized coordinates are ignored and unavailable monitor positions are brought back onto a connected display.
