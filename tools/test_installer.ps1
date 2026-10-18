@@ -92,7 +92,9 @@ foreach($theme in @('light','dark')) {
   if((Get-Content $preferences)[0] -ne $download -or (Get-Content $preferences)[1] -ne "1 $value 1"){throw 'Theme was not applied or other preferences were overwritten'}
   Check-Links $true $false
   $shell=New-Object -ComObject WScript.Shell
-  if($shell.CreateShortcut($desktop).TargetPath -ne (Join-Path $install 'Torrent.exe')){throw 'Shortcut points to wrong directory'}
+  $shortcutTarget=$shell.CreateShortcut($desktop).TargetPath
+  $expectedTarget=Join-Path $install 'Torrent.exe'
+  if($shortcutTarget -ne $expectedTarget){throw ("Shortcut target mismatch: ["+$shortcutTarget+"] expected ["+$expectedTarget+"]")}
   $registration=Get-ItemProperty 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/Torrent'
   if($registration.UninstallString -notlike ('*'+$install+'*')){throw 'Uninstall registration points to wrong directory'}
   Start-Sleep -Milliseconds 300
