@@ -1,0 +1,4 @@
+1 ICON "@TORRENT_SOURCE@/assets/app.ico"
+1 24 "@TORRENT_SOURCE@/assets/app.manifest"
+4 RCDATA "@TORRENT_SOURCE@/assets/fonts/Montserrat.ttf"
+5 RCDATA "@TORRENT_SOURCE@/installer/assets/ribbon.png"

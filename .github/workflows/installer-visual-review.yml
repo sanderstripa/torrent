@@ -1,0 +1,36 @@
+name: Installer visual review only
+on:
+  push:
+    branches: [installer/0.2.4-visual-review]
+permissions:
+  contents: read
+jobs:
+  preview:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build visual shell only, without installation payload
+        run: |
+          cmake -S installer/preview -B preview-build -A x64
+          cmake --build preview-build --config Release
+      - name: Capture actual native screens, no installation
+        shell: pwsh
+        run: |
+          New-Item preview-screens -ItemType Directory -Force
+          $exe=(Resolve-Path preview-build/Release/Torrent-Installer-Visual-Review.exe).Path
+          foreach($theme in @('light','dark')) {
+            New-Item "preview-screens/$theme" -ItemType Directory -Force
+            Push-Location "preview-screens/$theme"
+            $argument=if($theme -eq 'dark'){'--visual-test-dark'}else{'--visual-test'}
+            $process=Start-Process $exe -ArgumentList $argument -PassThru -WindowStyle Hidden
+            if(-not $process.WaitForExit(30000)){$process.Kill();throw 'Visual capture timed out'}
+            if($process.ExitCode -ne 0){throw 'Visual capture failed'}
+            if((Get-ChildItem *.png).Count -ne 4){throw 'Missing preview screens'}
+            Pop-Location
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Torrent-0.2.4-installer-visual-review-NOT-AN-INSTALLER
+          path: |
+            preview-screens/
+            preview-build/Release/Torrent-Installer-Visual-Review.exe

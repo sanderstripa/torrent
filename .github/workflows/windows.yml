@@ -4,6 +4,7 @@ permissions:
   contents: read
 jobs:
   build:
+    if: github.ref != 'refs/heads/installer/0.2.4-visual-review'
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
