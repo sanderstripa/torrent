@@ -25,9 +25,15 @@ Var Label
 Var Font
 Var ProgressFile
 Var ProgressValue
+Var DesktopShortcut
+Var StartMenuShortcut
 Function .onInit
+ StrCpy $DesktopShortcut 1
+ StrCpy $StartMenuShortcut 1
  ${GetParameters} $0
  ${GetOptions} $0 "/PROGRESSFILE=" $ProgressFile
+ ${GetOptions} $0 "/DESKTOPSHORTCUT=" $DesktopShortcut
+ ${GetOptions} $0 "/STARTMENUSHORTCUT=" $StartMenuShortcut
  StrCpy $Launch ${BST_CHECKED}
  InitPluginsDir
  File /oname=$PLUGINSDIR\app.ico "..\assets\app.ico"
@@ -140,8 +146,18 @@ Section
  StrCpy $ProgressValue 85
  Call ReportProgress
  WriteUninstaller "$INSTDIR\Uninstall.exe"
- CreateDirectory "$SMPROGRAMS\Torrent"
- CreateShortcut "$SMPROGRAMS\Torrent\Torrent.lnk" "$INSTDIR\Torrent.exe"
+ ${If} $StartMenuShortcut != "0"
+  CreateDirectory "$SMPROGRAMS\Torrent"
+  CreateShortcut "$SMPROGRAMS\Torrent\Torrent.lnk" "$INSTDIR\Torrent.exe"
+ ${Else}
+  Delete "$SMPROGRAMS\Torrent\Torrent.lnk"
+  RMDir "$SMPROGRAMS\Torrent"
+ ${EndIf}
+ ${If} $DesktopShortcut != "0"
+  CreateShortcut "$DESKTOP\Torrent.lnk" "$INSTDIR\Torrent.exe"
+ ${Else}
+  Delete "$DESKTOP\Torrent.lnk"
+ ${EndIf}
  WriteRegStr HKCU "Software\Classes\Torrent.File" "" "Torrent file"
  WriteRegStr HKCU "Software\Classes\Torrent.File\DefaultIcon" "" '"$INSTDIR\Torrent.exe",0'
  WriteRegStr HKCU "Software\Classes\Torrent.File\shell\open\command" "" '"$INSTDIR\Torrent.exe" "%1"'
@@ -154,7 +170,7 @@ Section
  WriteRegStr HKCU "Software\Torrent\Capabilities\URLAssociations" "magnet" "Torrent.Magnet"
  WriteRegStr HKCU "Software\RegisteredApplications" "Torrent" "Software\Torrent\Capabilities"
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "DisplayName" "Torrent"
- WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "DisplayVersion" "0.2.3"
+ WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "DisplayVersion" "0.2.4"
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "UninstallString" '"$INSTDIR\Uninstall.exe"'
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "DisplayIcon" "$INSTDIR\Torrent.exe"
  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
@@ -162,6 +178,7 @@ Section
  Call ReportProgress
 SectionEnd
 Section "Uninstall"
+ Delete "$DESKTOP\Torrent.lnk"
  DeleteRegKey HKCU "Software\Classes\Torrent.File"
  DeleteRegKey HKCU "Software\Classes\Torrent.Magnet"
  DeleteRegValue HKCU "Software\Classes\.torrent\OpenWithProgids" "Torrent.File"

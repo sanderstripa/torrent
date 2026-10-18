@@ -11,3 +11,6 @@ Four screens in light/dark: welcome, installation settings, progress and finish.
 Settings now includes interactive Desktop and Start menu shortcut switches, matching CONNECT, both enabled by default. Their selection is retained while navigating the visual preview. Connecting these choices to shortcut creation in the installation backend is deferred until visual approval, together with the full build. Existing install execution is untouched in this review.
 
 Visual-only executable has no installation payload and always forces preview mode. It cannot install, change associations or launch an installed application. The normal full build is disabled on this review branch. No stable release/tag, no full installer or app build, and no merge to main until user visual approval.
+
+
+Approved by user: publish 0.2.4. Both shortcut selections are now passed to the existing NSIS backend; a disposable Windows CI integration test verifies all four combinations, uninstall cleanup and the complete native shell installation flow.
