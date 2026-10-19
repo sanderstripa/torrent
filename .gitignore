@@ -4,3 +4,6 @@
 *.user
 /smoke-data/
 /Torrent-startup-*.txt
+
+/.connect-installer-source/
+/.tmp/
