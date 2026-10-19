@@ -1,5 +1,5 @@
 #pragma once
-// Measured from CONNECT commit 09dab71; 840 x 540 CSS pixels, exact Montserrat asset.
+// Measured from CONNECT commit 37210bf (CONNECT v0.2.5); 840 x 540 CSS pixels, exact Montserrat asset.
 struct SetupSettingsGeometry {
  D2D1_RECT_F settingsTitle;
  D2D1_RECT_F back;
@@ -34,7 +34,7 @@ static SetupSettingsGeometry settingsGeometry(){return setupEnglish?SetupSetting
  D2D1::RectF(96.000000f,244.000000f,209.171875f,260.000000f),
  D2D1::RectF(45.000000f,271.000000f,795.000000f,309.000000f),
  D2D1::RectF(96.000000f,282.000000f,228.421875f,298.000000f),
- D2D1::RectF(45.000000f,312.000000f,305.000000f,361.000000f),
+ D2D1::RectF(45.000000f,387.000000f,305.000000f,436.000000f),
 }:SetupSettingsGeometry{
  D2D1::RectF(45.000000f,67.000000f,309.031250f,95.000000f),
  D2D1::RectF(753.750000f,71.250000f,795.000000f,90.750000f),
@@ -51,5 +51,5 @@ static SetupSettingsGeometry settingsGeometry(){return setupEnglish?SetupSetting
  D2D1::RectF(96.000000f,244.000000f,263.843750f,260.000000f),
  D2D1::RectF(45.000000f,271.000000f,795.000000f,309.000000f),
  D2D1::RectF(96.000000f,282.000000f,241.875000f,298.000000f),
- D2D1::RectF(45.000000f,312.000000f,305.000000f,361.000000f),
+ D2D1::RectF(45.000000f,387.000000f,305.000000f,436.000000f),
 };}

@@ -7,7 +7,7 @@ static void syncPathEdit(){
  if(page==3&&!pathEdit){installDirectory=setupPath();pathEdit=CreateWindowExW(0,L"EDIT",installDirectory.c_str(),WS_CHILD|ES_AUTOHSCROLL|WS_TABSTOP,0,0,0,0,window,reinterpret_cast<HMENU>(101),instance,nullptr);originalPathProc=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(pathEdit,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(pathProc)));SendMessageW(pathEdit,EM_SETLIMITTEXT,32700,0);}
  if(!pathEdit)return;float scale=GetDpiForWindow(window)/96.f;auto box=settingsGeometry().path;
  if(!pathFont){pathFont=CreateFontW(-int(12*scale),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Montserrat");SendMessageW(pathEdit,WM_SETFONT,reinterpret_cast<WPARAM>(pathFont),FALSE);}
- RECT r{};GetWindowRect(pathEdit,&r);MapWindowPoints(nullptr,window,reinterpret_cast<POINT*>(&r),2);int x=int((box.left+13)*scale),y=int((box.top+9)*scale),width=int((box.right-box.left-26)*scale),height=int(17*scale);
+ RECT r{};GetWindowRect(pathEdit,&r);MapWindowPoints(nullptr,window,reinterpret_cast<POINT*>(&r),2);int x=int((box.left+13)*scale),y=int((box.top+10)*scale),width=int((box.right-box.left-26)*scale),height=int(15*scale);
  if(r.left!=x||r.top!=y||r.right-r.left!=width||r.bottom-r.top!=height)SetWindowPos(pathEdit,nullptr,x,y,width,height,SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOREDRAW);
  bool visible=(GetWindowLongPtrW(pathEdit,GWL_STYLE)&WS_VISIBLE)!=0;if(visible!=(page==3))ShowWindow(pathEdit,page==3?SW_SHOWNA:SW_HIDE);
  InvalidateRect(pathEdit,nullptr,FALSE);

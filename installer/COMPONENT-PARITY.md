@@ -12,3 +12,7 @@ Windows integration covers RU/EN x light/dark actual first launch, the app setti
 
 
 0.2.7: explicitly set the Montserrat variable `wght` axis (the source font default is 100) on both IDWriteTextFormat3 and IDWriteTextLayout4; verify axis API success in native visual capture. The editable path retains its horizontal offset on focus loss instead of changing it during paint. Integration now also verifies focused/selected path stability.
+
+0.2.8: remeasured full CONNECT v0.2.5 (37210bf), keeping extension layout space without adding extension UI to Torrent. Accept top 387; finish title top 131.75, Done top 312.25. Path content height is 15px (35px field minus 2px border and 18px padding), not 17px. Text uses fractional baseline positioning (NO_SNAP) rather than native pixel snapping.
+
+Renderer limitation: CONNECT uses Chromium HTML input/button; Torrent retains native DirectWrite and EDIT behavior. Exact font file, weight, dimensions, palette and layout are verified separately; this does not establish identical glyph rasterization between the two renderers. No scale, zoom, filter, backdrop-filter, translateZ or will-change is introduced.

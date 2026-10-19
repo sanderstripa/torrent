@@ -1,4 +1,4 @@
-﻿param([string]$Setup,[string]$Payload)
+param([string]$Setup,[string]$Payload)
 $ErrorActionPreference="Stop"
 if(-not $env:GITHUB_ACTIONS){throw "Disposable GitHub runner only"}
 Add-Type -ReferencedAssemblies System.Drawing @"
@@ -71,7 +71,7 @@ foreach($d in @(0,1)){foreach($m in @(0,1)){
  $p=Start-Process $payloadExe -ArgumentList @('/S',"/DESKTOPSHORTCUT=$d","/STARTMENUSHORTCUT=$m") -PassThru -WindowStyle Hidden
  Wait-Exit $p;Check-Links ([bool]$d) ([bool]$m)
  $version=(Get-ItemProperty 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/Torrent').DisplayVersion
- if($version -ne '0.2.7'){throw "Unexpected installed version $version"}
+ if($version -ne '0.2.8'){throw "Unexpected installed version $version"}
  Uninstall
 }}
 # Real shell: custom Unicode/spaced path, retained preferences, both themes, actual post-install launch.
@@ -112,7 +112,7 @@ foreach($theme in @('light','dark')) { foreach($language in @('en','ru')) {
   Start-Sleep -Milliseconds 100
   [TorrentUI]::StablePath($w,$edit,(Join-Path (Get-Location) "dist/installer-check/focused-path-$language-$theme.png"))
   [TorrentUI]::Click($w,60,290);Start-Sleep -Milliseconds 100
-  [TorrentUI]::Click($w,150,336)
+  [TorrentUI]::Click($w,150,412)
   $value=if($theme -eq 'dark'){1}else{0}
   for($i=0;$i -lt 300;$i++){
    if((Test-Path (Join-Path $install 'Torrent.exe')) -and (Test-Path $preferences) -and ((Get-Content $preferences)[1] -eq "1 $value $english")){break}
@@ -127,7 +127,7 @@ foreach($theme in @('light','dark')) { foreach($language in @('en','ru')) {
   $registration=Get-ItemProperty 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/Torrent'
   if($registration.UninstallString -notlike ('*'+$install+'*')){throw 'Uninstall registration points to wrong directory'}
   Start-Sleep -Milliseconds 300
-  [TorrentUI]::Click($w,420,310)
+  [TorrentUI]::Click($w,420,337)
   Wait-Exit $p
   $app=$null;$main=[IntPtr]::Zero
   for($i=0;$i -lt 150;$i++){

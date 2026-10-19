@@ -13,7 +13,7 @@ static void paintPath(HWND w){PAINTSTRUCT ps;BeginPaint(w,&ps);auto& c=pathCanva
   if(layout){setupFontWeight(nullptr,layout.Get(),DWRITE_FONT_WEIGHT_NORMAL,UINT32(value.size()));DWORD a=0,b=0;SendMessageW(w,EM_GETSEL,reinterpret_cast<WPARAM>(&a),reinterpret_cast<LPARAM>(&b));float caretX=0,caretY=0;DWRITE_HIT_TEST_METRICS caret{};layout->HitTestTextPosition(b,FALSE,&caretX,&caretY,&caret);
    if(GetFocus()==w){if(caretX-pathScroll>c.width-2)pathScroll=caretX-c.width+2;if(caretX<pathScroll)pathScroll=caretX;}
    if(a!=b&&GetFocus()==w){UINT32 count=0;layout->HitTestTextRange(std::min(a,b),std::max(a,b)-std::min(a,b),-pathScroll,0,nullptr,0,&count);std::vector<DWRITE_HIT_TEST_METRICS> spans(count);if(count&&SUCCEEDED(layout->HitTestTextRange(std::min(a,b),std::max(a,b)-std::min(a,b),-pathScroll,0,spans.data(),count,&count))){for(auto const& span:spans)c.box(D2D1::RectF(span.left,span.top,span.left+span.width,span.top+span.height),canvas.dark?0x414344:0xd9d8d2,0);}}
-   c.color(setupFg());c.rt->DrawTextLayout(D2D1::Point2F(-pathScroll,0),layout.Get(),c.ink.Get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);
+   c.color(setupFg());c.rt->DrawTextLayout(D2D1::Point2F(-pathScroll,0),layout.Get(),c.ink.Get(),D2D1_DRAW_TEXT_OPTIONS(D2D1_DRAW_TEXT_OPTIONS_CLIP|D2D1_DRAW_TEXT_OPTIONS_NO_SNAP));
    if(GetFocus()==w&&a==b&&pathCaret)c.line(caretX-pathScroll,2,caretX-pathScroll,c.height-2,setupFg(),1);
   }
   c.end();
