@@ -112,6 +112,8 @@ foreach($theme in @('light','dark')) {
    Start-Sleep -Milliseconds 100
   }
   if($main -eq [IntPtr]::Zero){throw 'Post-install launch did not use custom directory'}
+  $null=$app.Handle
+  $app.EnableRaisingEvents=$true
   Start-Sleep -Milliseconds 300
   New-Item dist/installer-check -ItemType Directory -Force|Out-Null
   $capture=(Join-Path (Get-Location) "dist/installer-check/first-launch-$theme.png")
