@@ -74,7 +74,7 @@ jobs:
         run: |
           ./scripts/build-connect-installer.ps1 -PayloadPath "$PWD/dist/Torrent-Payload.exe" -ExpectedExecutable "$PWD/dist/app/Torrent.exe" -Version '0.2.10' -OutFile "$PWD/dist/Torrent-Setup.exe" -TestUI
           Remove-Item -LiteralPath dist/Torrent-Payload.exe
-          Compress-Archive -Path dist/app/* -DestinationPath dist/Torrent-Windows-x64.zip -Force
+          Compress-Archive -Path dist/app,dist/Torrent-Setup.exe,dist/size.txt -DestinationPath dist/Torrent-Windows-x64.zip -Force
       - name: Capture actual UI screens
         shell: pwsh
         run: |
