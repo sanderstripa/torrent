@@ -11,6 +11,7 @@ jobs:
         run: |
           python tools/validate_project.py
           python tools/check_ui_contract.py
+          python tools/check_installer_reference.py
           python tools/compile_settings_icon.py --check
           python tools/compile_theme_icons.py --check
       - name: Get dependency manager
