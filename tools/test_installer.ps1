@@ -71,7 +71,7 @@ foreach($d in @(0,1)){foreach($m in @(0,1)){
  $p=Start-Process $payloadExe -ArgumentList @('/S',"/DESKTOPSHORTCUT=$d","/STARTMENUSHORTCUT=$m") -PassThru -WindowStyle Hidden
  Wait-Exit $p;Check-Links ([bool]$d) ([bool]$m)
  $version=(Get-ItemProperty 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/Torrent').DisplayVersion
- if($version -ne '0.2.8'){throw "Unexpected installed version $version"}
+ if($version -ne '0.2.9'){throw "Unexpected installed version $version"}
  Uninstall
 }}
 # Real shell: custom Unicode/spaced path, retained preferences, both themes, actual post-install launch.

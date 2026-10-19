@@ -18,3 +18,5 @@ Windows integration covers RU/EN x light/dark actual first launch, the app setti
 Renderer limitation: CONNECT uses Chromium HTML input/button; Torrent retains native DirectWrite and EDIT behavior. Exact font file, weight, dimensions, palette and layout are verified separately; this does not establish identical glyph rasterization between the two renderers. No scale, zoom, filter, backdrop-filter, translateZ or will-change is introduced.
 
 Browser-measured normal line metrics (size: ascent/descent): 11:11/3, 12:12/3, 13:13/3, 14:14/4, 23:22/6, 42:41/11. Native text formats now use these source-font rounded metrics instead of fractional DirectWrite defaults.
+
+0.2.9: ribbon-only visual change. Welcome object-fit box (377,61)-(817,426), 440×365 CSS px; progress box (185,69)-(655,374), 470×305 CSS px, from CONNECT source CSS at 840×540. Original 1536×1024 RGBA artwork is unchanged and rendered with its aspect ratio preserved. Both screens downsample the source even at 300% Windows DPI; no low-resolution enlargement or regenerated artwork.
