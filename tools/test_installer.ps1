@@ -1,4 +1,4 @@
-param([string]$Setup,[string]$Payload)
+﻿param([string]$Setup,[string]$Payload)
 $ErrorActionPreference="Stop"
 if(-not $env:GITHUB_ACTIONS){throw "Disposable GitHub runner only"}
 Add-Type -ReferencedAssemblies System.Drawing @"
