@@ -24,8 +24,8 @@ assert "<<(setupEnglish?1:0)" in (root/'src/setup_options.h').read_text(encoding
 print('PASS: measured CONNECT geometry for RU/EN, exact font and palette, weights, no paint-driven path layout, language transfer')
 
 assert 'setupLineMetrics(format.Get(),size)' in s
-assert 'setupLineMetrics(format.Get(),12)' in (root/'src/setup_path_edit.h').read_text()
-assert 'height=int(15*scale)' in (root/'src/setup_options.h').read_text()
+assert 'setupLineMetrics(format.Get(),12)' in (root/'src/setup_path_edit.h').read_text(encoding='utf-8-sig')
+assert 'height=int(15*scale)' in (root/'src/setup_options.h').read_text(encoding='utf-8-sig')
 for language in ['en','ru']:
  finish=json.loads((root/f'installer/reference/finish-{language}.json').read_text())
  assert finish['done']['y']==312.25 and finish['title']['y']==131.75
