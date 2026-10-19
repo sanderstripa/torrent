@@ -15,7 +15,7 @@ public static class TorrentUI {
  [DllImport("user32.dll")] public static extern bool InvalidateRect(IntPtr w,IntPtr r,bool erase);
  [DllImport("user32.dll")] public static extern bool UpdateWindow(IntPtr w);
  public static void StablePath(IntPtr w,IntPtr edit,string path){
-  Rect before,after;GetWindowRect(edit,out before);Save(w,path);using(var baseline=new Bitmap(path)){
+  Rect before,after;GetWindowRect(edit,out before);Save(w,path);Bitmap baseline;using(var image=new Bitmap(path)){baseline=new Bitmap(image);}using(baseline){
    Rect parent;GetWindowRect(w,out parent);int x0=before.left-parent.left,y0=before.top-parent.top;
    for(int frame=0;frame<8;frame++){InvalidateRect(w,IntPtr.Zero,false);UpdateWindow(w);System.Threading.Thread.Sleep(40);GetWindowRect(edit,out after);if(before.left!=after.left||before.top!=after.top||before.right!=after.right||before.bottom!=after.bottom)throw new Exception("Path moved during repaint");Save(w,path);using(var next=new Bitmap(path)){for(int y=y0;y<y0+before.bottom-before.top;y++)for(int x=x0;x<x0+before.right-before.left;x++)if(baseline.GetPixel(x,y).ToArgb()!=next.GetPixel(x,y).ToArgb())throw new Exception("Path pixels changed during idle repaint");}}
   }
