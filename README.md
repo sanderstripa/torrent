@@ -36,17 +36,17 @@ Prefer to run the application without installing it? Download [Torrent-Windows-x
 
 The installer works for the current user without administrator privileges. It registers `.torrent` and magnet handlers with Windows. Select Torrent in Windows **Default apps** or **Open with** to make it your preferred handler.
 
-Version **0.2.8 is the current release**. The installer currently uses Russian text; the client offers Russian and English in Settings.
+Version **0.2.8 is the current release**. The installer and client offer Russian and English. Setup applies the selected language and theme to the installed application.
 
 ## CONNECT UI System
 
-Version 0.2.8 adds a custom header with minimize and close, shared 36px controls, 8px radii, keyboard focus outlines, compact runtime notices and 4px progress. Torrent's existing palette, Montserrat, window dimensions, engine and list density are preserved. System theme follows Windows; RU/EN and theme remain in Settings.
+The client has a custom header with minimize and close, shared 36px controls, 8px radii, keyboard focus outlines, compact runtime notices and 4px progress. Torrent's existing palette, Montserrat, window dimensions, engine and list density are preserved. System theme follows Windows; RU/EN and theme remain in Settings.
 
 Settings now uses the approved CONNECT icon #8, rendered directly from the supplied SVG geometry without a background tile. See [implementation and asset provenance](docs/CONNECT-UI-SYSTEM.md).
 
 ## Interface
 
-Version 0.2.8 uses neutral off-white and near-black themes, fine gray borders, monochrome buttons and embedded Montserrat typography inspired by the supplied references. Uppercase dialog headings use subtle letter spacing. The compact 380 × 460 installer follows the Windows app theme; its typography matches the client. The product icon remains unchanged. Montserrat is bundled under the SIL Open Font License; no system font installation is required.
+Version 0.2.8 uses neutral off-white and near-black themes, fine gray borders, monochrome buttons and embedded Montserrat typography inspired by the supplied references. Uppercase dialog headings use subtle letter spacing. The 840 × 540 installer uses the CONNECT reference palette and Montserrat asset. Version 0.2.8 aligns installation and finish controls with CONNECT 0.2.5 and corrects the path field text box and font line metrics. The product icon remains unchanged. Montserrat is bundled under the SIL Open Font License; no system font installation is required.
 
 Settings apply and save immediately without Apply or Cancel buttons. The language and theme update the open settings window and the client. Incomplete folder input keeps the last valid absolute path. File selection retains its separate Apply/Cancel workflow.
 
