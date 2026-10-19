@@ -9,3 +9,6 @@ Installer text, including the editable path, now uses DirectWrite with the exact
 There is no extra language/appearance explanation. Successful installation writes both the selected language and theme while preserving the download folder and add action. Native folder selection, Unicode installation paths and shortcut options remain supported.
 
 Windows integration covers RU/EN x light/dark actual first launch, the app settings title in the selected language, stable path pixels/position across repeated parent redraws, custom installation directories, shortcut combinations and uninstall cleanup. The normal Torrent client UI and engine sources are unchanged.
+
+
+0.2.7: explicitly set the Montserrat variable `wght` axis (the source font default is 100) on both IDWriteTextFormat3 and IDWriteTextLayout4; verify axis API success in native visual capture. The editable path retains its horizontal offset on focus loss instead of changing it during paint. Integration now also verifies focused/selected path stability.

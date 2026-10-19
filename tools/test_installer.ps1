@@ -71,7 +71,7 @@ foreach($d in @(0,1)){foreach($m in @(0,1)){
  $p=Start-Process $payloadExe -ArgumentList @('/S',"/DESKTOPSHORTCUT=$d","/STARTMENUSHORTCUT=$m") -PassThru -WindowStyle Hidden
  Wait-Exit $p;Check-Links ([bool]$d) ([bool]$m)
  $version=(Get-ItemProperty 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/Torrent').DisplayVersion
- if($version -ne '0.2.6'){throw "Unexpected installed version $version"}
+ if($version -ne '0.2.7'){throw "Unexpected installed version $version"}
  Uninstall
 }}
 # Real shell: custom Unicode/spaced path, retained preferences, both themes, actual post-install launch.
@@ -106,6 +106,11 @@ foreach($theme in @('light','dark')) { foreach($language in @('en','ru')) {
   Start-Sleep -Milliseconds 100
   [TorrentUI]::Save($w,(Join-Path (Get-Location) "dist/installer-check/settings-$language-$theme.png"))
   [TorrentUI]::SetWindowText($edit,$install)|Out-Null
+  [TorrentUI]::SendMessage($edit,0x201,[IntPtr]1,[IntPtr]0x50005)|Out-Null
+  [TorrentUI]::SendMessage($edit,0x202,[IntPtr]::Zero,[IntPtr]0x50005)|Out-Null
+  [TorrentUI]::SendMessage($edit,0xB1,[IntPtr]::Zero,[IntPtr](-1))|Out-Null
+  Start-Sleep -Milliseconds 100
+  [TorrentUI]::StablePath($w,$edit,(Join-Path (Get-Location) "dist/installer-check/focused-path-$language-$theme.png"))
   [TorrentUI]::Click($w,60,290);Start-Sleep -Milliseconds 100
   [TorrentUI]::Click($w,150,336)
   $value=if($theme -eq 'dark'){1}else{0}

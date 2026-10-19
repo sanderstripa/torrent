@@ -10,12 +10,19 @@ static UINT setupInverse(){return canvas.dark?0x202122:0xffffff;}
 static UINT setupField(){return canvas.dark?0x292b2c:0xebe9e4;}
 static std::wstring st(wchar_t const* ru,wchar_t const* en){return setupEnglish?en:ru;}
 #include "setup_geometry.h"
+static bool setupAxisValid=true;
+// Match CSS font-weight using the real Montserrat variable wght axis, never a synthetic weight.
+static void setupFontWeight(IDWriteTextFormat* format,IDWriteTextLayout* layout,DWRITE_FONT_WEIGHT weight,UINT32 count){
+ DWRITE_FONT_AXIS_VALUE axis{DWRITE_FONT_AXIS_TAG_WEIGHT,float(weight)};
+ if(format){ComPtr<IDWriteTextFormat3> variable;if(FAILED(format->QueryInterface(IID_PPV_ARGS(&variable)))||FAILED(variable->SetFontAxisValues(&axis,1)))setupAxisValid=false;}
+ if(layout){ComPtr<IDWriteTextLayout4> variable;if(FAILED(layout->QueryInterface(IID_PPV_ARGS(&variable)))||FAILED(variable->SetFontAxisValues(&axis,1,{0,count})))setupAxisValid=false;}
+}
 // Use one DirectWrite renderer for every setup label and the editable path.
 static void setupText(visual::Canvas& c,std::wstring const& value,D2D1_RECT_F r,float size,UINT tint,DWRITE_TEXT_ALIGNMENT align=DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_FONT_WEIGHT weight=DWRITE_FONT_WEIGHT_NORMAL,float tracking=0){
  ComPtr<IDWriteTextFormat> format;ComPtr<IDWriteTextLayout> layout;
  c.writing->CreateTextFormat(c.fontFamily(),visual::productFont.collection.Get(),weight,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,size,L"",&format);if(!format)return;
- format->SetTextAlignment(align);format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
- c.writing->CreateTextLayout(value.c_str(),UINT32(value.size()),format.Get(),r.right-r.left,r.bottom-r.top,&layout);if(!layout)return;
+ setupFontWeight(format.Get(),nullptr,weight,0);format->SetTextAlignment(align);format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+ c.writing->CreateTextLayout(value.c_str(),UINT32(value.size()),format.Get(),r.right-r.left,r.bottom-r.top,&layout);if(!layout)return;setupFontWeight(nullptr,layout.Get(),weight,UINT32(value.size()));
  if(tracking){ComPtr<IDWriteTextLayout1> spaced;if(SUCCEEDED(layout.As(&spaced)))spaced->SetCharacterSpacing(tracking/2,tracking/2,0,{0,UINT32(value.size())});}
  c.color(tint);c.rt->DrawTextLayout(D2D1::Point2F(r.left,r.top),layout.Get(),c.ink.Get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
@@ -30,7 +37,7 @@ static void setupBox(D2D1_RECT_F r,UINT fill,float radius,UINT border){canvas.bo
 static void choice(std::wstring const& s,D2D1_RECT_F r,bool selected){if(selected)setupBox(r,setupField(),5,setupMuted());text(s,r,11,setupFg(),DWRITE_TEXT_ALIGNMENT_CENTER);}
 static void paint(){PAINTSTRUCT ps;BeginPaint(window,&ps);if(canvas.begin(window)){auto& c=canvas;float w=c.width;c.rt->Clear(D2D1::ColorF(setupBg()));c.rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
  c.line(w-105,36,w-95,36,setupMuted(),1);c.line(w-62,32,w-54,40,setupMuted(),1);c.line(w-54,32,w-62,40,setupMuted(),1);
- c.line(44,490,w-44,490,setupLine(),1);text(L"by CONNECT.",D2D1::RectF(44,500,270,532),10,setupMuted(),DWRITE_TEXT_ALIGNMENT_LEADING,false,1);text(st(L"Версия 0.2.6",L"Version 0.2.6"),D2D1::RectF(w-220,500,w-44,532),10,setupMuted(),DWRITE_TEXT_ALIGNMENT_TRAILING,false,1);
+ c.line(44,490,w-44,490,setupLine(),1);text(L"by CONNECT.",D2D1::RectF(44,500,270,532),10,setupMuted(),DWRITE_TEXT_ALIGNMENT_LEADING,false,1);text(st(L"Версия 0.2.7",L"Version 0.2.7"),D2D1::RectF(w-220,500,w-44,532),10,setupMuted(),DWRITE_TEXT_ALIGNMENT_TRAILING,false,1);
  if(page==0){drawRibbon(D2D1::RectF(410,65,818,389));text(st(L"УСТАНОВКА",L"INSTALLATION"),D2D1::RectF(44,165,380,193),12,setupFg(),DWRITE_TEXT_ALIGNMENT_LEADING,true,4);setupText(c,L"Torrent",D2D1::RectF(44,202,410,258),42,setupFg(),DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_FONT_WEIGHT_MEDIUM,-1.8f);primary(st(L"Установить",L"Install"),primaryRect());text(st(L"Настройки установки",L"Installation settings"),D2D1::RectF(44,350,330,382),13,setupMuted());}
  if(page==1){drawRibbon(D2D1::RectF(204,80,636,370));c.box(D2D1::RectF(44,435,w-44,439),setupLine(),2);if(progress>0)c.box(D2D1::RectF(44,435,44+(w-88)*progress/100.f,439),setupFg(),2);text(st(L"Установка…",L"Installing…"),D2D1::RectF(44,443,w-44,475),11,setupMuted(),DWRITE_TEXT_ALIGNMENT_CENTER);}
  if(page==2){setupText(c,L"Torrent",D2D1::RectF(44,150,w-44,209),42,setupFg(),DWRITE_TEXT_ALIGNMENT_CENTER,DWRITE_FONT_WEIGHT_MEDIUM,-1.8f);text(st(L"Установка завершена",L"Installation complete"),D2D1::RectF(44,218,w-44,249),14,setupFg(),DWRITE_TEXT_ALIGNMENT_CENTER);primary(st(L"Готово",L"Done"),primaryRect());float start=setupEnglish?289:279;setupSwitch(start,358,launch);text(st(L"Запустить Torrent после установки",L"Launch Torrent after installation"),D2D1::RectF(start+51,352,w-120,387),11);}

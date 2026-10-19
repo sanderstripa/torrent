@@ -16,6 +16,7 @@ s=(root/'src/setup_ui.h').read_text(encoding='utf-8-sig')
 colors={'Bg':('202122','f2f0eb'),'Fg':('edede9','202624'),'Muted':('a3a6a5','687071'),'Line':('414344','d9d8d2'),'Button':('e3e4df','242a28'),'Inverse':('202122','ffffff'),'Field':('292b2c','ebe9e4')}
 for name,(dark,light) in colors.items():assert f'setup{name}(){{return canvas.dark?0x{dark}:0x{light};}}' in s
 assert 'syncPathEdit();' not in s
+assert 'DWRITE_FONT_AXIS_TAG_WEIGHT' in s and 'SetFontAxisValues' in s
 assert 'DWRITE_FONT_WEIGHT_SEMI_BOLD' in s and 'DWRITE_FONT_WEIGHT_MEDIUM' in s
 for forbidden in ['Язык и оформление будет','Язык и оформление будут','Language and appearance will']:
  assert forbidden not in s
