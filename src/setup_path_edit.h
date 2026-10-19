@@ -6,7 +6,7 @@ static float pathScroll=0;
 static bool pathCaret=true;
 static constexpr UINT_PTR pathCaretTimer=0xc025;
 static void paintPath(HWND w){PAINTSTRUCT ps;BeginPaint(w,&ps);auto& c=pathCanvas;
- if(c.begin(w)){c.rt->Clear(D2D1::ColorF(setupField()));c.rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+ if(c.begin(w)){c.rt->Clear(D2D1::ColorF(setupField()));c.rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
   int length=GetWindowTextLengthW(w);std::wstring value(length+1,L'\0');GetWindowTextW(w,value.data(),length+1);value.resize(length);
   ComPtr<IDWriteTextFormat> format;ComPtr<IDWriteTextLayout> layout;c.writing->CreateTextFormat(c.fontFamily(),visual::productFont.collection.Get(),DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,12,L"",&format);
   if(format){format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);c.writing->CreateTextLayout(value.c_str(),UINT32(value.size()),format.Get(),1000000,c.height,&layout);}
