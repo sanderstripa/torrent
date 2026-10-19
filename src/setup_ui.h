@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 // CONNECT installer geometry and tokens, local to setup; shared application visuals stay unchanged.
 static bool setupEnglish=false,desktopShortcut=true,startMenuShortcut=true;
 static UINT setupBg(){return canvas.dark?0x202122:0xf2f0eb;}
@@ -17,11 +18,14 @@ static void setupFontWeight(IDWriteTextFormat* format,IDWriteTextLayout* layout,
  if(format){ComPtr<IDWriteTextFormat3> variable;if(FAILED(format->QueryInterface(IID_PPV_ARGS(&variable)))||FAILED(variable->SetFontAxisValues(&axis,1)))setupAxisValid=false;}
  if(layout){ComPtr<IDWriteTextLayout4> variable;if(FAILED(layout->QueryInterface(IID_PPV_ARGS(&variable)))||FAILED(variable->SetFontAxisValues(&axis,1,{0,count})))setupAxisValid=false;}
 }
+// Chromium rounds the source font's hhea ascent/descent to CSS pixels before line layout.
+// Montserrat hhea: ascent 968, descent 251, unitsPerEm 1000; measured in CONNECT at 100%.
+static void setupLineMetrics(IDWriteTextFormat* format,float size){float ascent=std::round(size*.968f),descent=std::round(size*.251f);format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,ascent+descent,ascent);}
 // Use one DirectWrite renderer for every setup label and the editable path.
 static void setupText(visual::Canvas& c,std::wstring const& value,D2D1_RECT_F r,float size,UINT tint,DWRITE_TEXT_ALIGNMENT align=DWRITE_TEXT_ALIGNMENT_LEADING,DWRITE_FONT_WEIGHT weight=DWRITE_FONT_WEIGHT_NORMAL,float tracking=0){
  ComPtr<IDWriteTextFormat> format;ComPtr<IDWriteTextLayout> layout;
  c.writing->CreateTextFormat(c.fontFamily(),visual::productFont.collection.Get(),weight,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,size,L"",&format);if(!format)return;
- setupFontWeight(format.Get(),nullptr,weight,0);format->SetTextAlignment(align);format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+ setupFontWeight(format.Get(),nullptr,weight,0);setupLineMetrics(format.Get(),size);format->SetTextAlignment(align);format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
  c.writing->CreateTextLayout(value.c_str(),UINT32(value.size()),format.Get(),r.right-r.left,r.bottom-r.top,&layout);if(!layout)return;setupFontWeight(nullptr,layout.Get(),weight,UINT32(value.size()));
  if(tracking){ComPtr<IDWriteTextLayout1> spaced;if(SUCCEEDED(layout.As(&spaced)))spaced->SetCharacterSpacing(tracking/2,tracking/2,0,{0,UINT32(value.size())});}
  c.color(tint);c.rt->DrawTextLayout(D2D1::Point2F(r.left,r.top),layout.Get(),c.ink.Get(),D2D1_DRAW_TEXT_OPTIONS(D2D1_DRAW_TEXT_OPTIONS_CLIP|D2D1_DRAW_TEXT_OPTIONS_NO_SNAP));
