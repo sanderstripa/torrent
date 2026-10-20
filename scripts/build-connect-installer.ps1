@@ -34,6 +34,25 @@ if(!$CoreRoot){
 }
 $core=(Resolve-Path -LiteralPath $CoreRoot).Path
 $sourceCommit=(git -C $repo rev-parse HEAD).Trim()
-& (Join-Path $core 'build.ps1') -Product 'torrent' -PayloadPath $PayloadPath -Version $Version -OutFile $OutFile -ExtensionPath $ExtensionPath -ExpectedExecutable $ExpectedExecutable -ProductCommit $sourceCommit -Go $Go
-if($LASTEXITCODE){throw 'Shared installer build failed'}
+# Product inputs only: keep the pinned shared source unchanged after this build.
+# Wails uses a PNG at runtime in addition to the PE/Explorer ICO resource.
+$brandInputs=@(
+ @{Source=(Join-Path $repo 'assets/app.ico');Target=(Join-Path $core 'products/torrent.ico')},
+ @{Source=(Join-Path $repo 'assets/icon-preview.png');Target=(Join-Path $core 'core/web/assets/icon.png')}
+)
+$backups=@{}
+try{
+ foreach($inputAsset in $brandInputs){
+  $backups[$inputAsset.Target]=[IO.File]::ReadAllBytes($inputAsset.Target)
+  [IO.File]::WriteAllBytes($inputAsset.Target,[IO.File]::ReadAllBytes($inputAsset.Source))
+ }
+ & (Join-Path $core 'build.ps1') -Product 'torrent' -PayloadPath $PayloadPath -Version $Version -OutFile $OutFile -ExtensionPath $ExtensionPath -ExpectedExecutable $ExpectedExecutable -ProductCommit $sourceCommit -Go $Go
+ if($LASTEXITCODE){throw 'Shared installer build failed'}
+ $metadata=Get-Content -LiteralPath "$OutFile.build.json" -Raw | ConvertFrom-Json
+ $metadata | Add-Member -NotePropertyName productIconSHA256 -NotePropertyValue ((Get-FileHash (Join-Path $repo 'assets/app.ico') -Algorithm SHA256).Hash.ToLowerInvariant())
+ $metadata | Add-Member -NotePropertyName runtimeIconSHA256 -NotePropertyValue ((Get-FileHash (Join-Path $repo 'assets/icon-preview.png') -Algorithm SHA256).Hash.ToLowerInvariant())
+ $metadata | ConvertTo-Json | Set-Content -LiteralPath "$OutFile.build.json" -Encoding utf8
+}finally{
+ foreach($target in $backups.Keys){[IO.File]::WriteAllBytes($target,$backups[$target])}
+}
 if($TestUI){& (Join-Path $core 'test-ui.ps1') -OutputDirectory (Join-Path $repo '.tmp/installer-review')}

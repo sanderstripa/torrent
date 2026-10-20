@@ -1,71 +1,26 @@
-"""Render our own vector paths to multi-resolution PNG/ICO, using only Python stdlib."""
-import math, re, struct, zlib
+"""Package the redrawn master into Windows sizes. Regeneration requires Pillow."""
+import struct,zlib
 from pathlib import Path
-import xml.etree.ElementTree as ET
-ROOT = Path(__file__).resolve().parents[1]
-svg = ET.parse(ROOT / 'assets/icon.svg').getroot()
-def polygon(data):
-    tokens = re.findall(r'[MLQZ]|-?\d+(?:\.\d+)?', data)
-    points, i, current = [], 0, (0, 0)
-    while i < len(tokens):
-        command = tokens[i]; i += 1
-        if command in ('M', 'L'):
-            current = (float(tokens[i]), float(tokens[i+1])); i += 2; points.append(current)
-        elif command == 'Q':
-            control = (float(tokens[i]), float(tokens[i+1]))
-            end = (float(tokens[i+2]), float(tokens[i+3])); i += 4
-            start = current
-            for step in range(1, 25):
-                t = step / 24
-                points.append(tuple((1-t)**2*start[j]+2*(1-t)*t*control[j]+t*t*end[j] for j in (0,1)))
-            current = end
-    return points
-def inside(points, x, y):
-    result = False
-    for a,b in zip(points, points[1:]+points[:1]):
-        if (a[1] > y) != (b[1] > y) and x < (b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0]: result = not result
-    return result
-def rgb(value):
-    if len(value)==4: value='#'+''.join(c*2 for c in value[1:])
-    return tuple(int(value[i:i+2],16) for i in (1,3,5))
-gradients = {}
-for node in svg.iter():
-    if node.tag.endswith('linearGradient'):
-        stops = [(float(s.get('offset','0')), rgb(s.get('stop-color'))) for s in node]
-        gradients[node.get('id')] = (float(node.get('x2','1')), float(node.get('y2','0')), stops)
-paths = [(polygon(node.get('d')),node.get('fill')) for node in svg.iter() if node.tag.endswith('path') and node.get('fill','').startswith('url(')]
-cutouts=[polygon(node.get('d')) for node in svg.iter() if node.get('data-cutout')=='true']
-vx,vy,vw,vh=map(float,svg.get('viewBox').split())
-def gradient(name,x,y):
-    gx,gy,stops=gradients[name]; t=max(0,min(1,(x*gx+y*gy)/(gx*gx+gy*gy)))
-    for (a,ca),(b,cb) in zip(stops,stops[1:]):
-        if t <= b:
-            f=(t-a)/(b-a); return tuple(round(ca[j]*(1-f)+cb[j]*f) for j in (0,1,2))
-    return stops[-1][1]
-def chunk(name, data): return struct.pack('>I',len(data))+name+data+struct.pack('>I',zlib.crc32(name+data)&0xffffffff)
-def render(n):
-    raw=bytearray()
-    for row in range(n):
-        raw.append(0)
-        for column in range(n):
-            samples=[]
-            for sy,sx in (((j+.5)/4,(i+.5)/4) for j in range(4) for i in range(4)):
-                x=vx+(column+sx)*vw/n; y=vy+(row+sy)*vh/n
-                c=(0,0,0,0)
-                for poly,fill in paths:
-                    if inside(poly,x,y): c=(*gradient(fill[5:-1],x/256,y/256),255)
-                if any(inside(poly,x,y) for poly in cutouts): c=(0,0,0,0)
-                samples.append(c)
-            alpha=sum(c[3] for c in samples)
-            raw.extend(round(sum(c[j]*c[3] for c in samples)/alpha) if alpha else 0 for j in range(3))
-            raw.append(round(alpha/len(samples)))
-    return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',n,n,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(raw,9))+chunk(b'IEND',b'')
-sizes=(16,24,32,48,64,128,256)
-# The same tightly framed transparent ribbon is used in every product asset.
-images=[render(n) for n in sizes]
-offset=6+16*len(sizes); entries=[]
-for n,blob in zip(sizes,images):
-    entries.append(struct.pack('<BBBBHHII',n if n<256 else 0,n if n<256 else 0,0,0,1,32,len(blob),offset));offset+=len(blob)
-(ROOT/'assets/app.ico').write_bytes(struct.pack('<HHH',0,1,len(images))+b''.join(entries)+b''.join(images))
+from PIL import Image
+ROOT=Path(__file__).resolve().parents[1]
+SIZES=(16,20,24,32,40,48,64,96,128,256)
+def chunk(name,data):return struct.pack('>I',len(data))+name+data+struct.pack('>I',zlib.crc32(name+data)&0xffffffff)
+def png(image):
+ n=image.width;pixels=image.tobytes();raw=b''.join(b'\0'+pixels[y*n*4:(y+1)*n*4] for y in range(n))
+ return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',n,n,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(raw,9))+chunk(b'IEND',b'')
+master=Image.open(ROOT/'assets/icon-master.png').convert('RGBA')
+# Optical bounds exclude the effectively invisible alpha fringe; preserve the original master.
+bounds=master.getchannel('A').point(lambda a:255 if a>=16 else 0).getbbox()
+assert bounds
+art=master.crop(bounds);side=max(art.size)
+square=Image.new('RGBA',(side,side));square.paste(art,((side-art.width)//2,(side-art.height)//2))
+images=[]
+for size in SIZES:
+ frame=square.resize((size,size),Image.Resampling.LANCZOS);images.append(png(frame))
+ (ROOT/f'assets/icon-{size}.png').write_bytes(images[-1])
+offset=6+16*len(SIZES);entries=[]
+for size,data in zip(SIZES,images):
+ entries.append(struct.pack('<BBBBHHII',size%256,size%256,0,0,1,32,len(data),offset));offset+=len(data)
+(ROOT/'assets/app.ico').write_bytes(struct.pack('<HHH',0,1,len(SIZES))+b''.join(entries)+b''.join(images))
 (ROOT/'assets/icon-preview.png').write_bytes(images[-1])
-print('Generated app.ico with',len(images),'sizes')
+print('Generated reference icon:',SIZES)

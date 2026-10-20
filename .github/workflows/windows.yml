@@ -70,17 +70,26 @@ jobs:
           & "${env:ProgramFiles(x86)}/NSIS/makensis.exe" /WX /INPUTCHARSET UTF8 Torrent.nsi
           if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
           Pop-Location
+      - name: Set versioned installer filename
+        shell: pwsh
+        run: |
+          $project = Get-Content CMakeLists.txt -Raw
+          if ($project -notmatch 'project\(Torrent VERSION ([0-9]+\.[0-9]+\.[0-9]+)') { throw "Missing product version" }
+          "TORRENT_VERSION=$($Matches[1])" >> $env:GITHUB_ENV
+          "TORRENT_INSTALLER=Torrent-$($Matches[1])-x64.exe" >> $env:GITHUB_ENV
       - name: Build shared CONNECT Installer
         run: |
-          ./scripts/build-connect-installer.ps1 -PayloadPath "$PWD/dist/Torrent-Payload.exe" -ExpectedExecutable "$PWD/dist/app/Torrent.exe" -Version '0.2.10' -OutFile "$PWD/dist/Torrent-Setup.exe" -TestUI
+          ./scripts/build-connect-installer.ps1 -PayloadPath "$PWD/dist/Torrent-Payload.exe" -ExpectedExecutable "$PWD/dist/app/Torrent.exe" -Version $env:TORRENT_VERSION -OutFile "$PWD/dist/$env:TORRENT_INSTALLER" -TestUI
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "& ./tools/test_icon_resources.ps1 -Executables @('dist/app/Torrent.exe','dist/$env:TORRENT_INSTALLER','dist/Torrent-Payload.exe')"
+          if ($LASTEXITCODE) { throw "Product icon resource audit failed" }
           Remove-Item -LiteralPath dist/Torrent-Payload.exe
-          Compress-Archive -Path dist/app,dist/Torrent-Setup.exe,dist/size.txt -DestinationPath dist/Torrent-Windows-x64.zip -Force
+          Compress-Archive -Path dist/app,"dist/$env:TORRENT_INSTALLER",dist/size.txt -DestinationPath dist/Torrent-Windows-x64.zip -Force
       - name: Capture actual UI screens
         shell: pwsh
         run: |
           New-Item dist/screenshots -ItemType Directory -Force
           $app = (Resolve-Path build/Release/Torrent.exe).Path
-          $setup = (Resolve-Path dist/Torrent-Setup.exe).Path
+          $setup = (Resolve-Path "dist/$env:TORRENT_INSTALLER").Path
           Push-Location dist/screenshots
           foreach ($exe in @($app)) {
             $process = Start-Process $exe -ArgumentList '--visual-test' -PassThru -WindowStyle Hidden
@@ -106,7 +115,7 @@ jobs:
         run: |
           New-Item dist/screenshots/dark -ItemType Directory -Force
           $app = (Resolve-Path build/Release/Torrent.exe).Path
-          $setup = (Resolve-Path dist/Torrent-Setup.exe).Path
+          $setup = (Resolve-Path "dist/$env:TORRENT_INSTALLER").Path
           Push-Location dist/screenshots/dark
           foreach ($exe in @($app)) {
             $process = Start-Process $exe -ArgumentList '--visual-test-dark' -PassThru -WindowStyle Hidden

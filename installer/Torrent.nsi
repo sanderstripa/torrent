@@ -164,13 +164,14 @@ Section
  WriteRegStr HKCU "Software\Classes\.torrent\OpenWithProgids" "Torrent.File" ""
  WriteRegStr HKCU "Software\Classes\Torrent.Magnet" "" "URL:Torrent magnet"
  WriteRegStr HKCU "Software\Classes\Torrent.Magnet" "URL Protocol" ""
+ WriteRegStr HKCU "Software\Classes\Torrent.Magnet\DefaultIcon" "" '"$INSTDIR\Torrent.exe",0'
  WriteRegStr HKCU "Software\Classes\Torrent.Magnet\shell\open\command" "" '"$INSTDIR\Torrent.exe" "%1"'
  WriteRegStr HKCU "Software\Torrent\Capabilities" "ApplicationName" "Torrent"
  WriteRegStr HKCU "Software\Torrent\Capabilities\FileAssociations" ".torrent" "Torrent.File"
  WriteRegStr HKCU "Software\Torrent\Capabilities\URLAssociations" "magnet" "Torrent.Magnet"
  WriteRegStr HKCU "Software\RegisteredApplications" "Torrent" "Software\Torrent\Capabilities"
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "DisplayName" "Torrent"
- WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "DisplayVersion" "0.2.10"
+ WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "DisplayVersion" "0.3.1"
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "UninstallString" '"$INSTDIR\Uninstall.exe"'
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Torrent" "DisplayIcon" "$INSTDIR\Torrent.exe"
  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
