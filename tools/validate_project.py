@@ -21,14 +21,27 @@ for i in range(count):
         assert zlib.crc32(name+data)&0xffffffff==struct.unpack_from('>I',blob,pos+8+n)[0]
         if name==b'IDAT': compressed+=data
         pos+=12+n
-    raw=zlib.decompress(compressed);size=w or 256;stride=size*4+1
-    assert len(raw)==stride*(h or 256)
-    assert all(raw[y*stride]==0 for y in range(size))
-    assert raw[4]==0, 'Icon corner must be transparent'
-    assert raw[(size//2)*stride+1+(size//2)*4+3]>=240, 'Reference center behind arrow must remain opaque'
-    visible=[(x,y) for y in range(size) for x in range(size) if raw[y*stride+1+x*4+3]>0]
-    assert visible and max(y for x,y in visible)-min(y for x,y in visible)+1>=size*.98, 'Ribbon must fill the icon height'
-    assert all(raw[y*stride+1+x*4+3]==0 for x,y in [(0,0),(size-1,0),(0,size-1),(size-1,size-1)]), 'Outer tile must be absent'
+    filtered=zlib.decompress(compressed);size=w or 256;stride=size*4
+    assert len(filtered)==(stride+1)*(h or 256)
+    rows=[];previous=bytearray(stride)
+    for y in range(size):
+        mode=filtered[y*(stride+1)];row=bytearray(filtered[y*(stride+1)+1:(y+1)*(stride+1)])
+        for x in range(stride):
+            a=row[x-4] if x>=4 else 0;b=previous[x];c=previous[x-4] if x>=4 else 0
+            if mode==1: prediction=a
+            elif mode==2: prediction=b
+            elif mode==3: prediction=(a+b)//2
+            elif mode==4:
+                estimate=a+b-c;pa,pb,pc=abs(estimate-a),abs(estimate-b),abs(estimate-c)
+                prediction=a if pa<=pb and pa<=pc else b if pb<=pc else c
+            elif mode==0: prediction=0
+            else: raise AssertionError('Unsupported PNG row filter')
+            row[x]=(row[x]+prediction)&255
+        rows.append(row);previous=row
+    assert rows[size//2][(size//2)*4+3]>=240, 'Graphite tile must remain opaque'
+    assert all(rows[y][x*4+3]==0 for x,y in [(0,0),(size-1,0),(0,size-1),(size-1,size-1)]), 'Exterior corners must be transparent'
+    visible=[(x,y) for y in range(size) for x in range(size) if rows[y][x*4+3]>128]
+    assert visible and max(y for x,y in visible)-min(y for x,y in visible)+1>=int(size*.95), 'Squircle has excessive padding'
     assert planes==1 and bpp==32
 for name in ('src/main.cpp','src/engine.cpp','src/engine.h','installer/Torrent.nsi','.github/workflows/windows.yml'):
     assert (root/name).stat().st_size>0

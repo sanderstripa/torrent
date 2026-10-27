@@ -30,7 +30,7 @@ public static class ProductIconAudit {
       writer.Write(group,offset,8);writer.Write(image.Length);writer.Write(22);writer.Write(image);stream.Position=0;
       using(var bitmap=image.Length>8&&image[0]==137&&image[1]==80?new Bitmap(new MemoryStream(image)):new Icon(stream).ToBitmap()){
        var center=bitmap.GetPixel(bitmap.Width/2,bitmap.Height/2);
-       if(center.A<240||center.R<=center.B+15)throw new Exception("Old or incorrect icon center: "+path+" size "+size);
+       if(center.A<240)throw new Exception("Missing opaque graphite tile: "+path+" size "+size);
        if(bitmap.GetPixel(0,0).A>0)throw new Exception("Opaque outer icon tile: "+path);
        sizes.Add(size);
       }
@@ -42,7 +42,7 @@ public static class ProductIconAudit {
    if(callbackError!=null)throw callbackError;
    foreach(int size in new[]{16,20,24,32,40,48,64,96,128,256})if(!sizes.Contains(size))throw new Exception("Missing size "+size+" in "+path);
    if(groups==0)throw new Exception("No product icon in "+path);
-   Console.WriteLine("PASS: "+Path.GetFileName(path)+"; all ten reference icon sizes, filled center, transparent exterior");
+   Console.WriteLine("PASS: "+Path.GetFileName(path)+"; all ten reference icon sizes, opaque graphite center, transparent exterior");
   }finally{FreeLibrary(module);}
  }
 }
