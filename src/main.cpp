@@ -2,6 +2,7 @@
 #include "visual.h"
 #include "window_position.h"
 #include "popup.h"
+#include "file_list_sort.h"
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -19,6 +20,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <cwctype>
+#include <numeric>
 using Microsoft::WRL::ComPtr;
 static HINSTANCE instance; static HWND mainWindow; static std::unique_ptr<Engine> engine;
 static std::filesystem::path dataRoot;
@@ -43,14 +45,34 @@ static bool browse(HWND owner,std::wstring& folder) {ComPtr<IFileDialog> d; if(F
 
 struct Dialog {
  int kind; bool done=false,accepted=false; lt::torrent_handle handle; std::wstring result;
- HWND window=nullptr;std::vector<int> priorities,remembered;std::vector<std::wstring> names,sizes;
+ HWND window=nullptr;std::vector<int> priorities,remembered;std::vector<std::wstring> names,sizes;std::vector<std::int64_t> bytes;std::vector<int> displayOrder;
+ int sortBy=0;bool ascending=true;float nameWidth=0,horizontal=0,horizontalMax=0;bool draggingNameScroll=false;float dragStartX=0,dragStartOffset=0;
  visual::Canvas canvas;int offset=0,hover=-1,focused=1;Preferences draft;HFONT font=nullptr;HBRUSH background=nullptr;bool fixture=false,folderValid=true,saveFailed=false,keyboardFocus=false;
 };
 static void fillFiles(Dialog& d) {
  auto ti=d.handle.torrent_file();if(!ti)return;auto ps=d.handle.get_file_priorities();
+ d.priorities.clear();d.remembered.clear();d.names.clear();d.sizes.clear();d.bytes.clear();d.displayOrder.clear();
+ d.nameWidth=0;d.horizontal=0;d.horizontalMax=0;d.offset=0;
  bool pending=std::any_of(engine->items.begin(),engine->items.end(),[&](auto const& item){return item.handle==d.handle&&item.selectPending;});
  for(int i=0;i<ti->num_files();++i){auto index=lt::file_index_t(i);int p=i<int(ps.size())?static_cast<std::uint8_t>(ps[i]):4;if(pending&&p==0)p=4;
- d.priorities.push_back(p);d.remembered.push_back(p?p:4);d.names.push_back(std::filesystem::path(wide(ti->files().file_path(index))).filename().wstring());d.sizes.push_back(sizeText(ti->files().file_size(index)));}
+ d.priorities.push_back(p);d.remembered.push_back(p?p:4);d.names.push_back(std::filesystem::path(wide(ti->files().file_path(index))).filename().wstring());d.sizes.push_back(sizeText(ti->files().file_size(index)));d.bytes.push_back(ti->files().file_size(index));d.displayOrder.push_back(i);}
+ if(d.sortBy)d.displayOrder=filelist::sortedIndices(d.names,d.bytes,d.sortBy,d.ascending);
+}
+static int fileIndex(Dialog const& d,int row){return row>=0&&row<int(d.displayOrder.size())?d.displayOrder[row]:row;}
+static int maxFilesScroll(Dialog const& d){return std::max(0,int(d.priorities.size())*42-std::max(0,int(d.canvas.height-(d.horizontalMax>0?239.f:214.f))));}
+static D2D1_RECT_F fileScrollTrack(Dialog const& d){return D2D1::RectF(98,d.canvas.height-88,d.canvas.width-254,d.canvas.height-78);}
+static D2D1_RECT_F fileScrollThumb(Dialog const& d){
+ auto r=fileScrollTrack(d);float length=r.right-r.left;
+ float thumb=std::clamp(length*length/(length+d.horizontalMax),28.f,length);
+ float left=r.left+(length-thumb)*(d.horizontalMax>0?d.horizontal/d.horizontalMax:0.f);
+ return D2D1::RectF(left,r.top,left+thumb,r.bottom);
+}
+static void sortDialogFiles(Dialog& d,int by){
+ int selected=d.focused>=100&&d.focused<100+int(d.priorities.size())?fileIndex(d,d.focused-100):-1;
+ if(d.sortBy==by)d.ascending=!d.ascending;else{d.sortBy=by;d.ascending=true;}
+ d.displayOrder=filelist::sortedIndices(d.names,d.bytes,d.sortBy,d.ascending);
+ if(selected>=0){auto it=std::find(d.displayOrder.begin(),d.displayOrder.end(),selected);if(it!=d.displayOrder.end())d.focused=100+int(it-d.displayOrder.begin());}
+ d.offset=std::clamp(d.offset,0,maxFilesScroll(d));
 }
 static std::wstring priorityLabel(int p){return p==0?tr(L"Не скачивать",L"Skip"):p<=1?tr(L"Низкий",L"Low"):p>=7?tr(L"Высокий",L"High"):tr(L"Обычный",L"Normal");}
 static D2D1_RECT_F settingRect(int id,float width){if(id>=13&&id<=15){float size=(width-64)/3.f;float x=24+(id-13)*(size+8);return D2D1::RectF(x,251,x+size,283);}if(id==16)return D2D1::RectF(width-96,211,width-64,239);if(id==17)return D2D1::RectF(width-56,211,width-24,239);return D2D1::RectF(width-250,165,width-24,201);}
@@ -60,14 +82,28 @@ static void drawDialog(HWND w,Dialog& d){PAINTSTRUCT ps;BeginPaint(w,&ps);auto& 
  if(d.kind==3){c.label(L"!",D2D1::RectF(24,65,45,90),18,true,0xc95050);c.paragraph(d.result,D2D1::RectF(56,67,width-24,height-70));}else if(d.kind==2){auto ti=d.fixture?std::shared_ptr<lt::torrent_info const>{}:d.handle.torrent_file();c.label(d.fixture?L"The Witcher S01":ti?wide(ti->name()):tr(L"Получение списка файлов…",L"Fetching file list…"),D2D1::RectF(24,50,width-24,76),17,true);
  c.label(d.fixture?tr(L"12,6 ГБ · 10 файлов",L"12.6 GB · 10 files"):ti?sizeText(ti->total_size())+L" · "+std::to_wstring(ti->num_files())+tr(L" файлов",L" files"):L"",D2D1::RectF(24,76,width-24,98),13,false,c.muted());
  c.box(D2D1::RectF(18,112,width-18,height-70),c.card(),9,c.lineColor());c.box(D2D1::RectF(18,112,width-18,143),c.dark?0x191919:0xf0f0ee,7);
+ if(d.displayOrder.size()!=d.priorities.size()){d.displayOrder.resize(d.priorities.size());std::iota(d.displayOrder.begin(),d.displayOrder.end(),0);}
+ if(d.nameWidth<=0)for(auto const& name:d.names)d.nameWidth=std::max(d.nameWidth,c.textWidth(name,visual::ui::body));
+ float nameViewport=std::max(1.f,width-352.f);
+ d.horizontalMax=std::max(0.f,d.nameWidth+16.f-nameViewport);d.horizontal=std::clamp(d.horizontal,0.f,d.horizontalMax);d.offset=std::clamp(d.offset,0,maxFilesScroll(d));
+ float listBottom=d.horizontalMax>0?height-96:height-71;
  c.check(32,120,!d.priorities.empty()&&std::all_of(d.priorities.begin(),d.priorities.end(),[](int p){return p>0;}));
- c.label(tr(L"Имя файла",L"File name"),D2D1::RectF(68,112,width-258,143),13,false,c.muted());c.label(tr(L"Размер",L"Size"),D2D1::RectF(width-242,112,width-156,143),13,false,c.muted());c.label(tr(L"Приоритет",L"Priority"),D2D1::RectF(width-148,112,width-30,143),13,false,c.muted());
- c.rt->PushAxisAlignedClip(D2D1::RectF(19,143,width-19,height-71),D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
- for(int i=0;i<int(d.priorities.size());++i){float y=143.f+i*42-d.offset;if(y+42<143||y>height-70)continue;
- if(d.focused==100+i)c.box(D2D1::RectF(20,y+1,width-20,y+41),c.selected(),0);c.check(32,y+13,d.priorities[i]!=0);auto extension=std::filesystem::path(d.names[i]).extension().wstring();std::transform(extension.begin(),extension.end(),extension.begin(),[](wchar_t ch){return wchar_t(towlower(ch));});c.box(D2D1::RectF(70,y+12,84,y+30),c.muted(),2);if(extension==L".mkv"||extension==L".mp4"||extension==L".avi"){c.line(75,y+17,80,y+21,c.card(),1.7f);c.line(80,y+21,75,y+25,c.card(),1.7f);c.line(75,y+25,75,y+17,c.card(),1.7f);}else if(extension==L".jpg"||extension==L".png"||extension==L".jpeg"){c.line(72,y+27,76,y+21,c.card());c.line(76,y+21,79,y+25,c.card());c.line(79,y+25,81,y+22,c.card());}else {c.line(73,y+18,81,y+18,c.card(),1);c.line(73,y+22,81,y+22,c.card(),1);c.line(73,y+26,78,y+26,c.card(),1);}
- c.label(d.names[i],D2D1::RectF(98,y,width-254,y+42),visual::ui::body);c.label(d.sizes[i],D2D1::RectF(width-242,y,width-158,y+42),13,false,c.muted());
+ c.label(tr(L"Имя файла",L"File name"),D2D1::RectF(68,112,width-281,143),13,false,d.sortBy==1?c.fg():c.muted());
+ if(d.sortBy==1)c.label(d.ascending?L"↑":L"↓",D2D1::RectF(width-281,112,width-258,143),14,false,c.fg());
+ c.label(tr(L"Размер",L"Size"),D2D1::RectF(width-242,112,width-178,143),13,false,d.sortBy==2?c.fg():c.muted());
+ if(d.sortBy==2)c.label(d.ascending?L"↑":L"↓",D2D1::RectF(width-178,112,width-156,143),14,false,c.fg());
+ c.label(tr(L"Приоритет",L"Priority"),D2D1::RectF(width-148,112,width-30,143),13,false,c.muted());
+ c.rt->PushAxisAlignedClip(D2D1::RectF(19,143,width-19,listBottom),D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+ for(int row=0;row<int(d.priorities.size());++row){float y=143.f+row*42-d.offset;if(y+42<143||y>listBottom)continue;
+ int i=fileIndex(d,row);
+ if(d.focused==100+row)c.box(D2D1::RectF(20,y+1,width-20,y+41),c.selected(),0);c.check(32,y+13,d.priorities[i]!=0);auto extension=std::filesystem::path(d.names[i]).extension().wstring();std::transform(extension.begin(),extension.end(),extension.begin(),[](wchar_t ch){return wchar_t(towlower(ch));});c.box(D2D1::RectF(70,y+12,84,y+30),c.muted(),2);if(extension==L".mkv"||extension==L".mp4"||extension==L".avi"){c.line(75,y+17,80,y+21,c.card(),1.7f);c.line(80,y+21,75,y+25,c.card(),1.7f);c.line(75,y+25,75,y+17,c.card(),1.7f);}else if(extension==L".jpg"||extension==L".png"||extension==L".jpeg"){c.line(72,y+27,76,y+21,c.card());c.line(76,y+21,79,y+25,c.card());c.line(79,y+25,81,y+22,c.card());}else {c.line(73,y+18,81,y+18,c.card(),1);c.line(73,y+22,81,y+22,c.card(),1);c.line(73,y+26,78,y+26,c.card(),1);}
+ c.rt->PushAxisAlignedClip(D2D1::RectF(98,y,width-254,y+42),D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+ c.label(d.names[i],D2D1::RectF(98-d.horizontal,y,98-d.horizontal+std::max(d.nameWidth+12.f,nameViewport+12.f),y+42),visual::ui::body);
+ c.rt->PopAxisAlignedClip();
+ c.label(d.sizes[i],D2D1::RectF(width-242,y,width-158,y+42),13,false,c.muted());
  int p=d.priorities[i];c.box(D2D1::RectF(width-150,y+3,width-30,y+39),c.card(),visual::ui::radius,c.lineColor());c.label(priorityLabel(p),D2D1::RectF(width-140,y+6,width-48,y+36),visual::ui::body,false,p>=7?c.fg():c.muted());c.chevron(width-47,y+18);c.line(20,y+42,width-20,y+42,c.lineColor(),1);}
  c.rt->PopAxisAlignedClip();
+ if(d.horizontalMax>0){c.box(fileScrollTrack(d),c.track(),5);c.box(fileScrollThumb(d),c.dark?0xa7aaad:0x797d82,5);}
  }else if(d.kind==1){
  c.label(tr(L"Папка загрузок",L"Download folder"),D2D1::RectF(24,67,width-24,95),visual::ui::help,false,c.muted());c.box(D2D1::RectF(24,103,width-78,139),c.card(),visual::ui::radius,c.lineColor());c.button(L"…",D2D1::RectF(width-66,103,width-24,139),false,d.hover==11);
  c.label(tr(L"При добавлении",L"On adding"),D2D1::RectF(24,163,width-250,203),visual::ui::body);c.box(settingRect(12,width),c.card(),visual::ui::radius,c.lineColor());c.label(d.draft.action?tr(L"Выбрать файлы",L"Choose files"):tr(L"Начать загрузку",L"Start download"),D2D1::RectF(width-236,163,width-48,203),visual::ui::body);c.chevron(width-44,181);
@@ -82,7 +118,7 @@ static void drawDialog(HWND w,Dialog& d){PAINTSTRUCT ps;BeginPaint(w,&ps);auto& 
  if(d.kind!=1){if(GetFocus()==w&&(d.focused==1||d.focused==2)){float x=d.focused==1?width-131:width-243;c.focus(D2D1::RectF(x,height-57,x+110,height-15));}
  if(d.kind!=3)c.button(tr(L"Отмена",L"Cancel"),D2D1::RectF(width-240,height-54,width-136,height-18),false,d.hover==2);c.button(d.kind==3?L"OK":tr(L"Применить",L"Apply"),D2D1::RectF(width-128,height-54,width-24,height-18),true,d.hover==1);}
  c.end();}EndPaint(w,&ps);}
-static int dialogHit(Dialog& d,float x,float y){auto& c=d.canvas;if(d.kind!=1&&visual::hit(x,y,D2D1::RectF(c.width-240,c.height-54,c.width-136,c.height-18)))return 2;if(d.kind!=1&&visual::hit(x,y,D2D1::RectF(c.width-128,c.height-54,c.width-24,c.height-18)))return 1;if(x>c.width-46&&y<50)return 2;if(d.kind==1){if(y>=101&&y<=141&&x>c.width-66)return 11;for(int id=12;id<=17;++id)if(visual::hit(x,y,settingRect(id,c.width)))return id;}return -1;}
+static int dialogHit(Dialog& d,float x,float y){auto& c=d.canvas;if(d.kind!=1&&visual::hit(x,y,D2D1::RectF(c.width-240,c.height-54,c.width-136,c.height-18)))return 2;if(d.kind!=1&&visual::hit(x,y,D2D1::RectF(c.width-128,c.height-54,c.width-24,c.height-18)))return 1;if(x>c.width-46&&y<50)return 2;if(d.kind==1){if(y>=101&&y<=141&&x>c.width-66)return 11;for(int id=12;id<=17;++id)if(visual::hit(x,y,settingRect(id,c.width)))return id;}if(d.kind==2&&y>=112&&y<143){if(x>=68&&x<c.width-254)return 20;if(x>=c.width-242&&x<c.width-156)return 21;}if(d.kind==2&&d.horizontalMax>0&&y>=c.height-94&&y<c.height-71&&x>=98&&x<=c.width-254)return 23;return -1;}
 static void liveSettings(HWND w,Dialog& d){
  auto folder=textOf(GetDlgItem(w,10));d.folderValid=!folder.empty()&&folder.find_first_of(L"\r\n")==std::wstring::npos&&std::filesystem::path(folder).is_absolute();
  if(d.folderValid)d.draft.folder=folder;else d.draft.folder=prefs.folder;
@@ -107,20 +143,29 @@ static LRESULT CALLBACK dialogProc(HWND w,UINT m,WPARAM wp,LPARAM lp){auto d=rei
  case WM_CTLCOLOREDIT:{auto dc=HDC(wp);SetTextColor(dc,darkMode()?RGB(242,242,241):RGB(23,25,28));SetBkColor(dc,darkMode()?RGB(16,16,16):RGB(250,250,250));return LRESULT(d->background);}
  case WM_NCHITTEST:{POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&point);float scale=GetDpiForWindow(w)/96.f;RECT r;GetClientRect(w,&r);if(point.y<52*scale&&point.x<r.right-50*scale)return HTCAPTION;return HTCLIENT;}
  case WM_GETMINMAXINFO:{RECT r;GetWindowRect(w,&r);auto info=reinterpret_cast<MINMAXINFO*>(lp);info->ptMinTrackSize={r.right-r.left,r.bottom-r.top};info->ptMaxTrackSize=info->ptMinTrackSize;return 0;}
- case WM_MOUSEMOVE:{float scale=GetDpiForWindow(w)/96.f;int h=dialogHit(*d,GET_X_LPARAM(lp)/scale,GET_Y_LPARAM(lp)/scale);if(h!=d->hover){d->hover=h;InvalidateRect(w,nullptr,FALSE);}SetCursor(LoadCursorW(nullptr,h>=0?IDC_HAND:IDC_ARROW));return 0;}
- case WM_LBUTTONUP:{float scale=GetDpiForWindow(w)/96.f,x=GET_X_LPARAM(lp)/scale,y=GET_Y_LPARAM(lp)/scale;int id=dialogHit(*d,x,y);d->keyboardFocus=(wp&0x10000)!=0;if(id>=11){d->focused=id;SetFocus(w);}
+ case WM_MOUSEMOVE:{float scale=GetDpiForWindow(w)/96.f,x=GET_X_LPARAM(lp)/scale;
+  if(d->draggingNameScroll){auto track=fileScrollTrack(*d),thumb=fileScrollThumb(*d);float travel=std::max(1.f,(track.right-track.left)-(thumb.right-thumb.left));d->horizontal=std::clamp(d->dragStartOffset+(x-d->dragStartX)*d->horizontalMax/travel,0.f,d->horizontalMax);InvalidateRect(w,nullptr,FALSE);return 0;}
+  int h=dialogHit(*d,x,GET_Y_LPARAM(lp)/scale);if(h!=d->hover){d->hover=h;InvalidateRect(w,nullptr,FALSE);}SetCursor(LoadCursorW(nullptr,h>=0?IDC_HAND:IDC_ARROW));return 0;}
+ case WM_LBUTTONDOWN:{if(d->kind==2&&d->horizontalMax>0){float scale=GetDpiForWindow(w)/96.f,x=GET_X_LPARAM(lp)/scale,y=GET_Y_LPARAM(lp)/scale;auto track=fileScrollTrack(*d);if(x>=track.left&&x<=track.right&&y>=d->canvas.height-94&&y<d->canvas.height-71){auto thumb=fileScrollThumb(*d);if(x<thumb.left||x>thumb.right){float travel=std::max(1.f,(track.right-track.left)-(thumb.right-thumb.left));d->horizontal=std::clamp((x-track.left-(thumb.right-thumb.left)/2.f)*d->horizontalMax/travel,0.f,d->horizontalMax);}d->dragStartX=x;d->dragStartOffset=d->horizontal;d->draggingNameScroll=true;SetCapture(w);InvalidateRect(w,nullptr,FALSE);return 0;}}break;}
+ case WM_CAPTURECHANGED:d->draggingNameScroll=false;return 0;
+ case WM_LBUTTONUP:{if(d->draggingNameScroll){d->draggingNameScroll=false;ReleaseCapture();InvalidateRect(w,nullptr,FALSE);return 0;}float scale=GetDpiForWindow(w)/96.f,x=GET_X_LPARAM(lp)/scale,y=GET_Y_LPARAM(lp)/scale;int id=dialogHit(*d,x,y);d->keyboardFocus=(wp&0x10000)!=0;if(id>=11&&id<=17){d->focused=id;SetFocus(w);}
  if(id==1)acceptDialog(w,*d);else if(id==2)DestroyWindow(w);else if(id==11){auto folder=textOf(GetDlgItem(w,10));if(browse(w,folder))SetWindowTextW(GetDlgItem(w,10),folder.c_str());}else if(id>=13&&id<=17){if(id<=15)d->draft.dark=id==13?2:id==14?0:1;else d->draft.english=id-16;liveSettings(w,*d);}else if(id==12){POINT point{int((d->canvas.width-250)*scale),int(203*scale)};ClientToScreen(w,&point);int choice=visual::menu(w,point,{{1,tr(L"Начать загрузку",L"Start download"),d->draft.action==0},{2,tr(L"Выбрать файлы",L"Choose files"),d->draft.action==1}},darkMode());if(choice){d->draft.action=choice-1;liveSettings(w,*d);}}
 
 
 
- else if(d->kind==2){if(y>=112&&y<143&&x<60){bool all=std::all_of(d->priorities.begin(),d->priorities.end(),[](int p){return p>0;});for(int i=0;i<int(d->priorities.size());++i){int& p=d->priorities[i];if(all){d->remembered[i]=p;p=0;}else if(!p)p=d->remembered[i];}}else if(y>=143&&y<d->canvas.height-70){int row=int(y-143+d->offset)/42;if(row>=0&&row<int(d->priorities.size())){d->focused=100+row;if(x<60){if(d->priorities[row]){d->remembered[row]=d->priorities[row];d->priorities[row]=0;}else d->priorities[row]=d->remembered[row];}else if(x>d->canvas.width-150){int values[]={0,1,4,7};std::vector<visual::MenuItem> entries;for(int i=0;i<4;++i)entries.push_back({i+1,priorityLabel(values[i]),d->priorities[row]==values[i]});POINT point{int((d->canvas.width-150)*scale),int((143+row*42-d->offset+36)*scale)};ClientToScreen(w,&point);int choice=visual::menu(w,point,std::move(entries),darkMode());if(choice){if(d->priorities[row])d->remembered[row]=d->priorities[row];d->priorities[row]=values[choice-1];}}}}}InvalidateRect(w,nullptr,FALSE);return 0;}
- case WM_MOUSEWHEEL:if(d->kind==2){d->offset=std::clamp(d->offset-GET_WHEEL_DELTA_WPARAM(wp)/3,0,std::max(0,int(d->priorities.size())*42-int(d->canvas.height-213)));InvalidateRect(w,nullptr,FALSE);}return 0;
+ else if(d->kind==2){
+  if(id==20||id==21)sortDialogFiles(*d,id==20?1:2);
+  else if(y>=112&&y<143&&x<60){bool all=std::all_of(d->priorities.begin(),d->priorities.end(),[](int p){return p>0;});for(int i=0;i<int(d->priorities.size());++i){int& p=d->priorities[i];if(all){d->remembered[i]=p;p=0;}else if(!p)p=d->remembered[i];}}
+  else if(y>=143&&y<(d->horizontalMax>0?d->canvas.height-96:d->canvas.height-71)){int row=int(y-143+d->offset)/42;if(row>=0&&row<int(d->priorities.size())){int i=fileIndex(*d,row);d->focused=100+row;if(x<60){if(d->priorities[i]){d->remembered[i]=d->priorities[i];d->priorities[i]=0;}else d->priorities[i]=d->remembered[i];}else if(x>d->canvas.width-150){int values[]={0,1,4,7};std::vector<visual::MenuItem> entries;for(int v=0;v<4;++v)entries.push_back({v+1,priorityLabel(values[v]),d->priorities[i]==values[v]});POINT point{int((d->canvas.width-150)*scale),int((143+row*42-d->offset+36)*scale)};ClientToScreen(w,&point);int choice=visual::menu(w,point,std::move(entries),darkMode());if(choice){if(d->priorities[i])d->remembered[i]=d->priorities[i];d->priorities[i]=values[choice-1];}}}}
+  InvalidateRect(w,nullptr,FALSE);return 0;}
+ case WM_MOUSEWHEEL:if(d->kind==2){if(GET_KEYSTATE_WPARAM(wp)&MK_SHIFT)d->horizontal=std::clamp(d->horizontal-GET_WHEEL_DELTA_WPARAM(wp)/3.f,0.f,d->horizontalMax);else d->offset=std::clamp(d->offset-GET_WHEEL_DELTA_WPARAM(wp)/3,0,maxFilesScroll(*d));InvalidateRect(w,nullptr,FALSE);}return 0;
+ case WM_MOUSEHWHEEL:if(d->kind==2){d->horizontal=std::clamp(d->horizontal+GET_WHEEL_DELTA_WPARAM(wp)/3.f,0.f,d->horizontalMax);InvalidateRect(w,nullptr,FALSE);}return 0;
  case WM_COMMAND:if(d->kind==1&&LOWORD(wp)==10&&HIWORD(wp)==EN_CHANGE){liveSettings(w,*d);return 0;}if(LOWORD(wp)==1)acceptDialog(w,*d);if(LOWORD(wp)==2)DestroyWindow(w);return 0;
  case WM_TIMER:if(wp==99){KillTimer(w,99);visual::capture(w,d->kind==2?L"files.png":L"settings.png");DestroyWindow(w);return 0;}if(d->kind==2&&d->handle.torrent_file()){fillFiles(*d);KillTimer(w,2);InvalidateRect(w,nullptr,FALSE);}return 0;
  case WM_CLOSE:DestroyWindow(w);return 0;case WM_DESTROY:d->done=true;DeleteObject(d->font);DeleteObject(d->background);return 0;
  }return DefWindowProcW(w,m,wp,lp);}
 static bool dialog(Dialog& d){EnableWindow(mainWindow,FALSE);float scale=GetDpiForWindow(mainWindow)/96.f;int width=d.kind==2?580:490,height=d.kind==2?std::clamp(213+(d.fixture?5:d.handle.torrent_file()?d.handle.torrent_file()->num_files():5)*42,300,590):d.kind==1?335:215;RECT r;GetWindowRect(mainWindow,&r);HWND w=CreateWindowExW(0,L"TorrentDialog",d.kind==2?tr(L"Файлы торрента",L"Torrent files").c_str():d.kind==1?tr(L"Настройки",L"Settings").c_str():d.kind==3?tr(L"Ошибка",L"Error").c_str():L"Magnet",WS_POPUP|WS_THICKFRAME|WS_SYSMENU|WS_CLIPCHILDREN,r.left+(r.right-r.left-int(width*scale))/2,r.top+(r.bottom-r.top-int(height*scale))/2,int(width*scale),int(height*scale),mainWindow,nullptr,instance,&d);ShowWindow(w,SW_SHOW);MSG m;while(!d.done&&GetMessageW(&m,nullptr,0,0)>0){if(m.message==WM_KEYDOWN&&m.wParam==VK_TAB){std::vector<int> ids=d.kind==1?std::vector<int>{10,11,12,13,14,15,16,17}:d.kind==0?std::vector<int>{10,2,1}:std::vector<int>{100,2,1};auto found=std::find(ids.begin(),ids.end(),d.focused);int at=found==ids.end()?0:int(found-ids.begin());at=(at+((GetKeyState(VK_SHIFT)&0x8000)?int(ids.size())-1:1))%int(ids.size());d.focused=ids[at];d.keyboardFocus=true;SetFocus(d.focused==10?GetDlgItem(w,10):w);InvalidateRect(w,nullptr,FALSE);continue;}
- if(m.message==WM_KEYDOWN&&d.kind==2&&d.focused>=100){int row=d.focused-100;if(m.wParam==VK_DOWN||m.wParam==VK_UP){row=std::clamp(row+(m.wParam==VK_DOWN?1:-1),0,std::max(0,int(d.priorities.size())-1));d.focused=100+row;d.offset=std::clamp(row*42-84,0,std::max(0,int(d.priorities.size())*42-int(d.canvas.height-213)));}else if(row<int(d.priorities.size())&&m.wParam==VK_SPACE){if(d.priorities[row]){d.remembered[row]=d.priorities[row];d.priorities[row]=0;}else d.priorities[row]=d.remembered[row];}else if(row<int(d.priorities.size())&&(m.wParam==VK_LEFT||m.wParam==VK_RIGHT)){int values[]={0,1,4,7};int at=0;while(at<3&&d.priorities[row]>values[at])++at;d.priorities[row]=values[(at+(m.wParam==VK_RIGHT?1:3))%4];}else {TranslateMessage(&m);DispatchMessageW(&m);}InvalidateRect(w,nullptr,FALSE);continue;}
+ if(m.message==WM_KEYDOWN&&d.kind==2&&d.focused>=100){int row=d.focused-100,i=fileIndex(d,row);if(m.wParam==VK_DOWN||m.wParam==VK_UP){row=std::clamp(row+(m.wParam==VK_DOWN?1:-1),0,std::max(0,int(d.priorities.size())-1));d.focused=100+row;d.offset=std::clamp(row*42-84,0,maxFilesScroll(d));}else if((m.wParam==VK_LEFT||m.wParam==VK_RIGHT)&&(GetKeyState(VK_SHIFT)&0x8000)){d.horizontal=std::clamp(d.horizontal+(m.wParam==VK_RIGHT?40.f:-40.f),0.f,d.horizontalMax);}else if(i<int(d.priorities.size())&&m.wParam==VK_SPACE){if(d.priorities[i]){d.remembered[i]=d.priorities[i];d.priorities[i]=0;}else d.priorities[i]=d.remembered[i];}else if(i<int(d.priorities.size())&&(m.wParam==VK_LEFT||m.wParam==VK_RIGHT)){int values[]={0,1,4,7};int at=0;while(at<3&&d.priorities[i]>values[at])++at;d.priorities[i]=values[(at+(m.wParam==VK_RIGHT?1:3))%4];}else {TranslateMessage(&m);DispatchMessageW(&m);}InvalidateRect(w,nullptr,FALSE);continue;}
  if(m.message==WM_KEYDOWN&&(m.wParam==VK_SPACE||m.wParam==VK_RETURN)&&d.focused!=10){if(d.focused==2)DestroyWindow(w);else if(d.focused==1)acceptDialog(w,d);else {auto r=settingRect(d.focused,d.canvas.width);float x=d.focused==11?d.canvas.width-40:(r.left+r.right)/2,y=d.focused==11?120.f:(r.top+r.bottom)/2;PostMessageW(w,WM_LBUTTONUP,0x10000,MAKELPARAM(int(x*scale),int(y*scale)));}continue;}
  if(m.message==WM_KEYDOWN&&m.wParam==VK_ESCAPE){DestroyWindow(w);continue;}if(m.message==WM_KEYDOWN&&m.wParam==VK_RETURN){acceptDialog(w,d);continue;}TranslateMessage(&m);DispatchMessageW(&m);}EnableWindow(mainWindow,TRUE);SetForegroundWindow(mainWindow);mainFocused=-1;mainKeyboardFocus=false;InvalidateRect(mainWindow,nullptr,FALSE);return d.accepted;}
 static void error(std::string const& message){if(!mainWindow){MessageBoxW(nullptr,wide(message).c_str(),L"Torrent",MB_OK|MB_ICONERROR);return;}Dialog d{3};d.result=wide(message);dialog(d);}
@@ -188,7 +233,7 @@ static LRESULT CALLBACK windowProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
  case WM_CONTEXTMENU: {POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)},local=p;ScreenToClient(w,&local);context(rowAt(int(local.y/(GetDpiForWindow(w)/96.f))),p);return 0;}
  case WM_DROPFILES: {HDROP drop=HDROP(wp);UINT count=DragQueryFileW(drop,0xffffffff,nullptr,0);for(UINT i=0;i<count;++i){wchar_t path[32768];DragQueryFileW(drop,i,path,32768);add(path);}DragFinish(drop);return 0;}
  case WM_COPYDATA: {auto c=reinterpret_cast<COPYDATASTRUCT*>(lp);if(c->dwData==1&&c->cbData>=sizeof(wchar_t)&&c->cbData<=65536&&reinterpret_cast<wchar_t*>(c->lpData)[c->cbData/sizeof(wchar_t)-1]==0) add(static_cast<wchar_t*>(c->lpData));SetForegroundWindow(w);return TRUE;}
- case WM_TIMER: {if(wp==WindowPosition::timer){windowPosition.save(w);return 0;}if(wp==99){KillTimer(w,99);visual::capture(w,L"main.png");Dialog settings{1};dialog(settings);Dialog files{2};files.fixture=true;files.names={L"01. Серия 1.mkv",L"02. Серия 2.mkv",L"03. Серия 3.mkv",L"04. Постер.jpg",L"05. Readme.txt"};files.sizes={L"1,2 ГБ",L"1,3 ГБ",L"1,3 ГБ",L"3,4 МБ",L"12 КБ"};files.priorities={0,7,7,1,0};files.remembered={4,7,7,1,4};dialog(files);PostMessageW(w,WM_CLOSE,0,0);return 0;}engine->tick(); static int seconds=0;if(++seconds%30==0)engine->save();if(!engine->errors.empty()){auto e=engine->errors.back();engine->errors.clear();error(e);}InvalidateRect(w,nullptr,FALSE);if(IsWindowEnabled(w)){for(auto& item:engine->items)if(item.selectPending&&!item.selectionShown&&item.handle.torrent_file()){item.selectionShown=true;Dialog d{2};d.handle=item.handle;dialog(d);break;}}return 0;}
+ case WM_TIMER: {if(wp==WindowPosition::timer){windowPosition.save(w);return 0;}if(wp==99){KillTimer(w,99);visual::capture(w,L"main.png");Dialog settings{1};dialog(settings);Dialog files{2};files.fixture=true;files.names={L"01. Серия 1.mkv",L"02. Серия 2.mkv",L"03. Серия 3.mkv",L"04. Постер.jpg",L"05. Readme.txt"};files.sizes={L"1,2 ГБ",L"1,3 ГБ",L"1,3 ГБ",L"3,4 МБ",L"12 КБ"};files.priorities={0,7,7,1,0};files.remembered={4,7,7,1,4};files.bytes={1288490188LL,1395864371LL,1395864371LL,3565158LL,12288LL};dialog(files);PostMessageW(w,WM_CLOSE,0,0);return 0;}engine->tick(); static int seconds=0;if(++seconds%30==0)engine->save();if(!engine->errors.empty()){auto e=engine->errors.back();engine->errors.clear();error(e);}InvalidateRect(w,nullptr,FALSE);if(IsWindowEnabled(w)){for(auto& item:engine->items)if(item.selectPending&&!item.selectionShown&&item.handle.torrent_file()){item.selectionShown=true;Dialog d{2};d.handle=item.handle;dialog(d);break;}}return 0;}
  case WM_CLOSE:if(!closing){windowPosition.save(w);closing=true;KillTimer(w,1);EnableWindow(w,FALSE);engine->shutdown();DestroyWindow(w);}return 0;
  case WM_DESTROY:PostQuitMessage(0);return 0;
  }
