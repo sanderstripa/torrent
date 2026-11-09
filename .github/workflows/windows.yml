@@ -129,16 +129,16 @@ jobs:
         with:
           name: Torrent-Windows-x64
           path: dist/
-      - name: Publish verified 0.3.4 Soulu interface
+      - name: Publish verified 0.3.5 Connect signature
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v0.3.4 *> $null
+          gh release view v0.3.5 *> $null
           if ($LASTEXITCODE -eq 0) { throw 'Refusing to overwrite an existing release' }
-          $files = @('dist/Torrent-0.3.4-x64.exe','dist/Torrent-Windows-x64.zip')
+          $files = @('dist/Torrent-0.3.5-x64.exe','dist/Torrent-Windows-x64.zip')
           $sums = foreach ($file in $files) { "$((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($file))" }
           $sums | Set-Content -LiteralPath SHA256SUMS.txt -Encoding ascii
-          gh release create v0.3.4 dist/Torrent-0.3.4-x64.exe dist/Torrent-Windows-x64.zip SHA256SUMS.txt --target $env:GITHUB_SHA --latest --title 'Torrent v0.3.4' --notes-file RELEASE_NOTES.md
+          gh release create v0.3.5 dist/Torrent-0.3.5-x64.exe dist/Torrent-Windows-x64.zip SHA256SUMS.txt --target $env:GITHUB_SHA --latest --title 'Torrent v0.3.5' --notes-file RELEASE_NOTES.md
           if ($LASTEXITCODE -ne 0) { throw 'Verified release publication failed' }
