@@ -1,5 +1,6 @@
 param([Parameter(Mandatory=$true)][string]$Executable,[Parameter(Mandatory=$true)][string]$WorkingFolder)
 $ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type -ReferencedAssemblies System.Drawing @"
 using System;
 using System.Runtime.InteropServices;
@@ -72,22 +73,32 @@ function Assert-Position([int]$x,[int]$y) {
 }
 try {
  Launch
- [TorrentUI]::SetWindowPos($main,[IntPtr]::Zero,60,80,0,0,0x15)|Out-Null
+ $work=[Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+ $rect=New-Object TorrentUI+Rect;[TorrentUI]::GetWindowRect($main,[ref]$rect)|Out-Null
+ $spaceX=[Math]::Max(0,$work.Width-($rect.right-$rect.left))
+ $spaceY=[Math]::Max(0,$work.Height-($rect.bottom-$rect.top))
+ $firstX=$work.Left+[int][Math]::Min(60,[Math]::Floor($spaceX/3))
+ $firstY=$work.Top+[int][Math]::Min(80,[Math]::Floor($spaceY/3))
+ $secondX=$work.Left+[int][Math]::Min(90,[Math]::Floor($spaceX*2/3))
+ $secondY=$work.Top+[int][Math]::Min(100,[Math]::Floor($spaceY*2/3))
+ $firstPattern='^1 '+$firstX+' '+$firstY+' '
+ $secondPattern='^1 '+$secondX+' '+$secondY+' '
+ [TorrentUI]::SetWindowPos($main,[IntPtr]::Zero,$firstX,$firstY,0,0,0x15)|Out-Null
  for($i=0;$i -lt 60;$i++){
   Start-Sleep -Milliseconds 50
-  if((Test-Path $position) -and ((Get-Content $position -Raw) -match '^1 60 80 ')){break}
+  if((Test-Path $position) -and ((Get-Content $position -Raw) -match $firstPattern)){break}
  }
- if((Get-Content $position -Raw) -notmatch '^1 60 80 '){throw 'Move was not persisted before exit'}
+ if((Get-Content $position -Raw) -notmatch $firstPattern){[TorrentUI]::GetWindowRect($main,[ref]$rect)|Out-Null;throw "Move was not persisted: requested $firstX,$firstY; actual $($rect.left),$($rect.top); file $(Get-Content $position -Raw)"}
  $process.Kill();$process.WaitForExit()
- Launch;Assert-Position 60 80
+ Launch;Assert-Position $firstX $firstY
  [TorrentUI]::ShowWindow($main,6)|Out-Null
  Stop-App
- Launch;Assert-Position 60 80
- [TorrentUI]::SetWindowPos($main,[IntPtr]::Zero,90,100,0,0,0x15)|Out-Null
+ Launch;Assert-Position $firstX $firstY
+ [TorrentUI]::SetWindowPos($main,[IntPtr]::Zero,$secondX,$secondY,0,0,0x15)|Out-Null
  [TorrentUI]::SendMessage($main,0x11,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
- if((Get-Content $position -Raw) -notmatch '^1 90 100 '){throw 'Session-end notification did not persist position'}
+ if((Get-Content $position -Raw) -notmatch $secondPattern){throw 'Session-end notification did not persist position'}
  Stop-App
- Launch;Assert-Position 90 100;Stop-App
+ Launch;Assert-Position $secondX $secondY;Stop-App
  [IO.File]::WriteAllText($position,'1 999999 999999 999000 999000 1000000 1000000')
  Launch
  $r=New-Object TorrentUI+Rect;[TorrentUI]::GetWindowRect($main,[ref]$r)|Out-Null
