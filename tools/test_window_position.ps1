@@ -28,6 +28,7 @@ public static class TorrentUI {
  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr w,int command);
  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr w,IntPtr after,int x,int y,int cx,int cy,uint flags);
  public static int Width(IntPtr w){Rect r;GetClientRect(w,out r);return (int)Math.Round(r.right*96.0/GetDpiForWindow(w));}
+ public static bool HeaderReady(IntPtr w){Rect r;GetWindowRect(w,out r);double scale=GetDpiForWindow(w)/96.0;int x=r.left+(int)(250*scale),y=r.top+(int)(30*scale);return SendMessage(w,0x84,IntPtr.Zero,new IntPtr((y<<16)|(x&65535))).ToInt32()==2;}
  public static void ShellCheck(IntPtr w){long style=Style(w,-16).ToInt64();if((style&0xC10000)!=0)throw new Exception("System caption or maximize box remains");Rect r;GetWindowRect(w,out r);double scale=GetDpiForWindow(w)/96.0;if(Math.Abs((r.right-r.left)/scale-940)>1||Math.Abs((r.bottom-r.top)/scale-720)>1)throw new Exception("Outer size changed");int x=r.left+(int)(250*scale),y=r.top+(int)(30*scale);if(SendMessage(w,0x84,IntPtr.Zero,new IntPtr((y<<16)|(x&65535))).ToInt32()!=2)throw new Exception("Custom header is not draggable");SendMessage(w,0x112,new IntPtr(0xF030),IntPtr.Zero);if(IsZoomed(w))throw new Exception("Unexpected maximize");}
  public struct Rect {public int left,top,right,bottom;}
  public static IntPtr Find(int process,string cls){IntPtr result=IntPtr.Zero;EnumWindows((w,c)=>{uint id;GetWindowThreadProcessId(w,out id);var text=new StringBuilder(256);GetClassName(w,text,256);if(id==process&&text.ToString()==cls&&IsWindowVisible(w))result=w;return true;},IntPtr.Zero);return result;}
@@ -49,8 +50,13 @@ function Launch {
   if($w -eq [IntPtr]::Zero){throw "Missing $class"}
   if($class -eq 'TorrentMain'){$script:main=$w}else{[TorrentUI]::SendMessage($w,0x10,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null}
  }
- [TorrentUI]::PostMessage($main,0x100,[IntPtr]0x1B,[IntPtr]::Zero)|Out-Null
- Start-Sleep -Milliseconds 400
+ # Wait for startup and dismissal animation before checking caption hit tests.
+ # Window visibility can precede the queued opening of the settings sheet.
+ for($i=0;$i -lt 40;$i++){
+  [TorrentUI]::PostMessage($main,0x100,[IntPtr]0x1B,[IntPtr]::Zero)|Out-Null
+  Start-Sleep -Milliseconds 350
+  if([TorrentUI]::HeaderReady($main)){break}
+ }
  [TorrentUI]::ShowWindow($main,9)|Out-Null
  [TorrentUI]::ShellCheck($main)
 }
