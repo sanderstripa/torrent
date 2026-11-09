@@ -28,6 +28,7 @@ public static class TorrentUI {
  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr w,int command);
  public static int Width(IntPtr w){Rect r;GetClientRect(w,out r);return (int)Math.Round(r.right*96.0/GetDpiForWindow(w));}
  public static void ShellCheck(IntPtr w){long style=Style(w,-16).ToInt64();if((style&0xC10000)!=0)throw new Exception("System caption or maximize box remains");Rect r;GetWindowRect(w,out r);double scale=GetDpiForWindow(w)/96.0;if(Math.Abs((r.right-r.left)/scale-940)>1||Math.Abs((r.bottom-r.top)/scale-720)>1)throw new Exception("Outer size changed");int x=r.left+(int)(250*scale),y=r.top+(int)(30*scale);if(SendMessage(w,0x84,IntPtr.Zero,new IntPtr((y<<16)|(x&65535))).ToInt32()!=2)throw new Exception("Custom header is not draggable");SendMessage(w,0x112,new IntPtr(0xF030),IntPtr.Zero);if(IsZoomed(w))throw new Exception("Unexpected maximize");}
+ public static void SettingsDragCheck(IntPtr w){Rect r;GetWindowRect(w,out r);double scale=GetDpiForWindow(w)/96.0;int[,] probes={{250,30,2},{50,30,2},{810,30,1},{650,117,1},{650,202,1},{400,600,1}};for(int i=0;i<probes.GetLength(0);i++){int x=r.left+(int)(probes[i,0]*scale),y=r.top+(int)(probes[i,1]*scale);int hit=SendMessage(w,0x84,IntPtr.Zero,new IntPtr((y<<16)|(x&65535))).ToInt32();if(hit!=probes[i,2])throw new Exception("Settings hit test failed at "+probes[i,0]+","+probes[i,1]+": "+hit);}}
  public struct Rect {public int left,top,right,bottom;}
  public static IntPtr Find(int process,string cls){IntPtr result=IntPtr.Zero;EnumWindows((w,c)=>{uint id;GetWindowThreadProcessId(w,out id);var text=new StringBuilder(256);GetClassName(w,text,256);if(id==process&&text.ToString()==cls&&IsWindowVisible(w))result=w;return true;},IntPtr.Zero);return result;}
  public static string Caption(IntPtr w){var text=new StringBuilder(256);GetWindowText(w,text,256);return text.ToString();}
@@ -59,6 +60,7 @@ function Choose-Last([int]$x,[int]$y) {
 try {
  $main=Wait-Window 'TorrentMain';Start-Sleep -Milliseconds 450
  if([TorrentUI]::Find($process.Id,'TorrentDialog') -ne [IntPtr]::Zero){throw 'Settings opened a separate dialog'}
+ [TorrentUI]::SettingsDragCheck($main)
  # Default sheet is centered at x=110..830 in a 940x720 client.
  [TorrentUI]::Click($main,750,117);Start-Sleep -Milliseconds 250
  if((Get-Content $preferences)[1] -ne '0 1 0'){throw 'Dark theme did not save immediately'}

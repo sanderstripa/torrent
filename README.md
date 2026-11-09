@@ -7,7 +7,7 @@
 <p align="center">A lightweight, native BitTorrent client for Windows 11.</p>
 
 <p align="center">
-  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.3.5">Download v0.3.5</a>
+  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.3.6">Download v0.3.6</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/sanderstripa/torrent/actions/workflows/windows.yml">Windows builds</a>
   &nbsp;·&nbsp;
@@ -25,13 +25,13 @@ Torrent keeps the interface focused on your downloads: a name, size, status, pro
 
 ## Download
 
-**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.3.5/Torrent-0.3.5-x64.exe)**
+**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.3.6/Torrent-0.3.6-x64.exe)**
 
-Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.3.5/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
+Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.3.6/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
 
 The installer works for the current user without administrator privileges. It registers `.torrent` and magnet handlers with Windows. Select Torrent in Windows **Default apps** or **Open with** to make it your preferred handler.
 
-Version **0.3.5 is the current release**. The installer and client offer Russian and English. Setup applies the selected language and theme to the installed application.
+Version **0.3.6 is the current release**. The installer and client offer Russian and English. Setup applies the selected language and theme to the installed application.
 
 ## CONNECT UI System
 
@@ -41,7 +41,7 @@ Right-click the titlebar and select **Settings**. A sheet descends from the very
 
 ## Interface
 
-Version 0.3.5 uses white and near-black Soulu themes, fine gray borders, monochrome buttons and embedded Montserrat typography inspired by the supplied references. Uppercase dialog headings use subtle letter spacing. The 840 × 540 installer uses the CONNECT reference palette and Montserrat asset. Version 0.3.5 matches the CONNECT ribbon display size and placement on the welcome and installation-progress screens. It retains the original 1536 × 1024 artwork, colors and proportions. The product icon is redrawn from the approved beige ribbon and download-arrow concept, without the outer white tile. Montserrat is bundled under the SIL Open Font License; no system font installation is required.
+Version 0.3.6 uses white and near-black Soulu themes, fine gray borders, monochrome buttons and embedded Montserrat typography inspired by the supplied references. Uppercase dialog headings use subtle letter spacing. The 840 × 540 installer uses the CONNECT reference palette and Montserrat asset. Version 0.3.6 matches the CONNECT ribbon display size and placement on the welcome and installation-progress screens. It retains the original 1536 × 1024 artwork, colors and proportions. The product icon is redrawn from the approved beige ribbon and download-arrow concept, without the outer white tile. Montserrat is bundled under the SIL Open Font License; no system font installation is required.
 
 Settings apply and save immediately without Apply or Cancel buttons. The language and theme update the open settings sheet and the client. The download folder is chosen through the Windows folder picker. File selection retains its separate Apply/Cancel workflow.
 
@@ -116,7 +116,7 @@ makensis /WX /INPUTCHARSET UTF8 Torrent.nsi
 Pop-Location
 cmake -S . -B build
 cmake --build build --config Release --target TorrentSetup --parallel 2
-Copy-Item build/Release/Torrent-0.3.5-x64.exe dist/Torrent-0.3.5-x64.exe
+Copy-Item build/Release/Torrent-0.3.6-x64.exe dist/Torrent-0.3.6-x64.exe
 ```
 
 The installer installs to `%LOCALAPPDATA%\Programs\Torrent`. Its three screens are Install, progress without a destination path, and Done with an optional launch checkbox and one Done button. The native Direct2D setup shell contains an NSIS payload; installation and association registration remain in the NSIS backend. Progress reflects completed installation stages.
