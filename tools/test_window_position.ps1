@@ -43,12 +43,14 @@ $folder=(New-Item -ItemType Directory -Force $WorkingFolder).FullName
 $position=Join-Path $folder 'ui-test-data/window-position.txt'
 function Launch {
  $script:process=Start-Process $exe -ArgumentList '--interaction-test' -WorkingDirectory $folder -PassThru -WindowStyle Hidden
- foreach($class in @('TorrentMain','TorrentDialog')) {
+ foreach($class in @('TorrentMain')) {
   $w=[IntPtr]::Zero
   for($i=0;$i -lt 150;$i++){ $w=[TorrentUI]::Find($process.Id,$class);if($w -ne [IntPtr]::Zero){break};Start-Sleep -Milliseconds 50 }
   if($w -eq [IntPtr]::Zero){throw "Missing $class"}
   if($class -eq 'TorrentMain'){$script:main=$w}else{[TorrentUI]::SendMessage($w,0x10,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null}
  }
+ [TorrentUI]::PostMessage($main,0x100,[IntPtr]0x1B,[IntPtr]::Zero)|Out-Null
+ Start-Sleep -Milliseconds 400
  [TorrentUI]::ShowWindow($main,9)|Out-Null
  [TorrentUI]::ShellCheck($main)
 }

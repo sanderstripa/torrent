@@ -7,7 +7,7 @@
 <p align="center">A lightweight, native BitTorrent client for Windows 11.</p>
 
 <p align="center">
-  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.3.3">Download v0.3.3</a>
+  <a href="https://github.com/sanderstripa/torrent/releases/tag/v0.3.4">Download v0.3.4</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/sanderstripa/torrent/actions/workflows/windows.yml">Windows builds</a>
   &nbsp;·&nbsp;
@@ -25,30 +25,25 @@ Torrent keeps the interface focused on your downloads: a name, size, status, pro
 
 ## Download
 
-**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.3.3/Torrent-0.3.3-x64.exe)**
+**[Download the Windows installer](https://github.com/sanderstripa/torrent/releases/download/v0.3.4/Torrent-0.3.4-x64.exe)**
 
-Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.3.3/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
-
-| v0.3.3 package | Size |
-|---|---:|
-| Installer | About 3.7 MB |
-| Application, dependency licenses and uninstaller | About 10.1 MB |
+Prefer to run the application without installing it? Download [Torrent-Windows-x64.zip](https://github.com/sanderstripa/torrent/releases/download/v0.3.4/Torrent-Windows-x64.zip), extract it and run `app/Torrent.exe`. Keep the included dependency licenses with the application. The ZIP version still stores settings and session data in your Windows user profile.
 
 The installer works for the current user without administrator privileges. It registers `.torrent` and magnet handlers with Windows. Select Torrent in Windows **Default apps** or **Open with** to make it your preferred handler.
 
-Version **0.3.3 is the current release**. The installer and client offer Russian and English. Setup applies the selected language and theme to the installed application.
+Version **0.3.4 is the current release**. The installer and client offer Russian and English. Setup applies the selected language and theme to the installed application.
 
 ## CONNECT UI System
 
-The client has a custom header with minimize and close, shared 36px controls, 8px radii, keyboard focus outlines, compact runtime notices and 4px progress. Torrent's existing palette, Montserrat, window dimensions, engine and list density are preserved. System theme follows Windows; RU/EN and theme remain in Settings.
+The client uses Soulu's white and near-black themes, thin caption icons and circular hover feedback. The close button has a red hover background in both themes. The titlebar blends into the content without a dividing line. Embedded Montserrat and the download engine are retained; the default client size is 940 × 720 logical pixels.
 
-Settings now uses the approved CONNECT icon #8, rendered directly from the supplied SVG geometry without a background tile. See [implementation and asset provenance](docs/CONNECT-UI-SYSTEM.md).
+Right-click the titlebar and select **Settings**. A sheet descends from the very top edge over the titlebar, casting a soft shadow on the frosted, blurred application behind it. Press Escape or click outside the sheet to dismiss it. Settings include theme, language, download folder, add behavior and app information; **Update** opens the latest GitHub release page.
 
 ## Interface
 
-Version 0.3.3 uses neutral off-white and near-black themes, fine gray borders, monochrome buttons and embedded Montserrat typography inspired by the supplied references. Uppercase dialog headings use subtle letter spacing. The 840 × 540 installer uses the CONNECT reference palette and Montserrat asset. Version 0.3.3 matches the CONNECT ribbon display size and placement on the welcome and installation-progress screens. It retains the original 1536 × 1024 artwork, colors and proportions. The product icon is redrawn from the approved beige ribbon and download-arrow concept, without the outer white tile. Montserrat is bundled under the SIL Open Font License; no system font installation is required.
+Version 0.3.4 uses white and near-black Soulu themes, fine gray borders, monochrome buttons and embedded Montserrat typography inspired by the supplied references. Uppercase dialog headings use subtle letter spacing. The 840 × 540 installer uses the CONNECT reference palette and Montserrat asset. Version 0.3.4 matches the CONNECT ribbon display size and placement on the welcome and installation-progress screens. It retains the original 1536 × 1024 artwork, colors and proportions. The product icon is redrawn from the approved beige ribbon and download-arrow concept, without the outer white tile. Montserrat is bundled under the SIL Open Font License; no system font installation is required.
 
-Settings apply and save immediately without Apply or Cancel buttons. The language and theme update the open settings window and the client. Incomplete folder input keeps the last valid absolute path. File selection retains its separate Apply/Cancel workflow.
+Settings apply and save immediately without Apply or Cancel buttons. The language and theme update the open settings sheet and the client. The download folder is chosen through the Windows folder picker. File selection retains its separate Apply/Cancel workflow.
 
 Pending file selection no longer displays an empty selection as 100% complete. The ribbon icon now has a transparent background and filled light central background, with no white tile or border. The symbol fills the available height across the application, installer and Windows icons. The torrent engine is unchanged. Settings remain writable after restarting the application.
 
@@ -121,7 +116,7 @@ makensis /WX /INPUTCHARSET UTF8 Torrent.nsi
 Pop-Location
 cmake -S . -B build
 cmake --build build --config Release --target TorrentSetup --parallel 2
-Copy-Item build/Release/Torrent-0.3.3-x64.exe dist/Torrent-0.3.3-x64.exe
+Copy-Item build/Release/Torrent-0.3.4-x64.exe dist/Torrent-0.3.4-x64.exe
 ```
 
 The installer installs to `%LOCALAPPDATA%\Programs\Torrent`. Its three screens are Install, progress without a destination path, and Done with an optional launch checkbox and one Done button. The native Direct2D setup shell contains an NSIS payload; installation and association registration remain in the NSIS backend. Progress reflects completed installation stages.
