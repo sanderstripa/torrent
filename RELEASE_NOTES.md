@@ -1,5 +1,7 @@
-Torrent 0.3.3
+Torrent 0.3.4
 
-- Added a horizontal scrollbar below the file-name column when torrent file names are too long. Drag the thumb, click its track, or use Shift + mouse wheel to reveal the complete file names.
-- Click the File name or Size column heading to sort ascending; click again to reverse the order. Names use language-aware, case-insensitive numeric sorting (episode 2 before episode 10); sizes use the actual file byte counts.
-- Sorting only changes the visual order. Per-file checkboxes, download priorities and the Apply action continue to target their original torrent file indexes.
+- Светлая и тёмная темы в стиле Soulu; системная тема следует оформлению Windows.
+- Тонкие кнопки добавления, сворачивания и закрытия с круговой подсветкой; красная подложка закрытия в обеих темах. Убрана линия под верхней панелью.
+- Настройки открываются через правую кнопку мыши по верхней панели. Панель спускается от верхнего края поверх интерфейса, отбрасывает мягкую тень; фон под ней размыт матовым стеклом. Escape или щелчок вне панели закрывает настройки.
+- На одной странице: тема, русский/английский язык, папка загрузок, действие при добавлении и информация о приложении. Изменения сохраняются сразу. Кнопка «Обновить» открывает страницу последнего релиза.
+- Сохранены загрузки, выбор файлов, приоритеты, сортировка и горизонтальная прокрутка имён.

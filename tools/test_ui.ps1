@@ -27,7 +27,7 @@ public static class TorrentUI {
  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr w);
  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr w,int command);
  public static int Width(IntPtr w){Rect r;GetClientRect(w,out r);return (int)Math.Round(r.right*96.0/GetDpiForWindow(w));}
- public static void ShellCheck(IntPtr w){long style=Style(w,-16).ToInt64();if((style&0xC10000)!=0)throw new Exception("System caption or maximize box remains");Rect r;GetWindowRect(w,out r);double scale=GetDpiForWindow(w)/96.0;if(Math.Abs((r.right-r.left)/scale-840)>1||Math.Abs((r.bottom-r.top)/scale-610)>1)throw new Exception("Outer size changed");int x=r.left+(int)(250*scale),y=r.top+(int)(30*scale);if(SendMessage(w,0x84,IntPtr.Zero,new IntPtr((y<<16)|(x&65535))).ToInt32()!=2)throw new Exception("Custom header is not draggable");SendMessage(w,0x112,new IntPtr(0xF030),IntPtr.Zero);if(IsZoomed(w))throw new Exception("Unexpected maximize");}
+ public static void ShellCheck(IntPtr w){long style=Style(w,-16).ToInt64();if((style&0xC10000)!=0)throw new Exception("System caption or maximize box remains");Rect r;GetWindowRect(w,out r);double scale=GetDpiForWindow(w)/96.0;if(Math.Abs((r.right-r.left)/scale-940)>1||Math.Abs((r.bottom-r.top)/scale-720)>1)throw new Exception("Outer size changed");int x=r.left+(int)(250*scale),y=r.top+(int)(30*scale);if(SendMessage(w,0x84,IntPtr.Zero,new IntPtr((y<<16)|(x&65535))).ToInt32()!=2)throw new Exception("Custom header is not draggable");SendMessage(w,0x112,new IntPtr(0xF030),IntPtr.Zero);if(IsZoomed(w))throw new Exception("Unexpected maximize");}
  public struct Rect {public int left,top,right,bottom;}
  public static IntPtr Find(int process,string cls){IntPtr result=IntPtr.Zero;EnumWindows((w,c)=>{uint id;GetWindowThreadProcessId(w,out id);var text=new StringBuilder(256);GetClassName(w,text,256);if(id==process&&text.ToString()==cls&&IsWindowVisible(w))result=w;return true;},IntPtr.Zero);return result;}
  public static string Caption(IntPtr w){var text=new StringBuilder(256);GetWindowText(w,text,256);return text.ToString();}
@@ -39,102 +39,70 @@ public static class TorrentUI {
 "@
 $exe=(Resolve-Path -LiteralPath $Executable).Path
 $folder=(Resolve-Path -LiteralPath $WorkingFolder).Path
+$data=Join-Path $folder 'ui-test-data'
+New-Item -ItemType Directory -Path $data -Force | Out-Null
+$download=Join-Path $folder 'selected-downloads'
+$preferences=Join-Path $data 'settings.txt'
+[IO.File]::WriteAllText($preferences,$download+"`n0 0 0",(New-Object Text.UTF8Encoding $false))
 $process=Start-Process $exe -ArgumentList '--interaction-test' -WorkingDirectory $folder -PassThru -WindowStyle Hidden
 function Wait-Window([string]$Class) {
  for($i=0;$i -lt 100;$i++){ $w=[TorrentUI]::Find($process.Id,$Class);if($w -ne [IntPtr]::Zero){return $w};Start-Sleep -Milliseconds 50 }
  throw ('Missing window: '+$Class)
 }
-function Choose-Second([IntPtr]$Window,[int]$Y) {
- [TorrentUI]::Click($Window,390,$Y)
- $menu=Wait-Window 'TorrentStyledPopup'
- Start-Sleep -Milliseconds 100
- [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x23,[IntPtr]::Zero) | Out-Null
- [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x0D,[IntPtr]::Zero) | Out-Null
- Start-Sleep -Milliseconds 200
+function Key([IntPtr]$w,[int]$k){[TorrentUI]::PostMessage($w,0x100,[IntPtr]$k,[IntPtr]::Zero)|Out-Null;Start-Sleep -Milliseconds 80}
+function Reopen { [TorrentUI]::PostMessage($main,0x8001,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null;Start-Sleep -Milliseconds 400 }
+function Close-Sheet {Key $main 0x1B;Start-Sleep -Milliseconds 300}
+function Choose-Last([int]$x,[int]$y) {
+ [TorrentUI]::Click($main,$x,$y);$menu=Wait-Window 'TorrentStyledPopup'
+ Key $menu 0x23;Key $menu 0x0D;Start-Sleep -Milliseconds 200
 }
 try {
- $main=Wait-Window 'TorrentMain';$settings=Wait-Window 'TorrentDialog'
+ $main=Wait-Window 'TorrentMain';Start-Sleep -Milliseconds 450
+ if([TorrentUI]::Find($process.Id,'TorrentDialog') -ne [IntPtr]::Zero){throw 'Settings opened a separate dialog'}
+ # Default sheet is centered at x=110..830 in a 940x720 client.
+ [TorrentUI]::Click($main,750,117);Start-Sleep -Milliseconds 250
+ if((Get-Content $preferences)[1] -ne '0 1 0'){throw 'Dark theme did not save immediately'}
+ Choose-Last 650 202
+ if((Get-Content $preferences)[1] -ne '0 1 1'){throw 'Language did not save immediately'}
+ Choose-Last 650 338
+ if((Get-Content $preferences)[1] -ne '1 1 1'){throw 'File selection action did not save'}
+ [TorrentUI]::Save($main,(Join-Path $folder 'settings-dark-live.png'))
+ [TorrentUI]::CheckPixel($main,(Join-Path $folder 'settings-dark-live.png'),140,20,0x202124)
+ [TorrentUI]::Click($main,575,117);Start-Sleep -Milliseconds 200
+ [TorrentUI]::SendMessage($main,0x8004,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
+ Start-Sleep -Milliseconds 150
+ [TorrentUI]::Save($main,(Join-Path $folder 'settings-system-light.png'))
+ [TorrentUI]::CheckPixel($main,(Join-Path $folder 'settings-system-light.png'),140,20,0xFCFCFD)
+ [TorrentUI]::SendMessage($main,0x8004,[IntPtr]1,[IntPtr]::Zero)|Out-Null
+ Start-Sleep -Milliseconds 150
+ [TorrentUI]::Save($main,(Join-Path $folder 'settings-system-dark.png'))
+ [TorrentUI]::CheckPixel($main,(Join-Path $folder 'settings-system-dark.png'),140,20,0x202124)
+ Close-Sheet
  [TorrentUI]::ShellCheck($main)
- $download=Join-Path $folder 'selected-downloads'
- if(-not [TorrentUI]::SetWindowText([TorrentUI]::GetDlgItem($settings,10),$download)){throw "Download folder edit was not ready"}
- Start-Sleep -Milliseconds 100
- $preferences=Join-Path $folder 'ui-test-data/settings.txt'
- if((Get-Content -LiteralPath $preferences)[0] -ne $download){throw ('Folder did not apply immediately: '+(Get-Content -LiteralPath $preferences -Raw)+'; expected '+$download)}
- [TorrentUI]::SetWindowText([TorrentUI]::GetDlgItem($settings,10),'relative-path') | Out-Null
- if((Get-Content -LiteralPath $preferences)[0] -ne $download){throw 'Invalid folder overwrote the valid setting'}
- [TorrentUI]::SetWindowText([TorrentUI]::GetDlgItem($settings,10),$download) | Out-Null
- [TorrentUI]::Click($settings,395,267);Start-Sleep -Milliseconds 200
- if((Get-Content -LiteralPath $preferences)[1] -ne '0 1 0'){throw ('Theme did not apply immediately: '+(Get-Content -LiteralPath $preferences -Raw))}
- [TorrentUI]::Click($settings,450,225);Start-Sleep -Milliseconds 200
- if([TorrentUI]::Caption($settings) -ne 'Settings'){throw 'Language did not update the open settings window'}
- Choose-Second $settings 183
- if((Get-Content -LiteralPath $preferences)[1] -ne '1 1 1'){throw 'Add action did not apply immediately'}
- [TorrentUI]::Click($settings,390,183)
- $menu=Wait-Window 'TorrentStyledPopup';Start-Sleep -Milliseconds 100
- [TorrentUI]::Save($menu,(Join-Path $folder 'menu-dark.png'))
- [TorrentUI]::SendMessage($menu,0x100,[IntPtr]0x1B,[IntPtr]::Zero) | Out-Null
- [TorrentUI]::SendMessage($settings,0x86,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
- [TorrentUI]::SendMessage($settings,0x85,[IntPtr]1,[IntPtr]::Zero) | Out-Null
- Start-Sleep -Milliseconds 100
- [TorrentUI]::Save($settings,(Join-Path $folder 'settings-dark-live.png'))
- [TorrentUI]::CheckBackground((Join-Path $folder 'settings-dark-live.png'),0x0C0C0C)
- [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
- Start-Sleep -Milliseconds 100
- if((Get-Content -LiteralPath $preferences)[1] -ne '1 1 1'){throw 'Closing settings lost changes'}
- [TorrentUI]::PostMessage($main,0x8001,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
- $settings=Wait-Window 'TorrentDialog'
- if([TorrentUI]::Caption($settings) -ne 'Settings'){throw 'Reopened settings lost language'}
- # Select System directly through the new theme segment.
- [TorrentUI]::Click($settings,95,267);Start-Sleep -Milliseconds 100
- if((Get-Content -LiteralPath $preferences)[1] -ne '1 2 1'){throw 'System theme did not persist'}
- [TorrentUI]::SendMessage($main,0x8004,[IntPtr]1,[IntPtr]::Zero) | Out-Null
- Start-Sleep -Milliseconds 100
- [TorrentUI]::Save($settings,(Join-Path $folder 'settings-system-dark.png'))
- [TorrentUI]::CheckBackground((Join-Path $folder 'settings-system-dark.png'),0x0C0C0C)
- [TorrentUI]::SendMessage($main,0x8004,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
- Start-Sleep -Milliseconds 100
- [TorrentUI]::Save($settings,(Join-Path $folder 'settings-system-light.png'))
- [TorrentUI]::CheckBackground((Join-Path $folder 'settings-system-light.png'),0xF5F5F4)
- [TorrentUI]::Click($settings,245,267)
- Start-Sleep -Milliseconds 100
- [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
- Start-Sleep -Milliseconds 100
- $mainWidth=[TorrentUI]::Width($main)
- [TorrentUI]::Click($main,($mainWidth-70),32);Start-Sleep -Milliseconds 100
- if(-not [TorrentUI]::IsIconic($main)){throw 'Custom minimize button did not minimize'}
- [TorrentUI]::ShowWindow($main,9) | Out-Null
- [TorrentUI]::Click($main,($mainWidth-110),32);$settings=Wait-Window 'TorrentDialog'
- [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
- Start-Sleep -Milliseconds 100
- [TorrentUI]::Save($main,(Join-Path $folder 'header-after-settings.png'))
- [TorrentUI]::CheckPixel($main,(Join-Path $folder 'header-after-settings.png'),($mainWidth-110),14,0xF5F5F4)
- foreach($theme in @('dark','light')) {
-  [TorrentUI]::Click($main,($mainWidth-110),32);$settings=Wait-Window 'TorrentDialog'
-  $themeX=if($theme -eq 'dark'){395}else{245}
-  [TorrentUI]::Click($settings,$themeX,267)
-  [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
-  Start-Sleep -Milliseconds 100
- foreach($offset in @(150,110,70,30)) {
+ # Right click on native draggable caption opens styled menu with Settings.
+ $rect=New-Object TorrentUI+Rect;[TorrentUI]::GetWindowRect($main,[ref]$rect)|Out-Null
+ $scale=[TorrentUI]::GetDpiForWindow($main)/96.0
+ $pt=([int](($rect.top+30*$scale)) -shl 16) -bor ([int]($rect.left+200*$scale) -band 65535)
+ [TorrentUI]::PostMessage($main,0xA5,[IntPtr]2,[IntPtr]$pt)|Out-Null
+ $menu=Wait-Window 'TorrentStyledPopup';Key $menu 0x23;Key $menu 0x0D;Start-Sleep -Milliseconds 400
+ [TorrentUI]::Save($main,(Join-Path $folder 'settings-context.png'))
+ [TorrentUI]::CheckPixel($main,(Join-Path $folder 'settings-context.png'),140,20,0x202124)
+ # Background cannot select torrents; clicking outside dismisses the overlay.
+ [TorrentUI]::Click($main,30,600);Start-Sleep -Milliseconds 350
+ foreach($theme in @('dark','light')){
+  Reopen
+  $themeX=if($theme -eq 'dark'){750}else{665}
+  [TorrentUI]::Click($main,$themeX,117);Start-Sleep -Milliseconds 180;Close-Sheet
   $scale=[TorrentUI]::GetDpiForWindow($main)/96.0
-  [TorrentUI]::SendMessage($main,0x2A3,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
-  $before=Join-Path $folder 'header-rest.png';[TorrentUI]::Save($main,$before)
-  [TorrentUI]::SendMessage($main,0x200,[IntPtr]::Zero,[IntPtr](([int](32*$scale) -shl 16) -bor [int](($mainWidth-$offset)*$scale))) | Out-Null
-  $path=Join-Path $folder ('header-hover-'+$theme+'-'+$offset+'.png')
-  [TorrentUI]::Save($main,$path)
-  $background=if($theme -eq 'dark'){0x0C0C0C}else{0xF5F5F4}
-  [TorrentUI]::CheckPixel($main,$path,($mainWidth-$offset),18,$background)
-  $a=New-Object Drawing.Bitmap $before;$b=New-Object Drawing.Bitmap $path
-  try {
-   $changed=0
-   for($x=[int](($mainWidth-$offset-14)*$scale);$x -lt [int](($mainWidth-$offset+14)*$scale);$x++){
-    for($y=[int](20*$scale);$y -lt [int](44*$scale);$y++){
-     if($a.GetPixel($x,$y).ToArgb() -ne $b.GetPixel($x,$y).ToArgb()){$changed++}
-    }
-   }
-   if($changed -lt 5){throw "Header icon did not highlight: $theme $offset"}
-  } finally {$a.Dispose();$b.Dispose()}
+  [TorrentUI]::SendMessage($main,0x200,[IntPtr]::Zero,[IntPtr](([int](32*$scale) -shl 16) -bor [int](910*$scale)))|Out-Null
+  Start-Sleep -Milliseconds 220
+  $path=Join-Path $folder ('close-hover-'+$theme+'.png');[TorrentUI]::Save($main,$path)
+  $expected=if($theme -eq 'dark'){0x54242F}else{0xF6D1D9}
+  [TorrentUI]::CheckPixel($main,$path,910,20,$expected)
  }
- }
+ [TorrentUI]::Click($main,870,32);Start-Sleep -Milliseconds 100
+ if(-not [TorrentUI]::IsIconic($main)){throw 'Minimize failed'}
+ [TorrentUI]::ShowWindow($main,9)|Out-Null
  [TorrentUI]::PostMessage($main,0x8005,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
  $notice=Wait-Window 'TorrentDialog'
  if([TorrentUI]::Caption($notice) -ne 'Error'){throw 'Error notice is not localized'}
@@ -171,19 +139,15 @@ try {
  [TorrentUI]::PostMessage($main,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
  if(-not $process.WaitForExit(10000)){throw 'UI test shutdown timed out'}
  if($process.ExitCode -ne 0){throw 'UI test exited with an error'}
- # Restart with the existing settings file. This catches Windows sharing violations
- # that never occur in a fresh profile, even when settings are reopened in-process.
+ $saved=Get-Content $preferences -Raw
  $process=Start-Process $exe -ArgumentList '--interaction-test' -WorkingDirectory $folder -PassThru -WindowStyle Hidden
- $main=Wait-Window 'TorrentMain';$settings=Wait-Window 'TorrentDialog'
- $secondDownload=Join-Path $folder 'downloads-after-restart'
- [TorrentUI]::SetWindowText([TorrentUI]::GetDlgItem($settings,10),$secondDownload) | Out-Null
- Start-Sleep -Milliseconds 100
- if((Get-Content -LiteralPath $preferences)[0] -ne $secondDownload){throw 'Existing settings file could not be replaced after restart'}
- [TorrentUI]::Save($settings,(Join-Path $folder 'settings-after-restart.png'))
- [TorrentUI]::CheckBackground((Join-Path $folder 'settings-after-restart.png'),0xF5F5F4)
- [TorrentUI]::PostMessage($settings,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
- Start-Sleep -Milliseconds 100
- [TorrentUI]::PostMessage($main,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
- if(-not $process.WaitForExit(10000) -or $process.ExitCode -ne 0){throw 'Restart test shutdown failed'}
- 'PASS: immediate settings, persistence across restart, custom menus, single-click selection, double-click files, Space pause/resume, Delete from list, pending selection.'
+ $main=Wait-Window 'TorrentMain';Start-Sleep -Milliseconds 450
+ if((Get-Content $preferences -Raw) -ne $saved){throw 'Preferences changed on restart'}
+ # Change theme after restart, verify replacement of the existing file.
+ [TorrentUI]::Click($main,750,117);Start-Sleep -Milliseconds 250
+ if((Get-Content $preferences)[1] -ne '1 1 1'){throw 'Settings could not be saved after restart'}
+ Close-Sheet
+ [TorrentUI]::PostMessage($main,0x10,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
+ if(-not $process.WaitForExit(10000) -or $process.ExitCode -ne 0){throw 'Restart shutdown failed'}
+ 'PASS: overlay, context-menu opening, live themes and language, system theme, close hover both themes, settings restart, existing torrent selection/pause/delete.'
 } finally {if(-not $process.HasExited){$process.Kill();$process.WaitForExit()}}

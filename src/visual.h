@@ -9,6 +9,8 @@
 #include <map>
 #include <algorithm>
 #include <wincodec.h>
+#include <vector>
+#include <cmath>
 namespace visual {
 using Microsoft::WRL::ComPtr;
 struct ProductFont {
@@ -38,7 +40,9 @@ struct Canvas {
  struct Hover {float amount=0;ULONGLONG time=0;bool hovered=false;};std::map<int,Hover> hovers;HWND host=nullptr;bool animating=false;
  bool animationMessage(HWND w,UINT m,WPARAM wp){if(m!=WM_TIMER||wp!=ui::animationTimer)return false;if(!animating)KillTimer(w,ui::animationTimer);InvalidateRect(w,nullptr,FALSE);return true;}
  UINT interactive(D2D1_RECT_F r,UINT base,UINT over,bool hovered){auto& h=hovers[int(r.top)*10000+int(r.left)];ULONGLONG now=GetTickCount64();if(h.hovered!=hovered){h.hovered=hovered;h.time=now;}float dt=h.time?std::min(1.f,float(now-h.time)/140.f):1.f;h.time=now;BOOL motion=TRUE;SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&motion,0);float target=hovered?1.f:0.f;if(!motion)h.amount=target;else if(h.amount<target)h.amount=std::min(target,h.amount+dt);else h.amount=std::max(target,h.amount-dt);if(h.amount!=target){animating=true;SetTimer(host,ui::animationTimer,16,nullptr);}UINT result=0;for(int shift:{0,8,16})result|=UINT(((base>>shift)&255)*(1-h.amount)+((over>>shift)&255)*h.amount)<<shift;return result;}
- UINT fg()const{return dark?0xf2f2f1:0x17191c;}UINT muted()const{return dark?0x94989c:0x777c81;}UINT card()const{return dark?0x101010:0xfafafa;}UINT lineColor()const{return dark?0x303234:0xdadbd9;}UINT background()const{return dark?0x0c0c0c:0xf5f5f4;}UINT selected()const{return dark?0x222324:0xe8e9e7;}UINT track()const{return dark?0x303234:0xe0e1de;}
+ UINT fg()const{return dark?0xeeeeef:0x242628;}UINT muted()const{return dark?0x96979d:0x73767b;}UINT card()const{return dark?0x111215:0xfcfcfd;}UINT lineColor()const{return dark?0x292a2e:0xe6e7e9;}UINT background()const{return dark?0x08090b:0xffffff;}UINT selected()const{return dark?0x202125:0xededef;}UINT track()const{return dark?0x303136:0xe6e7e9;}
+ void caption(int kind,float cx,float cy,bool hover){auto r=D2D1::RectF(cx-16,cy-16,cx+16,cy+16);UINT fill=interactive(r,background(),kind==2?(dark?0x54242f:0xf6d1d9):selected(),hover);box(r,fill,16);if(kind==0){line(cx-6,cy,cx+6,cy,fg(),1.25f);line(cx,cy-6,cx,cy+6,fg(),1.25f);}else if(kind==1)line(cx-6,cy,cx+6,cy,fg(),1.25f);else{line(cx-5,cy-5,cx+5,cy+5,fg(),1.25f);line(cx+5,cy-5,cx-5,cy+5,fg(),1.25f);}}
+
  bool begin(HWND w){host=w;animating=false;RECT r;GetClientRect(w,&r);scale=GetDpiForWindow(w)/96.f;width=r.right/scale;height=r.bottom/scale;
   if(!factory)D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,factory.GetAddressOf());
   if(!writing)DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,__uuidof(IDWriteFactory),reinterpret_cast<IUnknown**>(writing.GetAddressOf()));
