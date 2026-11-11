@@ -1,0 +1,57 @@
+/* Soulu ui/styles.css, ui/theme.css and ui/toolbar-ui.css palette.
+   Appearance only: preserve the shared installer's geometry and behavior. */
+:root {
+  --bg: #f6f6f8;
+  --text: #292a2e;
+  --muted: #797b81;
+  --line: #0000001f;
+  --button: #0879e6;
+  --inverse: #fff;
+  --field: #fffffff2;
+  --blue-soft: #007aff1f;
+  --hover: #00000012;
+  --pressed: #00000024;
+  --danger: #ef496438;
+  --danger-pressed: #ef496457;
+  color-scheme: light;
+}
+:root[data-theme=dark] {
+  --bg: #08090b;
+  --text: #eeeeef;
+  --muted: #96979d;
+  --line: #ffffff18;
+  --button: #409cff;
+  --inverse: #08090b;
+  --field: #191a1e;
+  --blue-soft: #2589ff2b;
+  --hover: #ffffff14;
+  --pressed: #ffffff24;
+  color-scheme: dark;
+}
+button { transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease; }
+button:hover:not(:disabled) { filter: none; }
+button:focus-visible, input:focus-visible,
+input:focus-visible + .switch { outline-color: var(--button); }
+.primary { color: #fff; }
+.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--button) 90%, var(--text)); }
+.primary:active:not(:disabled) { background: color-mix(in srgb, var(--button) 78%, var(--text)); }
+.text-button:hover:not(:disabled) { color: var(--text); }
+.text-button:active:not(:disabled) { color: var(--button); }
+.outlined:hover:not(:disabled), .choices button:hover:not(:disabled) { background: var(--hover); }
+.outlined:active:not(:disabled), .choices button:active:not(:disabled) { background: var(--pressed); }
+.choices button[aria-pressed=true] {
+  color: var(--button);
+  border-color: var(--button);
+  background: var(--blue-soft);
+}
+.path-line input:focus-visible { border-color: var(--button); }
+input:checked + .switch:after { background: #fff; }
+progress { color: var(--button); }
+progress::-webkit-progress-value { background: var(--button); }
+/* Keep the existing caption hit areas, with Soulu's neutral/danger states. */
+.tools button { color: var(--text); border-radius: 50%; }
+.tools button:hover:not(:disabled) { background: var(--hover); }
+.tools button:active:not(:disabled) { background: var(--pressed); }
+#close:hover:not(:disabled) { background: var(--danger); }
+#close:active:not(:disabled) { background: var(--danger-pressed); }
+@media (prefers-reduced-motion: reduce) { button { transition: none; } }
