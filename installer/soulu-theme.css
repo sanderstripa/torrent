@@ -1,57 +1,86 @@
-/* Soulu ui/styles.css, ui/theme.css and ui/toolbar-ui.css palette.
-   Appearance only: preserve the shared installer's geometry and behavior. */
+/* Soulu palette and caption states; preserve the shared installer's layout and typography. */
 :root {
-  --bg: #f6f6f8;
-  --text: #292a2e;
-  --muted: #797b81;
-  --line: #0000001f;
-  --button: #0879e6;
+  --bg: #fcfcfd;
+  --text: #242628;
+  --muted: #73767b;
+  --line: #e6e7e9;
+  --button: #0671ff;
   --inverse: #fff;
-  --field: #fffffff2;
-  --blue-soft: #007aff1f;
-  --hover: #00000012;
-  --pressed: #00000024;
-  --danger: #ef496438;
-  --danger-pressed: #ef496457;
+  --field: #f3f4f5;
+  --hover: #ededef;
+  --caption-hover: color-mix(in srgb, var(--text) 8%, transparent);
+  --caption-pressed: color-mix(in srgb, var(--text) 14%, transparent);
+  --caption-danger: color-mix(in srgb, #ef4964 22%, var(--bg));
+  --caption-danger-pressed: color-mix(in srgb, #ef4964 34%, var(--bg));
   color-scheme: light;
 }
 :root[data-theme=dark] {
   --bg: #08090b;
-  --text: #eeeeef;
-  --muted: #96979d;
-  --line: #ffffff18;
-  --button: #409cff;
+  --button: #e3e4df;
   --inverse: #08090b;
-  --field: #191a1e;
-  --blue-soft: #2589ff2b;
-  --hover: #ffffff14;
-  --pressed: #ffffff24;
+  --text: #e6e7e9;
+  --muted: #9a9da3;
+  --line: #35363b;
+  --field: #28292d;
+  --hover: #303136;
   color-scheme: dark;
 }
-button { transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease; }
-button:hover:not(:disabled) { filter: none; }
 button:focus-visible, input:focus-visible,
 input:focus-visible + .switch { outline-color: var(--button); }
-.primary { color: #fff; }
-.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--button) 90%, var(--text)); }
-.primary:active:not(:disabled) { background: color-mix(in srgb, var(--button) 78%, var(--text)); }
-.text-button:hover:not(:disabled) { color: var(--text); }
-.text-button:active:not(:disabled) { color: var(--button); }
-.outlined:hover:not(:disabled), .choices button:hover:not(:disabled) { background: var(--hover); }
-.outlined:active:not(:disabled), .choices button:active:not(:disabled) { background: var(--pressed); }
 .choices button[aria-pressed=true] {
-  color: var(--button);
   border-color: var(--button);
-  background: var(--blue-soft);
+  background: var(--button);
+  color: var(--inverse);
 }
-.path-line input:focus-visible { border-color: var(--button); }
-input:checked + .switch:after { background: #fff; }
+button:hover:not(:disabled):not(.primary):not(.text-button):not(.tools button):not([aria-pressed=true]) {
+  background: var(--hover);
+  filter: none;
+}
+.text-button:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+  filter: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 progress { color: var(--button); }
 progress::-webkit-progress-value { background: var(--button); }
-/* Keep the existing caption hit areas, with Soulu's neutral/danger states. */
-.tools button { color: var(--text); border-radius: 50%; }
-.tools button:hover:not(:disabled) { background: var(--hover); }
-.tools button:active:not(:disabled) { background: var(--pressed); }
-#close:hover:not(:disabled) { background: var(--danger); }
-#close:active:not(:disabled) { background: var(--danger-pressed); }
-@media (prefers-reduced-motion: reduce) { button { transition: none; } }
+.tools button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  color: var(--text);
+  font-size: 0;
+}
+.tools button::before {
+  content: "";
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: transparent;
+  transition: background 120ms ease;
+}
+.tools button:hover:not(:disabled) { filter: none; }
+.tools button:hover:not(:disabled)::before { background: var(--caption-hover); }
+.tools button:active:not(:disabled)::before { background: var(--caption-pressed); }
+.tools #close:hover:not(:disabled)::before { background: var(--caption-danger); }
+.tools #close:active:not(:disabled)::before { background: var(--caption-danger-pressed); }
+.tools button::after {
+  content: "";
+  position: relative;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  mask: var(--caption-icon) center / contain no-repeat;
+}
+.tools #minimize {
+  --caption-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M3 8h10' fill='none' stroke='black' stroke-width='1.25' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+.tools #close {
+  --caption-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 4 8 8M12 4l-8 8' fill='none' stroke='black' stroke-width='1.25' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+
+/* Explicit centers are independent of caption font and hit-area dimensions. */
+.tools button::before { left:50%; top:50%; transform:translate(-50%,-50%); pointer-events:none; }
+.tools button::after { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); pointer-events:none; }

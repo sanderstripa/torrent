@@ -1,5 +1,3 @@
-Torrent 0.3.7
+# Torrent 1.3.8
 
-- Оформление установщика в стиле Soulu: светлая и тёмная темы, синие активные выделения и состояния кнопок.
-- Подсветка кнопок сворачивания и закрытия, включая розово-красное выделение закрытия.
-- Расположение, размеры, тексты, параметры и логика установки сохранены.
+Unified installer appearance: Screencast light palette and selected controls, Screenshot dark background, white dark-theme selection, centered caption feedback and underlined Back hover. Correct application and installer versions; canonical Release-x64 installer filename. Existing installation options and behavior retained.
