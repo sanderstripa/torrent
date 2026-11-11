@@ -41,7 +41,13 @@ $brandInputs=@(
  @{Source=(Join-Path $repo 'assets/icon-preview.png');Target=(Join-Path $core 'core/web/assets/icon.png')}
 )
 $backups=@{}
+$stylePath=Join-Path $core 'core/web/style.css'
 try{
+ # Scope Soulu colors and control states to this product; keep the shared
+ # markup, scripts, adapter, assets and all layout rules unchanged.
+ $backups[$stylePath]=[IO.File]::ReadAllBytes($stylePath)
+ $theme=[IO.File]::ReadAllText((Join-Path $repo 'installer/soulu-theme.css'))
+ [IO.File]::WriteAllText($stylePath,([Text.Encoding]::UTF8.GetString($backups[$stylePath])+"`n"+$theme),[Text.UTF8Encoding]::new($false))
  foreach($inputAsset in $brandInputs){
   $backups[$inputAsset.Target]=[IO.File]::ReadAllBytes($inputAsset.Target)
   [IO.File]::WriteAllBytes($inputAsset.Target,[IO.File]::ReadAllBytes($inputAsset.Source))
@@ -51,8 +57,9 @@ try{
  $metadata=Get-Content -LiteralPath "$OutFile.build.json" -Raw | ConvertFrom-Json
  $metadata | Add-Member -NotePropertyName productIconSHA256 -NotePropertyValue ((Get-FileHash (Join-Path $repo 'assets/app.ico') -Algorithm SHA256).Hash.ToLowerInvariant())
  $metadata | Add-Member -NotePropertyName runtimeIconSHA256 -NotePropertyValue ((Get-FileHash (Join-Path $repo 'assets/icon-preview.png') -Algorithm SHA256).Hash.ToLowerInvariant())
+ $metadata | Add-Member -NotePropertyName installerThemeSHA256 -NotePropertyValue ((Get-FileHash (Join-Path $repo 'installer/soulu-theme.css') -Algorithm SHA256).Hash.ToLowerInvariant())
  $metadata | ConvertTo-Json | Set-Content -LiteralPath "$OutFile.build.json" -Encoding utf8
+ if($TestUI){& (Join-Path $core 'test-ui.ps1') -OutputDirectory (Join-Path $repo '.tmp/installer-review')}
 }finally{
  foreach($target in $backups.Keys){[IO.File]::WriteAllBytes($target,$backups[$target])}
 }
-if($TestUI){& (Join-Path $core 'test-ui.ps1') -OutputDirectory (Join-Path $repo '.tmp/installer-review')}
