@@ -1,3 +1,3 @@
-# Torrent 1.3.8
+# Torrent 1.3.9
 
-Unified installer appearance: Screencast light palette and selected controls, Screenshot dark background, white dark-theme selection, centered caption feedback and underlined Back hover. Correct application and installer versions; canonical Release-x64 installer filename. Existing installation options and behavior retained.
+Replaced the square product icon with the approved circular version in the application, installer, uninstaller, Windows shortcuts and file associations. Updated all ten ICO sizes and repository previews. Application functionality is unchanged.
