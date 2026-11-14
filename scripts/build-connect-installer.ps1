@@ -37,7 +37,7 @@ $sourceCommit=(git -C $repo rev-parse HEAD).Trim()
 # Product inputs only: keep the pinned shared source unchanged after this build.
 # Wails uses a PNG at runtime in addition to the PE/Explorer ICO resource.
 $brandInputs=@(
- @{Source=(Join-Path $repo 'assets/app.ico');Target=(Join-Path $core 'products/torrent.ico')},
+ @{Source=(Join-Path $repo 'installer/assets/installer.ico');Target=(Join-Path $core 'products/torrent.ico')},
  @{Source=(Join-Path $repo 'assets/icon-preview.png');Target=(Join-Path $core 'core/web/assets/icon.png')}
 )
 $backups=@{}
@@ -56,6 +56,7 @@ try{
  if($LASTEXITCODE){throw 'Shared installer build failed'}
  $metadata=Get-Content -LiteralPath "$OutFile.build.json" -Raw | ConvertFrom-Json
  $metadata | Add-Member -NotePropertyName productIconSHA256 -NotePropertyValue ((Get-FileHash (Join-Path $repo 'assets/app.ico') -Algorithm SHA256).Hash.ToLowerInvariant())
+ $metadata | Add-Member -NotePropertyName installerIconSHA256 -NotePropertyValue ((Get-FileHash (Join-Path $repo 'installer/assets/installer.ico') -Algorithm SHA256).Hash.ToLowerInvariant())
  $metadata | Add-Member -NotePropertyName runtimeIconSHA256 -NotePropertyValue ((Get-FileHash (Join-Path $repo 'assets/icon-preview.png') -Algorithm SHA256).Hash.ToLowerInvariant())
  $metadata | Add-Member -NotePropertyName installerThemeSHA256 -NotePropertyValue ((Get-FileHash (Join-Path $repo 'installer/soulu-theme.css') -Algorithm SHA256).Hash.ToLowerInvariant())
  $metadata | ConvertTo-Json | Set-Content -LiteralPath "$OutFile.build.json" -Encoding utf8
