@@ -4,6 +4,7 @@ permissions:
   contents: write
 jobs:
   build:
+    if: github.ref != 'refs/heads/rust-edition'
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -165,18 +166,15 @@ jobs:
           $sums | Set-Content -LiteralPath SHA256SUMS.txt -Encoding ascii
           gh release create v1.4.0 dist/Torrent-1.4.0-Release-x64.exe dist/Torrent-Windows-x64.zip SHA256SUMS.txt --target $env:GITHUB_SHA --latest --title 'Torrent v1.4.0' --notes-file RELEASE_NOTES.md
           if ($LASTEXITCODE -ne 0) { throw 'Verified release publication failed' }
-      - name: Publish Rust Edition preview
-        if: github.event_name == 'push' && github.ref == 'refs/heads/rust-edition'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
+  rust-port-tests:
+    if: github.ref == 'refs/heads/rust-edition'
+    permissions:
+      contents: read
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check and test Rust modules
         run: |
-          $tag = 'v1.4.0-re.1'
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) { throw "Refusing to overwrite $tag" }
-          $asset = 'Torrent-1.4.0-RE.1-Portable-x64.zip'
-          Compress-Archive -Path dist/app/* -DestinationPath $asset
-          $sum = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$sum  $asset" | Set-Content SHA256SUMS.txt -Encoding ascii
-          gh release create $tag $asset SHA256SUMS.txt dist/re-sort-comparison.txt rust-edition/REPORT.md --prerelease --latest=false --target $env:GITHUB_SHA --title 'Torrent 1.4.0 Rust Edition Preview 1' --notes-file rust-edition/REPORT.md
-          if ($LASTEXITCODE) { throw "Rust Edition publication failed" }
+          cargo fmt --manifest-path rust-edition/Cargo.toml -- --check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path rust-edition/Cargo.toml

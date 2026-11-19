@@ -17,6 +17,13 @@ pub unsafe extern "C" fn torrent_re_sort_by_size(
     let indices = unsafe { std::slice::from_raw_parts_mut(indices, count) };
     indices.sort_by(|&a, &b| {
         let order = sizes[a as usize].cmp(&sizes[b as usize]);
-        if ascending != 0 { order } else { order.reverse() }
+        if ascending != 0 {
+            order
+        } else {
+            order.reverse()
+        }
     });
 }
+
+pub mod profile;
+pub mod queue_policy;
