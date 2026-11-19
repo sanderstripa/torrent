@@ -200,4 +200,45 @@ RE_EXPORT bool re_checkpoint(lt::session* session, lt::torrent_handle* handle,
     });
 }
 
+struct ReStatus {
+    std::int64_t wanted;
+    std::int64_t wanted_done;
+    std::int32_t progress_ppm;
+    std::int32_t download_rate;
+    std::int32_t upload_rate;
+    std::int32_t peers;
+    bool paused;
+    bool has_metadata;
+    bool seeding;
+};
+
+RE_EXPORT bool re_status(lt::torrent_handle* handle, ReStatus* output,
+                          void (*name)(void*, char const*, std::size_t),
+                          void* context, char* error, std::size_t capacity) noexcept {
+    return checked(error, capacity, [&] {
+        auto const status = handle->status(lt::torrent_handle::query_name);
+        *output = {status.total_wanted, status.total_wanted_done, status.progress_ppm,
+                   status.download_payload_rate, status.upload_payload_rate, status.num_peers,
+                   bool(status.flags & lt::torrent_flags::paused), status.has_metadata,
+                   status.is_seeding};
+        name(context, status.name.data(), status.name.size());
+        return true;
+    });
+}
+
+RE_EXPORT bool re_files(lt::torrent_handle* handle,
+                         void (*receive)(void*, std::int64_t, char const*, std::size_t),
+                         void* context, char* error, std::size_t capacity) noexcept {
+    return checked(error, capacity, [&] {
+        auto const metadata = handle->torrent_file();
+        if (!metadata) return true;
+        auto const& files = metadata->files();
+        for (lt::file_index_t index : files.file_range()) {
+            auto const path = files.file_path(index);
+            receive(context, files.file_size(index), path.data(), path.size());
+        }
+        return true;
+    });
+}
+
 }

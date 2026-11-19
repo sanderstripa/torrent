@@ -3,6 +3,26 @@ use crate::queue_policy::QueuePolicy;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr::NonNull;
 
+#[repr(C)]
+#[derive(Debug, Default)]
+pub struct TransferStatus {
+    pub wanted: i64,
+    pub wanted_done: i64,
+    pub progress_ppm: i32,
+    pub download_rate: i32,
+    pub upload_rate: i32,
+    pub peers: i32,
+    pub paused: bool,
+    pub has_metadata: bool,
+    pub seeding: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct TorrentFile {
+    pub size: i64,
+    pub path: String,
+}
+
 #[link(name = "torrent_re_libtorrent")]
 extern "C" {
     fn re_session_open(
@@ -77,6 +97,22 @@ extern "C" {
         session: *mut c_void,
         handle: *mut c_void,
         receive: unsafe extern "C" fn(*mut c_void, *const u8, usize),
+        context: *mut c_void,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> bool;
+
+    fn re_status(
+        handle: *mut c_void,
+        status: *mut TransferStatus,
+        name: unsafe extern "C" fn(*mut c_void, *const u8, usize),
+        context: *mut c_void,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> bool;
+    fn re_files(
+        handle: *mut c_void,
+        receive: unsafe extern "C" fn(*mut c_void, i64, *const u8, usize),
         context: *mut c_void,
         error: *mut c_char,
         capacity: usize,
@@ -246,6 +282,56 @@ impl Torrent<'_> {
         })
     }
 
+    pub fn status(&self) -> Result<(String, TransferStatus), String> {
+        unsafe extern "C" fn name(output: *mut c_void, bytes: *const u8, length: usize) {
+            let value = unsafe { std::slice::from_raw_parts(bytes, length) };
+            unsafe { *output.cast::<String>() = String::from_utf8_lossy(value).into_owned() };
+        }
+        let mut label = String::new();
+        let mut status = TransferStatus::default();
+        checked(|error, capacity| unsafe {
+            re_status(
+                self.handle.as_ptr(),
+                &mut status,
+                name,
+                (&mut label as *mut String).cast(),
+                error,
+                capacity,
+            )
+            .then_some(())
+        })?;
+        Ok((label, status))
+    }
+
+    /// The returned order is libtorrent's file index order.
+    pub fn files(&self) -> Result<Vec<TorrentFile>, String> {
+        unsafe extern "C" fn entry(
+            output: *mut c_void,
+            size: i64,
+            bytes: *const u8,
+            length: usize,
+        ) {
+            let value = unsafe { std::slice::from_raw_parts(bytes, length) };
+            let files = unsafe { &mut *output.cast::<Vec<TorrentFile>>() };
+            files.push(TorrentFile {
+                size,
+                path: String::from_utf8_lossy(value).into_owned(),
+            });
+        }
+        let mut files = Vec::<TorrentFile>::new();
+        checked(|error, capacity| unsafe {
+            re_files(
+                self.handle.as_ptr(),
+                entry,
+                (&mut files as *mut Vec<TorrentFile>).cast(),
+                error,
+                capacity,
+            )
+            .then_some(())
+        })?;
+        Ok(files)
+    }
+
     pub fn checkpoint(&self) -> Result<Vec<u8>, String> {
         if self.session.checkpoint_failed.get() {
             return Err("Reopen the session before requesting another checkpoint".into());
@@ -331,6 +417,13 @@ mod tests {
             std::fs::write(&source, metadata)?;
             let session = Session::open(PREVIEW_POLICY, true)?;
             let torrent = session.add(source.to_str().unwrap(), dir.to_str().unwrap(), true)?;
+            let (title, status) = torrent.status()?;
+            assert_eq!(title, "sample");
+            assert!(status.has_metadata);
+            let files = torrent.files()?;
+            assert_eq!(files.len(), 2);
+            assert!(files[0].path.ends_with('a') && files[1].path.ends_with('b'));
+            assert_eq!((files[0].size, files[1].size), (1, 1));
             assert!(torrent.select_files(&[4]).is_err());
             assert!(torrent.select_files(&[9, 0]).is_err());
             torrent.select_files(&[0, 7])?;
