@@ -27,3 +27,6 @@ pub unsafe extern "C" fn torrent_re_sort_by_size(
 
 pub mod profile;
 pub mod queue_policy;
+
+#[cfg(feature = "libtorrent")]
+pub mod engine;

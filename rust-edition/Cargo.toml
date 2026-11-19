@@ -8,3 +8,6 @@ crate-type = ["staticlib"]
 
 [profile.release]
 panic = "abort"
+
+[features]
+libtorrent = []

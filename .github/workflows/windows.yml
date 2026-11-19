@@ -178,3 +178,23 @@ jobs:
           cargo fmt --manifest-path rust-edition/Cargo.toml -- --check
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo test --locked --manifest-path rust-edition/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo check --locked --features libtorrent --manifest-path rust-edition/Cargo.toml
+  rust-libtorrent-integration:
+    if: github.ref == 'refs/heads/rust-edition'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libtorrent and build its adapter
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtorrent-rasterbar-dev libboost-system-dev libssl-dev
+          cmake -S rust-edition/native -B re-native -DCMAKE_BUILD_TYPE=Release
+          cmake --build re-native --parallel 2
+      - name: Exercise native libtorrent from Rust
+        run: |
+          export RUSTFLAGS="-L native=$PWD/re-native"
+          export LD_LIBRARY_PATH="$PWD/re-native"
+          cargo test --locked --features libtorrent --manifest-path rust-edition/Cargo.toml
