@@ -30,3 +30,6 @@ pub mod queue_policy;
 
 #[cfg(feature = "libtorrent")]
 pub mod engine;
+
+#[cfg(feature = "libtorrent")]
+pub mod transfers;

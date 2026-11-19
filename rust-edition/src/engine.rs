@@ -128,6 +128,13 @@ extern "C" {
         capacity: usize,
     ) -> bool;
 
+    fn re_info_hash(
+        handle: *mut c_void,
+        output: *mut c_char,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> bool;
+
 }
 
 fn checked<T>(operation: impl FnOnce(*mut c_char, usize) -> Option<T>) -> Result<T, String> {
@@ -292,6 +299,16 @@ impl Torrent<'_> {
         })
     }
 
+    pub fn key(&self) -> Result<String, String> {
+        let mut bytes = [0 as c_char; 65];
+        checked(|error, capacity| unsafe {
+            re_info_hash(self.handle.as_ptr(), bytes.as_mut_ptr(), error, capacity).then_some(())
+        })?;
+        Ok(unsafe { CStr::from_ptr(bytes.as_ptr()) }
+            .to_string_lossy()
+            .into_owned())
+    }
+
     pub fn status(&self) -> Result<(String, TransferStatus), String> {
         unsafe extern "C" fn name(output: *mut c_void, bytes: *const u8, length: usize) {
             let value = unsafe { std::slice::from_raw_parts(bytes, length) };
@@ -450,7 +467,7 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             let checkpoint = torrent.checkpoint()?;
-            let key = "a".repeat(40);
+            let key = torrent.key()?;
             crate::profile::ResumeEntry {
                 key: key.clone(),
                 stopped: true,
@@ -467,6 +484,7 @@ mod tests {
             assert_eq!(directory[0].key, key);
             assert!(directory[0].stopped);
             let restored = reopened.restore(&directory[0].data)?;
+            assert_eq!(restored.key()?, key);
             assert_eq!(restored.file_priorities()?, [0, 7]);
             restored.remove()?;
             Ok(())

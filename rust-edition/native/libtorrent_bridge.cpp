@@ -256,4 +256,24 @@ RE_EXPORT bool re_connect_local_peer(lt::torrent_handle* torrent, std::uint16_t 
     });
 }
 
+RE_EXPORT bool re_info_hash(lt::torrent_handle* handle, char* output,
+                             char* error, std::size_t capacity) noexcept {
+    return checked(error, capacity, [&] {
+        auto const hashes = handle->info_hashes();
+        constexpr char digits[] = "0123456789abcdef";
+        auto encode = [&](auto const& hash) {
+            for (auto byte : hash) {
+                auto const value = static_cast<unsigned char>(byte);
+                *output++ = digits[value >> 4];
+                *output++ = digits[value & 15];
+            }
+            *output = '\0';
+        };
+        if (hashes.has_v2()) encode(hashes.v2);
+        else if (hashes.has_v1()) encode(hashes.v1);
+        else throw std::runtime_error("Missing torrent info hash");
+        return true;
+    });
+}
+
 }
