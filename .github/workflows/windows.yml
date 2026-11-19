@@ -198,3 +198,34 @@ jobs:
           export RUSTFLAGS="-L native=$PWD/re-native"
           export LD_LIBRARY_PATH="$PWD/re-native"
           cargo test --locked --features libtorrent --manifest-path rust-edition/Cargo.toml -- --include-ignored
+  rust-libtorrent-windows:
+    if: github.ref == 'refs/heads/rust-edition'
+    permissions:
+      contents: read
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare vcpkg
+        run: |
+          git clone --branch 2025.06.13 --depth 1 https://github.com/microsoft/vcpkg.git "$env:RUNNER_TEMP/vcpkg"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item "$env:RUNNER_TEMP/vcpkg-cache" -ItemType Directory -Force
+          "VCPKG_DEFAULT_BINARY_CACHE=$env:RUNNER_TEMP/vcpkg-cache" >> $env:GITHUB_ENV
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-20250613-x64-static-release-${{ hashFiles('vcpkg.json', 'triplets/*') }}
+      - name: Build only the new libtorrent bridge
+        run: |
+          cmake -S rust-edition/native -B re-native -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_MANIFEST_DIR="$PWD" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS="$PWD/triplets" -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build re-native --config Release --parallel 2
+      - name: Test the Rust session and real transfers on Windows
+        run: |
+          $bridge = (Resolve-Path re-native/Release).Path
+          $env:PATH = "$bridge;$env:PATH"
+          $env:CARGO_ENCODED_RUSTFLAGS = "-L" + [char]31 + "native=$bridge"
+          cargo test --locked --target x86_64-pc-windows-msvc --features libtorrent --manifest-path rust-edition/Cargo.toml -- --include-ignored
