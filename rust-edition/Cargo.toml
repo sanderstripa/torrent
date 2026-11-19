@@ -4,10 +4,25 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["staticlib", "rlib"]
 
 [profile.release]
 panic = "abort"
 
 [features]
 libtorrent = []
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_Security",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[[bin]]
+name = "torrent-re-windows"
+path = "src/main.rs"
+required-features = ["libtorrent"]

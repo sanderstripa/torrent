@@ -229,3 +229,14 @@ jobs:
           $env:PATH = "$bridge;$env:PATH"
           $env:CARGO_ENCODED_RUSTFLAGS = "-L" + [char]31 + "native=$bridge"
           cargo test --locked --target x86_64-pc-windows-msvc --features libtorrent --manifest-path rust-edition/Cargo.toml -- --include-ignored
+      - name: Start and close the Rust Win32 development shell
+        run: |
+          $bridge = (Resolve-Path re-native/Release).Path
+          $env:PATH = "$bridge;$env:PATH"
+          $env:CARGO_ENCODED_RUSTFLAGS = "-L" + [char]31 + "native=$bridge"
+          cargo build --locked --target x86_64-pc-windows-msvc --features libtorrent --manifest-path rust-edition/Cargo.toml --bin torrent-re-windows
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $exe = "rust-edition/target/x86_64-pc-windows-msvc/debug/torrent-re-windows.exe"
+          $p = Start-Process $exe -ArgumentList "--smoke-test" -PassThru
+          if (!$p.WaitForExit(30000)) { $p.Kill(); throw "Rust window smoke test timed out" }
+          if ($p.ExitCode) { throw "Rust window smoke test failed ($($p.ExitCode))" }
