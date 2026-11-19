@@ -1,0 +1,8 @@
+{"name":"empty","args":["asc"]}
+{"name":"one","args":["desc","100"]}
+{"name":"ascending","args":["asc","500","100","300"]}
+{"name":"descending","args":["desc","500","100","300"]}
+{"name":"ties-asc","args":["asc","10","2","10","2","10"]}
+{"name":"ties-desc","args":["desc","10","2","10","2","10"]}
+{"name":"all-equal","args":["desc","4","4","4","4","4"]}
+{"name":"int64-boundary","args":["asc","9223372036854775807","0","-9223372036854775808","9007199254740993","9007199254740992"]}

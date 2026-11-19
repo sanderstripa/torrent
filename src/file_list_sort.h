@@ -4,6 +4,11 @@
 #include <windows.h>
 #include <algorithm>
 #include <cstdint>
+
+#ifdef TORRENT_RUST_EDITION
+extern "C" void torrent_re_sort_by_size(
+ const std::int64_t* sizes, std::int32_t* indices, std::size_t count, std::uint8_t ascending);
+#endif
 #include <numeric>
 #include <string>
 #include <vector>
@@ -20,6 +25,12 @@ inline std::vector<int> sortedIndices(std::vector<std::wstring> const& names,
  std::vector<int> indices(names.size());
  std::iota(indices.begin(),indices.end(),0);
  if(sortBy!=1&&sortBy!=2)return indices;
+#ifdef TORRENT_RUST_EDITION
+ if(sortBy==2&&sizes.size()>=indices.size()) {
+  torrent_re_sort_by_size(sizes.data(),indices.data(),indices.size(),ascending);
+  return indices;
+ }
+#endif
  std::stable_sort(indices.begin(),indices.end(),[&](int a,int b){
   int result=0;
   if(sortBy==1)result=compareNames(names[a],names[b]);

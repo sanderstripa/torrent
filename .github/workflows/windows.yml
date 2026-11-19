@@ -29,8 +29,14 @@ jobs:
         with:
           path: ${{ runner.temp }}/vcpkg-cache
           key: vcpkg-20250613-x64-static-release-${{ hashFiles('vcpkg.json', 'triplets/*') }}
+      - name: Select Rust Edition
+        if: github.ref == 'refs/heads/rust-edition'
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          if ($LASTEXITCODE) { throw "Rust toolchain setup failed" }
+          "TORRENT_RE=ON" >> $env:GITHUB_ENV
       - name: Configure
-        run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+        run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded "-DTORRENT_RUST_EDITION=$env:TORRENT_RE"
       - uses: actions/cache/save@v4
         if: steps.dependency-cache.outputs.cache-hit != 'true'
         with:
@@ -40,6 +46,12 @@ jobs:
         run: cmake --build build --config Release --parallel 2
       - name: Test engine
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Compare Rust and C++ on Windows
+        if: github.ref == 'refs/heads/rust-edition'
+        run: |
+          New-Item dist -ItemType Directory -Force | Out-Null
+          ./build/Release/torrent_re_probe.exe bench asc | Tee-Object dist/re-sort-comparison.txt
+          if ($LASTEXITCODE) { throw "Rust/C++ comparison failed" }
       - name: Test native window
         shell: pwsh
         run: |
@@ -69,6 +81,7 @@ jobs:
           "Installed payload bytes: $size" | Tee-Object -FilePath dist/size.txt
           if ($size -gt 50MB) { throw "Installed payload exceeds 50 MiB budget" }
       - name: Build installer
+        if: github.ref != 'refs/heads/rust-edition'
         run: |
           choco install nsis --no-progress -y
           Push-Location installer
@@ -76,6 +89,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
           Pop-Location
       - name: Set versioned installer filename
+        if: github.ref != 'refs/heads/rust-edition'
         shell: pwsh
         run: |
           $project = Get-Content CMakeLists.txt -Raw
@@ -83,6 +97,7 @@ jobs:
           "TORRENT_VERSION=$($Matches[1])" >> $env:GITHUB_ENV
           "TORRENT_INSTALLER=Torrent-$($Matches[1])-Release-x64.exe" >> $env:GITHUB_ENV
       - name: Build shared CONNECT Installer
+        if: github.ref != 'refs/heads/rust-edition'
         run: |
           ./scripts/build-connect-installer.ps1 -PayloadPath "$PWD/dist/Torrent-Payload.exe" -ExpectedExecutable "$PWD/dist/app/Torrent.exe" -Version $env:TORRENT_VERSION -OutFile "$PWD/dist/$env:TORRENT_INSTALLER" -TestUI
           powershell -NoProfile -ExecutionPolicy Bypass -Command "& ./tools/test_icon_resources.ps1 -Executables @('dist/app/Torrent.exe','dist/$env:TORRENT_INSTALLER','dist/Torrent-Payload.exe')"
@@ -94,7 +109,6 @@ jobs:
         run: |
           New-Item dist/screenshots -ItemType Directory -Force
           $app = (Resolve-Path build/Release/Torrent.exe).Path
-          $setup = (Resolve-Path "dist/$env:TORRENT_INSTALLER").Path
           Push-Location dist/screenshots
           foreach ($exe in @($app)) {
             $process = Start-Process $exe -ArgumentList '--visual-test' -PassThru -WindowStyle Hidden
@@ -115,7 +129,6 @@ jobs:
         run: |
           New-Item dist/screenshots/dark -ItemType Directory -Force
           $app = (Resolve-Path build/Release/Torrent.exe).Path
-          $setup = (Resolve-Path "dist/$env:TORRENT_INSTALLER").Path
           Push-Location dist/screenshots/dark
           foreach ($exe in @($app)) {
             $process = Start-Process $exe -ArgumentList '--visual-test-dark' -PassThru -WindowStyle Hidden
@@ -124,6 +137,16 @@ jobs:
           }
           if ((Get-ChildItem *.png).Count -ne 3) { throw "Missing dark screenshots" }
           Pop-Location
+      - name: Compare baseline and Rust Edition executables
+        if: github.ref == 'refs/heads/rust-edition'
+        shell: pwsh
+        run: |
+          cmake -S . -B build -DTORRENT_RUST_EDITION=OFF
+          if ($LASTEXITCODE) { throw 'Baseline configuration failed' }
+          cmake --build build --config Release --parallel 2 --target Torrent
+          if ($LASTEXITCODE) { throw 'Baseline build failed' }
+          ./rust-edition/compare-windows.ps1 -Baseline build/Release/Torrent.exe -Preview dist/app/Torrent.exe |
+            Tee-Object -Append dist/re-sort-comparison.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -142,3 +165,18 @@ jobs:
           $sums | Set-Content -LiteralPath SHA256SUMS.txt -Encoding ascii
           gh release create v1.4.0 dist/Torrent-1.4.0-Release-x64.exe dist/Torrent-Windows-x64.zip SHA256SUMS.txt --target $env:GITHUB_SHA --latest --title 'Torrent v1.4.0' --notes-file RELEASE_NOTES.md
           if ($LASTEXITCODE -ne 0) { throw 'Verified release publication failed' }
+      - name: Publish Rust Edition preview
+        if: github.event_name == 'push' && github.ref == 'refs/heads/rust-edition'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'v1.4.0-re.1'
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Refusing to overwrite $tag" }
+          $asset = 'Torrent-1.4.0-RE.1-Portable-x64.zip'
+          Compress-Archive -Path dist/app/* -DestinationPath $asset
+          $sum = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sum  $asset" | Set-Content SHA256SUMS.txt -Encoding ascii
+          gh release create $tag $asset SHA256SUMS.txt dist/re-sort-comparison.txt rust-edition/REPORT.md --prerelease --latest=false --target $env:GITHUB_SHA --title 'Torrent 1.4.0 Rust Edition Preview 1' --notes-file rust-edition/REPORT.md
+          if ($LASTEXITCODE) { throw "Rust Edition publication failed" }
