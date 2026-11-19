@@ -66,6 +66,22 @@ extern "C" {
         capacity: usize,
     ) -> bool;
 
+    fn re_restore(
+        session: *mut c_void,
+        bytes: *const u8,
+        length: usize,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> *mut c_void;
+    fn re_checkpoint(
+        session: *mut c_void,
+        handle: *mut c_void,
+        receive: unsafe extern "C" fn(*mut c_void, *const u8, usize),
+        context: *mut c_void,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> bool;
+
 }
 
 fn checked<T>(operation: impl FnOnce(*mut c_char, usize) -> Option<T>) -> Result<T, String> {
@@ -78,7 +94,10 @@ fn checked<T>(operation: impl FnOnce(*mut c_char, usize) -> Option<T>) -> Result
     })
 }
 
-pub struct Session(NonNull<c_void>);
+pub struct Session {
+    native: NonNull<c_void>,
+    checkpoint_failed: std::cell::Cell<bool>,
+}
 
 impl Session {
     pub fn open(policy: QueuePolicy, offline: bool) -> Result<Self, String> {
@@ -92,14 +111,17 @@ impl Session {
                 error,
                 capacity,
             ))
-            .map(Self)
+            .map(|native| Self {
+                native,
+                checkpoint_failed: std::cell::Cell::new(false),
+            })
         })
     }
 
     pub fn settings(&self) -> Result<QueuePolicy, String> {
         let mut values = [0; 4];
         checked(|error, capacity| unsafe {
-            re_read_policy(self.0.as_ptr(), values.as_mut_ptr(), error, capacity).then_some(())
+            re_read_policy(self.native.as_ptr(), values.as_mut_ptr(), error, capacity).then_some(())
         })?;
         let [active_downloads, active_seeds, active_limit, connections_limit] = values;
         Ok(QueuePolicy {
@@ -121,7 +143,7 @@ impl Session {
         let destination = CString::new(destination).map_err(|e| e.to_string())?;
         checked(|error, capacity| unsafe {
             NonNull::new(re_add(
-                self.0.as_ptr(),
+                self.native.as_ptr(),
                 source.as_ptr(),
                 destination.as_ptr(),
                 magnet,
@@ -135,11 +157,29 @@ impl Session {
             })
         })
     }
+    pub fn restore(&self, bytes: &[u8]) -> Result<Torrent<'_>, String> {
+        if bytes.is_empty() {
+            return Err("Empty resume data".into());
+        }
+        checked(|error, capacity| unsafe {
+            NonNull::new(re_restore(
+                self.native.as_ptr(),
+                bytes.as_ptr(),
+                bytes.len(),
+                error,
+                capacity,
+            ))
+            .map(|handle| Torrent {
+                session: self,
+                handle,
+            })
+        })
+    }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
-        unsafe { re_session_close(self.0.as_ptr()) }
+        unsafe { re_session_close(self.native.as_ptr()) }
     }
 }
 
@@ -206,10 +246,40 @@ impl Torrent<'_> {
         })
     }
 
+    pub fn checkpoint(&self) -> Result<Vec<u8>, String> {
+        if self.session.checkpoint_failed.get() {
+            return Err("Reopen the session before requesting another checkpoint".into());
+        }
+        unsafe extern "C" fn receive(context: *mut c_void, bytes: *const u8, length: usize) {
+            let result = unsafe { &mut *context.cast::<Vec<u8>>() };
+            if length != 0 {
+                result.extend_from_slice(unsafe { std::slice::from_raw_parts(bytes, length) });
+            }
+        }
+        let mut data = Vec::<u8>::new();
+        let result = checked(|error, capacity| unsafe {
+            re_checkpoint(
+                self.session.native.as_ptr(),
+                self.handle.as_ptr(),
+                receive,
+                (&mut data as *mut Vec<u8>).cast(),
+                error,
+                capacity,
+            )
+            .then_some(())
+        });
+        // A timed-out request can still post its alert. Preserve the previous checkpoint
+        // and require a fresh session before accepting another result.
+        if result.is_err() {
+            self.session.checkpoint_failed.set(true);
+        }
+        result.map(|()| data)
+    }
+
     pub fn remove(self) -> Result<(), String> {
         checked(|error, capacity| unsafe {
             re_remove(
-                self.session.0.as_ptr(),
+                self.session.native.as_ptr(),
                 self.handle.as_ptr(),
                 error,
                 capacity,
@@ -249,7 +319,8 @@ mod tests {
     }
 
     #[test]
-    fn torrent_file_keeps_original_priority_indices() -> Result<(), Box<dyn std::error::Error>> {
+    fn checkpoint_preserves_file_priorities_across_session_restart(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let dir = std::env::temp_dir().join(format!("torrent-re-engine-{}", std::process::id()));
         std::fs::create_dir(&dir)?;
         let result = (|| {
@@ -275,7 +346,26 @@ mod tests {
                 );
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            torrent.remove()?;
+            let checkpoint = torrent.checkpoint()?;
+            let key = "a".repeat(40);
+            crate::profile::ResumeEntry {
+                key: key.clone(),
+                stopped: true,
+                selection_pending: false,
+                data: checkpoint,
+            }
+            .save(&dir)?;
+            crate::profile::save_queue_order(&dir, &[&key])?;
+            drop(torrent);
+            drop(session);
+
+            let directory = crate::profile::load_resume_entries(&dir)?;
+            let reopened = Session::open(PREVIEW_POLICY, true)?;
+            assert_eq!(directory[0].key, key);
+            assert!(directory[0].stopped);
+            let restored = reopened.restore(&directory[0].data)?;
+            assert_eq!(restored.file_priorities()?, [0, 7]);
+            restored.remove()?;
             Ok(())
         })();
         std::fs::remove_dir_all(dir)?;

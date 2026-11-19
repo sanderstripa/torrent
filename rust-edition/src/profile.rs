@@ -222,6 +222,55 @@ pub struct ResumeEntry {
     pub data: Vec<u8>,
 }
 
+impl ResumeEntry {
+    /// Writes the legacy payload and its sidecar. The caller owns the profile.
+    pub fn save(&self, root: &Path) -> io::Result<()> {
+        if !valid_key(&self.key) || self.data.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid resume entry",
+            ));
+        }
+        fs::create_dir_all(root)?;
+        let state = format!(
+            "{} {}",
+            u8::from(self.stopped),
+            u8::from(self.selection_pending)
+        );
+        atomic_write(
+            &root.join(format!("{}.state", self.key)),
+            &root.join(format!("{}.state.tmp", self.key)),
+            state.as_bytes(),
+        )?;
+        atomic_write(
+            &root.join(format!("{}.resume", self.key)),
+            &root.join(format!("{}.resume.tmp", self.key)),
+            &self.data,
+        )
+    }
+}
+
+pub fn save_queue_order(root: &Path, keys: &[&str]) -> io::Result<()> {
+    let mut order = String::new();
+    let mut seen = std::collections::HashSet::new();
+    for key in keys {
+        if !valid_key(key) || !seen.insert(key) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid queue entry",
+            ));
+        }
+        order.push_str(key);
+        order.push('\n');
+    }
+    fs::create_dir_all(root)?;
+    atomic_write(
+        &root.join("queue.txt"),
+        &root.join("queue.txt.tmp"),
+        order.as_bytes(),
+    )
+}
+
 fn valid_key(key: &str) -> bool {
     matches!(key.len(), 40 | 64) && key.bytes().all(|byte| byte.is_ascii_hexdigit())
 }

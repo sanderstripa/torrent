@@ -1,9 +1,13 @@
+#include <libtorrent/alert_types.hpp>
+#include <libtorrent/read_resume_data.hpp>
+#include <libtorrent/write_resume_data.hpp>
 #include <libtorrent/magnet_uri.hpp>
 #include <libtorrent/session.hpp>
 #include <libtorrent/settings_pack.hpp>
 #include <libtorrent/torrent_info.hpp>
 #include <libtorrent/torrent_status.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -155,6 +159,44 @@ RE_EXPORT bool re_select_files(lt::torrent_handle* handle, std::uint8_t const* v
         handle->set_flags(lt::torrent_flags::auto_managed);
         handle->resume();
         return true;
+    });
+}
+
+RE_EXPORT lt::torrent_handle* re_restore(lt::session* session, char const* bytes,
+                                         std::size_t length, char* error,
+                                         std::size_t capacity) noexcept {
+    return checked(error, capacity, [&] {
+        auto params = lt::read_resume_data(lt::span<char const>(bytes, static_cast<std::ptrdiff_t>(length)));
+        auto handle = std::make_unique<lt::torrent_handle>();
+        *handle = session->add_torrent(std::move(params));
+        return handle.release();
+    });
+}
+
+// Only one Rust caller drains this session. Save requests are serialized.
+RE_EXPORT bool re_checkpoint(lt::session* session, lt::torrent_handle* handle,
+                              void (*receive)(void*, char const*, std::size_t),
+                              void* context, char* error, std::size_t capacity) noexcept {
+    return checked(error, capacity, [&] {
+        using namespace std::chrono;
+        handle->save_resume_data(lt::torrent_handle::save_info_dict);
+        auto const deadline = steady_clock::now() + seconds(15);
+        std::vector<lt::alert*> alerts;
+        while (steady_clock::now() < deadline) {
+            session->wait_for_alert(milliseconds(100));
+            session->pop_alerts(&alerts);
+            for (auto const* alert : alerts) {
+                auto const* saved = lt::alert_cast<lt::save_resume_data_alert>(alert);
+                if (saved && saved->handle == *handle) {
+                    auto const bytes = lt::write_resume_data_buf(saved->params);
+                    receive(context, bytes.data(), bytes.size());
+                    return true;
+                }
+                auto const* failed = lt::alert_cast<lt::save_resume_data_failed_alert>(alert);
+                if (failed && failed->handle == *handle) throw std::runtime_error(failed->message());
+            }
+        }
+        throw std::runtime_error("Timed out waiting for libtorrent resume data");
     });
 }
 
