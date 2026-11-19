@@ -50,6 +50,9 @@ RE_EXPORT lt::session* re_session_open(int downloads, int seeds, int active, int
         options.set_int(lt::settings_pack::connections_limit, connections);
         options.set_str(lt::settings_pack::user_agent, "Torrent/0.1");
         if (offline) {
+            options.set_int(lt::settings_pack::auto_manage_startup, 0);
+            options.set_int(lt::settings_pack::auto_manage_interval, 1);
+            options.set_bool(lt::settings_pack::dont_count_slow_torrents, false);
             options.set_str(lt::settings_pack::listen_interfaces, "127.0.0.1:0");
             options.set_bool(lt::settings_pack::enable_dht, false);
             options.set_bool(lt::settings_pack::enable_lsd, false);
@@ -237,6 +240,18 @@ RE_EXPORT bool re_files(lt::torrent_handle* handle,
             auto const path = files.file_path(index);
             receive(context, files.file_size(index), path.data(), path.size());
         }
+        return true;
+    });
+}
+
+RE_EXPORT std::uint16_t re_listen_port(lt::session* session) noexcept {
+    return session->listen_port();
+}
+
+RE_EXPORT bool re_connect_local_peer(lt::torrent_handle* torrent, std::uint16_t port,
+                                      char* error, std::size_t capacity) noexcept {
+    return checked(error, capacity, [&] {
+        torrent->connect_peer(lt::tcp::endpoint(lt::make_address("127.0.0.1"), port));
         return true;
     });
 }

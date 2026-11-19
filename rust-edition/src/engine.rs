@@ -118,6 +118,16 @@ extern "C" {
         capacity: usize,
     ) -> bool;
 
+    #[cfg(test)]
+    fn re_listen_port(session: *mut c_void) -> u16;
+    #[cfg(test)]
+    fn re_connect_local_peer(
+        handle: *mut c_void,
+        port: u16,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> bool;
+
 }
 
 fn checked<T>(operation: impl FnOnce(*mut c_char, usize) -> Option<T>) -> Result<T, String> {
@@ -462,6 +472,113 @@ mod tests {
             Ok(())
         })();
         std::fs::remove_dir_all(dir)?;
+        result
+    }
+    #[test]
+    #[ignore = "requires libtorrent to open system network sockets"]
+    fn three_torrents_download_over_loopback() -> Result<(), Box<dyn std::error::Error>> {
+        use std::time::{Duration, Instant};
+        let root = std::env::temp_dir().join(format!("torrent-re-loopback-{}", std::process::id()));
+        std::fs::create_dir(&root)?;
+        let result = (|| {
+            let sources = root.join("source");
+            let output = root.join("output");
+            std::fs::create_dir(&sources)?;
+            std::fs::create_dir(&output)?;
+            let seed = Session::open(
+                QueuePolicy {
+                    active_seeds: 3,
+                    ..PREVIEW_POLICY
+                },
+                true,
+            )?;
+            let download = Session::open(PREVIEW_POLICY, true)?;
+            let mut seeds = Vec::new();
+            let mut downloads = Vec::new();
+            let fixtures: [(&str, &[u8; 4], [u8; 20]); 3] = [
+                (
+                    "a",
+                    b"aaaa",
+                    [
+                        112, 200, 129, 212, 162, 105, 132, 221, 206, 121, 95, 111, 113, 129, 124,
+                        156, 244, 72, 14, 121,
+                    ],
+                ),
+                (
+                    "b",
+                    b"bbbb",
+                    [
+                        138, 237, 19, 34, 229, 69, 11, 173, 176, 120, 225, 251, 96, 168, 23, 161,
+                        223, 37, 162, 202,
+                    ],
+                ),
+                (
+                    "c",
+                    b"cccc",
+                    [
+                        75, 234, 173, 98, 146, 183, 219, 15, 147, 84, 224, 216, 185, 21, 236, 13,
+                        187, 192, 58, 90,
+                    ],
+                ),
+            ];
+            for (name, data, digest) in fixtures {
+                std::fs::write(sources.join(name), data)?;
+                let mut metadata =
+                    format!("d4:infod6:lengthi4e4:name1:{name}12:piece lengthi16384e6:pieces20:")
+                        .into_bytes();
+                metadata.extend(digest);
+                metadata.extend(b"ee");
+                let path = root.join(format!("{name}.torrent"));
+                std::fs::write(&path, metadata)?;
+                seeds.push(seed.add(path.to_str().unwrap(), sources.to_str().unwrap(), false)?);
+                downloads.push(download.add(
+                    path.to_str().unwrap(),
+                    output.to_str().unwrap(),
+                    false,
+                )?);
+            }
+            let deadline = Instant::now() + Duration::from_secs(25);
+            let port = loop {
+                let port = unsafe { re_listen_port(seed.native.as_ptr()) };
+                let active = seeds.iter().all(|torrent| {
+                    torrent
+                        .status()
+                        .is_ok_and(|(_, state)| state.seeding && !state.paused)
+                }) && downloads
+                    .iter()
+                    .all(|torrent| torrent.status().is_ok_and(|(_, state)| !state.paused));
+                if port != 0 && active {
+                    break port;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "three torrents never became active together; port {port}, seeds {:?}, downloads {:?}", seeds.iter().map(Torrent::status).collect::<Vec<_>>(), downloads.iter().map(Torrent::status).collect::<Vec<_>>()
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            };
+            for torrent in &downloads {
+                checked(|error, capacity| unsafe {
+                    re_connect_local_peer(torrent.handle.as_ptr(), port, error, capacity)
+                        .then_some(())
+                })?;
+            }
+            let deadline = Instant::now() + Duration::from_secs(25);
+            while !downloads
+                .iter()
+                .all(|tor| tor.status().is_ok_and(|(_, state)| state.seeding))
+            {
+                assert!(
+                    Instant::now() < deadline,
+                    "loopback transfers did not all finish"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            for (name, data, _) in fixtures {
+                assert_eq!(std::fs::read(output.join(name))?, data);
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(root)?;
         result
     }
 }

@@ -197,4 +197,4 @@ jobs:
         run: |
           export RUSTFLAGS="-L native=$PWD/re-native"
           export LD_LIBRARY_PATH="$PWD/re-native"
-          cargo test --locked --features libtorrent --manifest-path rust-edition/Cargo.toml
+          cargo test --locked --features libtorrent --manifest-path rust-edition/Cargo.toml -- --include-ignored
