@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory)][string]$Executable,
     [Parameter(Mandatory)][string]$Bridge,
-    [Parameter(Mandatory)][string]$DependencyShares
+    [Parameter(Mandatory)][string]$DependencyShares,
+    [string]$PublishDir
 )
 $ErrorActionPreference = 'Stop'
 $packageRoot = Join-Path $env:RUNNER_TEMP ('torrent-re-package-' + [guid]::NewGuid())
@@ -49,3 +50,12 @@ if ((Test-Path (Join-Path $installed 'Torrent-RE.exe')) -or
     throw 'Uninstaller left the installed app or registry entry'
 }
 Write-Output 'Package verified: install, application startup, file registration, and uninstall.'
+if ($PublishDir) {
+    New-Item -ItemType Directory $PublishDir -Force | Out-Null
+    Copy-Item $installer $PublishDir
+    $portable = Join-Path $PublishDir 'Torrent-1.4.0-RE.2-Portable-x64.zip'
+    Compress-Archive -Path "$($stage.FullName)/*" -DestinationPath $portable
+    $portableCheck = Join-Path $packageRoot 'portable-check'
+    Expand-Archive -LiteralPath $portable -DestinationPath $portableCheck
+    Run-Checked (Join-Path $portableCheck 'Torrent-RE.exe') '--smoke-test'
+}

@@ -265,4 +265,36 @@ jobs:
           ./rust-edition/tests/windows-ui.ps1 -Executable "rust-edition/target/x86_64-pc-windows-msvc/release/torrent-re-windows.exe"
       - name: Verify installer without publishing it
         run: |
-          ./rust-edition/installer/check-package.ps1 -Executable "rust-edition/target/x86_64-pc-windows-msvc/release/torrent-re-windows.exe" -Bridge "re-native/Release/torrent_re_libtorrent.dll" -DependencyShares "re-native/vcpkg_installed/x64-windows-static/share"
+          ./rust-edition/installer/check-package.ps1 -Executable "rust-edition/target/x86_64-pc-windows-msvc/release/torrent-re-windows.exe" -Bridge "re-native/Release/torrent_re_libtorrent.dll" -DependencyShares "re-native/vcpkg_installed/x64-windows-static/share" -PublishDir "preview2"
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && github.event.head_commit.message == 'Release Torrent 1.4.0 Rust Edition Preview 2'
+        with:
+          name: verified-torrent-preview-2
+          path: preview2/
+          if-no-files-found: error
+  publish-rust-preview-2:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/rust-edition' && github.event.head_commit.message == 'Release Torrent 1.4.0 Rust Edition Preview 2'
+    needs: [rust-port-tests, rust-libtorrent-integration, rust-libtorrent-windows]
+    permissions:
+      contents: write
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-torrent-preview-2
+          path: preview2
+      - name: Publish the verified preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'v1.4.0-re.2'
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Refusing to overwrite $tag" }
+          $files = @('preview2/Torrent-1.4.0-RE.2-Setup-x64.exe', 'preview2/Torrent-1.4.0-RE.2-Portable-x64.zip')
+          $sums = foreach ($file in $files) {
+            "$((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($file))"
+          }
+          $sums | Set-Content -Encoding ascii preview2/SHA256SUMS.txt
+          gh release create $tag $files preview2/SHA256SUMS.txt --target $env:GITHUB_SHA --prerelease --latest=false --title 'Torrent 1.4.0 Rust Edition Preview 2' --notes-file rust-edition/PREVIEW-2.md
+          if ($LASTEXITCODE) { throw 'Preview publication failed' }
