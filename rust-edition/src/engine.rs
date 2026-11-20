@@ -599,6 +599,11 @@ mod tests {
                 );
                 std::thread::sleep(Duration::from_millis(50));
             }
+            // A torrent can enter seeding before the disk thread drains its write queue.
+            drop(downloads);
+            drop(download);
+            drop(seeds);
+            drop(seed);
             for (name, data, _) in fixtures {
                 assert_eq!(std::fs::read(output.join(name))?, data);
             }
