@@ -7,6 +7,12 @@ mod windows_paint;
 
 #[cfg(windows)]
 fn main() {
+    if std::env::args_os().any(|argument| argument == "--interaction-test") {
+        std::panic::set_hook(Box::new(|info| {
+            let detail = format!("{info}\n{}", std::backtrace::Backtrace::force_capture());
+            let _ = std::fs::write("re-ui-panic.txt", detail);
+        }));
+    }
     if let Err(error) = windows_app::run() {
         if std::env::args_os()
             .any(|argument| argument == "--smoke-test" || argument == "--interaction-test")

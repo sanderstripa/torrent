@@ -91,6 +91,8 @@ try {
         throw 'Window position was not saved'
     }
 } finally {
+    $panicFile = Join-Path $folder.FullName 're-ui-panic.txt'
+    if (Test-Path $panicFile) { Get-Content $panicFile }
     if (!$process.HasExited) { $process.Kill(); $process.WaitForExit() }
     Remove-Item -LiteralPath $folder.FullName -Recurse -Force
 }

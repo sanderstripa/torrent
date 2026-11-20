@@ -21,7 +21,7 @@ use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
-use windows_sys::Win32::System::SystemServices::SS_CENTERIMAGE;
+use windows_sys::Win32::System::SystemServices::{SS_CENTER, SS_CENTERIMAGE};
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR, OPENFILENAMEW,
@@ -73,6 +73,7 @@ const SHELL_SOURCES: u32 = WM_APP + 6;
 const WINDOW_MOVED: u32 = WM_APP + 7;
 const CLASS: windows_sys::core::PCWSTR = windows_sys::w!("TorrentRustDevelopment");
 thread_local! {
+    static CARD_ROWS: std::cell::RefCell<Vec<crate::windows_paint::TransferCard>> = const { std::cell::RefCell::new(Vec::new()) };
     static SHELL_INBOX: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -149,13 +150,21 @@ unsafe extern "system" fn dispatch(
             let mut area = RECT::default();
             unsafe {
                 GetClientRect(window, &mut area);
-                windows_sys::Win32::Graphics::Gdi::FillRect(
-                    wparam as _,
-                    &area,
-                    windows_sys::Win32::Graphics::Gdi::GetStockObject(
-                        windows_sys::Win32::Graphics::Gdi::BLACK_BRUSH,
-                    ),
-                );
+                let image = GetPropW(window, windows_sys::w!("TorrentSettingsSnapshot"));
+                if let Some(snapshot) = image
+                    .cast::<crate::windows_paint::SettingsBackdrop>()
+                    .as_ref()
+                {
+                    snapshot.paint(wparam as _, area);
+                } else {
+                    windows_sys::Win32::Graphics::Gdi::FillRect(
+                        wparam as _,
+                        &area,
+                        windows_sys::Win32::Graphics::Gdi::GetStockObject(
+                            windows_sys::Win32::Graphics::Gdi::BLACK_BRUSH,
+                        ),
+                    );
+                }
             }
             1
         }
@@ -219,7 +228,16 @@ unsafe extern "system" fn dispatch(
             1
         }
         WM_DRAWITEM if wparam == 200 => {
-            unsafe { crate::windows_paint::transfer(&*(lparam as *const DRAWITEMSTRUCT)) };
+            let Some(draw) = (unsafe { (lparam as *const DRAWITEMSTRUCT).as_ref() }) else {
+                return 0;
+            };
+            CARD_ROWS.with(|cards| {
+                if let Ok(cards) = cards.try_borrow() {
+                    if let Some(row) = cards.get(draw.itemID as usize) {
+                        unsafe { crate::windows_paint::transfer(draw, row) };
+                    }
+                }
+            });
             1
         }
         WM_COMMAND
@@ -284,6 +302,7 @@ struct Dialog {
     window: HWND,
     sheet: bool,
     backdrop: HWND,
+    _snapshot: Option<Box<crate::windows_paint::SettingsBackdrop>>,
 }
 
 impl Dialog {
@@ -338,6 +357,16 @@ impl Dialog {
                 Theme::Light
             },
         );
+        let snapshot = if sheet {
+            crate::windows_paint::SettingsBackdrop::capture(
+                owner,
+                owner_rect.right - owner_rect.left,
+                owner_rect.bottom - owner_rect.top,
+            )
+            .map(Box::new)
+        } else {
+            None
+        };
         let backdrop = if sheet {
             unsafe {
                 let backdrop = CreateWindowExW(
@@ -356,7 +385,21 @@ impl Dialog {
                 );
                 if !backdrop.is_null() {
                     SetPropW(backdrop, windows_sys::w!("TorrentSettingsBackdrop"), window);
-                    SetLayeredWindowAttributes(backdrop, 0, 42, LWA_ALPHA);
+                    if let Some(image) = snapshot.as_deref() {
+                        SetPropW(
+                            backdrop,
+                            windows_sys::w!("TorrentSettingsSnapshot"),
+                            (image as *const crate::windows_paint::SettingsBackdrop)
+                                .cast_mut()
+                                .cast(),
+                        );
+                    }
+                    SetLayeredWindowAttributes(
+                        backdrop,
+                        0,
+                        if snapshot.is_some() { 255 } else { 42 },
+                        LWA_ALPHA,
+                    );
                 }
                 backdrop
             }
@@ -368,6 +411,7 @@ impl Dialog {
             window,
             sheet,
             backdrop,
+            _snapshot: snapshot,
         })
     }
 
@@ -477,6 +521,7 @@ impl Drop for Dialog {
             }
             if !self.backdrop.is_null() {
                 RemovePropW(self.backdrop, windows_sys::w!("TorrentSettingsBackdrop"));
+                RemovePropW(self.backdrop, windows_sys::w!("TorrentSettingsSnapshot"));
                 DestroyWindow(self.backdrop);
             }
             SetActiveWindow(self.owner);
@@ -596,7 +641,7 @@ fn settings(
         CHANGE_ADD,
     )?;
     fields.push(label("", 302, 620)?);
-    label("Torrent 1.4.0 Rust Edition", 348, 620)?;
+    label("Torrent 1.4.0 Rust Edition Preview 2", 348, 620)?;
     label("Sander Stripa", 382, 620)?;
     let updates = dialog.control("BUTTON", "", WS_TABSTOP, (28, 433, 145, 32), ABOUT_UPDATE)?;
     dialog.control(
@@ -858,7 +903,8 @@ struct Controls {
     english: std::cell::Cell<bool>,
     dark: std::cell::Cell<bool>,
     fonts: Box<crate::windows_paint::Fonts>,
-    cards: std::cell::RefCell<Vec<crate::windows_paint::TransferCard>>,
+    empty: HWND,
+    empty_hint: HWND,
     list: HWND,
 }
 
@@ -898,8 +944,23 @@ impl Controls {
             (16, 84, 870, 520),
             200,
         )?;
+        let empty = child(
+            "STATIC",
+            "",
+            SS_CENTERIMAGE as u32 | SS_CENTER as u32,
+            (20, 245, 850, 30),
+            0,
+        )?;
+        let empty_hint = child(
+            "STATIC",
+            "",
+            SS_CENTERIMAGE as u32 | SS_CENTER as u32,
+            (20, 280, 850, 30),
+            0,
+        )?;
         let fonts = Box::new(crate::windows_paint::Fonts::new());
         unsafe {
+            SendMessageW(empty, WM_SETFONT, fonts.heading() as usize, 1);
             SendMessageW(
                 GetDlgItem(window, 190),
                 WM_SETFONT,
@@ -912,13 +973,34 @@ impl Controls {
             english: std::cell::Cell::new(false),
             dark: std::cell::Cell::new(false),
             fonts,
-            cards: std::cell::RefCell::new(Vec::new()),
+            empty,
+            empty_hint,
             list,
         })
     }
 
     fn set_language(&self, english: bool) {
         self.english.set(english);
+        unsafe {
+            SetWindowTextW(
+                self.empty,
+                wide(tr(
+                    english,
+                    "Добавьте первый торрент",
+                    "Add your first torrent",
+                ))
+                .as_ptr(),
+            );
+            SetWindowTextW(
+                self.empty_hint,
+                wide(tr(
+                    english,
+                    "Нажмите + или перетащите сюда .torrent",
+                    "Click + or drop a .torrent file here",
+                ))
+                .as_ptr(),
+            );
+        }
     }
 
     fn layout(&self) {
@@ -935,6 +1017,22 @@ impl Controls {
             unsafe { MoveWindow(button, x, 16, 32, 32, 1) };
         }
         unsafe {
+            MoveWindow(
+                self.empty,
+                16,
+                available.bottom / 2 - 32,
+                (available.right - 32).max(1),
+                30,
+                1,
+            );
+            MoveWindow(
+                self.empty_hint,
+                16,
+                available.bottom / 2,
+                (available.right - 32).max(1),
+                30,
+                1,
+            );
             MoveWindow(
                 self.list,
                 16,
@@ -956,13 +1054,17 @@ impl Controls {
     }
 
     fn refresh_selection(&self, transfers: &Transfers<'_>, selected: Option<usize>) {
+        let is_empty = transfers.ordered().is_empty();
+        unsafe {
+            ShowWindow(self.list, if is_empty { SW_HIDE } else { SW_SHOWNA });
+            ShowWindow(self.empty, if is_empty { SW_SHOWNA } else { SW_HIDE });
+            ShowWindow(self.empty_hint, if is_empty { SW_SHOWNA } else { SW_HIDE });
+        }
         let top = unsafe { SendMessageW(self.list, LB_GETTOPINDEX, 0, 0) }.max(0);
         unsafe { SendMessageW(self.list, WM_SETREDRAW, 0, 0) };
         unsafe { SendMessageW(self.list, LB_RESETCONTENT, 0, 0) };
         let en = self.english.get();
-        let mut cards = self.cards.borrow_mut();
-        cards.clear();
-        cards.reserve(transfers.ordered().len());
+        let mut cards = Vec::with_capacity(transfers.ordered().len());
         for entry in transfers.ordered() {
             let mut card = crate::windows_paint::TransferCard::new();
             card.attach_fonts(&self.fonts);
@@ -1020,22 +1122,15 @@ impl Controls {
             };
             cards.push(card);
         }
-        for card in cards.iter() {
+        CARD_ROWS.with(|rows| *rows.borrow_mut() = cards);
+        for _ in transfers.ordered() {
             unsafe {
-                let row = SendMessageW(
+                SendMessageW(
                     self.list,
                     LB_ADDSTRING,
                     0,
-                    wide(&card.title).as_ptr() as LPARAM,
+                    windows_sys::w!("").cast::<u16>() as LPARAM,
                 );
-                if row >= 0 {
-                    SendMessageW(
-                        self.list,
-                        LB_SETITEMDATA,
-                        row as usize,
-                        card as *const _ as LPARAM,
-                    );
-                }
             }
         }
         if let Some(row) = selected {
@@ -1363,6 +1458,57 @@ impl Drop for ProcessLock {
     }
 }
 
+struct AppIcons(Vec<HICON>);
+
+impl AppIcons {
+    fn attach(window: HWND) -> Self {
+        let data = include_bytes!("../../assets/app.ico");
+        let count = usize::from(u16::from_le_bytes([data[4], data[5]]));
+        let table = data.get(6..6 + count * 16).unwrap_or_default();
+        let mut loaded = Vec::new();
+        for (kind, width) in [(ICON_SMALL, 32), (ICON_BIG, 256)] {
+            let best = table.chunks_exact(16).min_by_key(|format| {
+                let dimension = if format[0] == 0 {
+                    256
+                } else {
+                    i32::from(format[0])
+                };
+                (dimension - width).abs()
+            });
+            let Some(format) = best else { continue };
+            let size = u32::from_le_bytes(format[8..12].try_into().unwrap()) as usize;
+            let start = u32::from_le_bytes(format[12..16].try_into().unwrap()) as usize;
+            let Some(payload) = data.get(start..start.saturating_add(size)) else {
+                continue;
+            };
+            let icon = unsafe {
+                CreateIconFromResourceEx(
+                    payload.as_ptr(),
+                    payload.len() as u32,
+                    1,
+                    0x0003_0000,
+                    width.min(48),
+                    width.min(48),
+                    LR_DEFAULTCOLOR,
+                )
+            };
+            if !icon.is_null() {
+                unsafe { SendMessageW(window, WM_SETICON, kind as usize, icon as LPARAM) };
+                loaded.push(icon);
+            }
+        }
+        Self(loaded)
+    }
+}
+
+impl Drop for AppIcons {
+    fn drop(&mut self) {
+        for &icon in &self.0 {
+            unsafe { DestroyIcon(icon) };
+        }
+    }
+}
+
 fn forward_sources() {
     let existing = unsafe { FindWindowW(CLASS, null()) };
     if existing.is_null() {
@@ -1486,6 +1632,7 @@ pub fn run() -> Result<(), String> {
         if window.is_null() {
             return Err(std::io::Error::last_os_error().to_string());
         }
+        let _icons = AppIcons::attach(window);
         let dark = apply_title_theme(window, prefs.theme);
         if !smoke {
             restore_position(window, &profile);

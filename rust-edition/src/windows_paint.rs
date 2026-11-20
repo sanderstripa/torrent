@@ -164,11 +164,7 @@ unsafe fn label(dc: HDC, mut area: RECT, font: HFONT, rgb: u32, value: &str, rig
 
 /// Native listbox selection and scrolling are retained. The row contents are
 /// painted from a stable snapshot owned by the window's Controls.
-pub unsafe fn transfer(draw: &DRAWITEMSTRUCT) {
-    if draw.itemID == u32::MAX || draw.itemData == 0 {
-        return;
-    }
-    let row = unsafe { &*(draw.itemData as *const TransferCard) };
+pub unsafe fn transfer(draw: &DRAWITEMSTRUCT, row: &TransferCard) {
     let Some(fonts) = (unsafe { row.fonts.as_ref() }) else {
         return;
     };
@@ -333,5 +329,131 @@ pub unsafe fn caption_button(draw: &DRAWITEMSTRUCT, text: &str, dark: bool) {
             SelectObject(draw.hDC, old);
         }
         DeleteObject(font);
+    }
+}
+
+struct Offscreen {
+    dc: HDC,
+    bitmap: HBITMAP,
+    original: HGDIOBJ,
+}
+
+impl Offscreen {
+    unsafe fn new(reference: HDC, width: i32, height: i32) -> Option<Self> {
+        let dc = unsafe { CreateCompatibleDC(reference) };
+        if dc.is_null() {
+            return None;
+        }
+        let bitmap = unsafe { CreateCompatibleBitmap(reference, width, height) };
+        if bitmap.is_null() {
+            unsafe { DeleteDC(dc) };
+            return None;
+        }
+        let original = unsafe { SelectObject(dc, bitmap) };
+        if original.is_null() {
+            unsafe {
+                DeleteObject(bitmap);
+                DeleteDC(dc);
+            }
+            return None;
+        }
+        Some(Self {
+            dc,
+            bitmap,
+            original,
+        })
+    }
+}
+
+impl Drop for Offscreen {
+    fn drop(&mut self) {
+        unsafe {
+            SelectObject(self.dc, self.original);
+            DeleteObject(self.bitmap);
+            DeleteDC(self.dc);
+        }
+    }
+}
+
+pub struct SettingsBackdrop {
+    preview: Offscreen,
+    width: i32,
+    height: i32,
+}
+
+impl SettingsBackdrop {
+    pub fn capture(
+        owner: windows_sys::Win32::Foundation::HWND,
+        width: i32,
+        height: i32,
+    ) -> Option<Self> {
+        if width <= 0 || height <= 0 {
+            return None;
+        }
+        let reference = unsafe { GetWindowDC(owner) };
+        if reference.is_null() {
+            return None;
+        }
+        let small_width = (width / 16).max(1);
+        let small_height = (height / 16).max(1);
+        let snapshot = unsafe { Offscreen::new(reference, width, height) };
+        let preview = unsafe { Offscreen::new(reference, small_width, small_height) };
+        unsafe { ReleaseDC(owner, reference) };
+        let (snapshot, preview) = (snapshot?, preview?);
+        let valid = unsafe {
+            windows_sys::Win32::Storage::Xps::PrintWindow(
+                owner,
+                snapshot.dc,
+                windows_sys::Win32::UI::WindowsAndMessaging::PW_RENDERFULLCONTENT,
+            )
+        };
+        if valid == 0 {
+            return None;
+        }
+        unsafe {
+            SetStretchBltMode(preview.dc, HALFTONE);
+            if StretchBlt(
+                preview.dc,
+                0,
+                0,
+                small_width,
+                small_height,
+                snapshot.dc,
+                0,
+                0,
+                width,
+                height,
+                SRCCOPY,
+            ) == 0
+            {
+                return None;
+            }
+        }
+        Some(Self {
+            preview,
+            width: small_width,
+            height: small_height,
+        })
+    }
+
+    pub unsafe fn paint(&self, destination: HDC, rect: RECT) {
+        unsafe {
+            let preserve = SaveDC(destination);
+            SetStretchBltMode(destination, HALFTONE);
+            StretchBlt(
+                destination,
+                0,
+                0,
+                rect.right,
+                rect.bottom,
+                self.preview.dc,
+                0,
+                0,
+                self.width,
+                self.height,
+                SRCCOPY,
+            );
+            RestoreDC(destination, preserve);
+        }
     }
 }
