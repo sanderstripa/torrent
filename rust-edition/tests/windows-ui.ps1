@@ -61,7 +61,9 @@ $digest = [Security.Cryptography.SHA1]::HashData([Text.Encoding]::ASCII.GetBytes
 $process = Start-Process $exe -WorkingDirectory $folder.FullName -ArgumentList @('--interaction-test', "`"$fixture`"") -PassThru
 try {
     $main = Wait-Visible 'Torrent Rust Edition'
+    Write-Host 'Main window appeared'
     $files = Wait-Visible 'Файлы торрента'
+    Write-Host 'File-selection dialog appeared'
     Command $files 111
     $list = [RustTorrentUI]::GetDlgItem($main, 200)
     if ($list -eq [IntPtr]::Zero -or [RustTorrentUI]::SendMessage($list, 0x18B, [IntPtr]::Zero, [IntPtr]::Zero).ToInt32() -ne 1) {
@@ -71,6 +73,7 @@ try {
     Command $main 105
     Command $main 110
     $settings = Wait-Visible 'Настройки'
+    Write-Host 'Settings sheet appeared'
     Command $settings 126
     for ($attempt = 0; $attempt -lt 50 -and (Get-Content $prefs)[1] -ne '1 1 0'; $attempt++) {
         Start-Sleep -Milliseconds 100
@@ -91,8 +94,14 @@ try {
         throw 'Window position was not saved'
     }
 } finally {
-    $panicFile = Join-Path $folder.FullName 're-ui-panic.txt'
-    if (Test-Path $panicFile) { Get-Content $panicFile }
+    foreach ($diagnostic in @('re-ui-panic.txt', 're-ui-trace.txt')) {
+        $file = Join-Path $folder.FullName $diagnostic
+        if (Test-Path $file) { Get-Content $file -Tail 55 }
+    }
+    if ($process.HasExited -and $process.ExitCode) {
+        Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000; StartTime=(Get-Date).AddMinutes(-3)} -ErrorAction SilentlyContinue |
+            Where-Object Message -match 'torrent-re-windows' | Select-Object -First 1 -ExpandProperty Message
+    }
     if (!$process.HasExited) { $process.Kill(); $process.WaitForExit() }
     Remove-Item -LiteralPath $folder.FullName -Recurse -Force
 }

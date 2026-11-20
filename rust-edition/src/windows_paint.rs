@@ -140,7 +140,10 @@ unsafe fn rounded(dc: HDC, area: &RECT, background: u32, border: u32, radius: i3
 }
 
 unsafe fn label(dc: HDC, mut area: RECT, font: HFONT, rgb: u32, value: &str, right: bool) {
-    let text: Vec<_> = value.encode_utf16().collect();
+    if value.is_empty() {
+        return;
+    }
+    let text: Vec<_> = value.encode_utf16().chain(Some(0)).collect();
     let old = unsafe { SelectObject(dc, font) };
     unsafe {
         SetTextColor(dc, color(rgb));
@@ -148,7 +151,7 @@ unsafe fn label(dc: HDC, mut area: RECT, font: HFONT, rgb: u32, value: &str, rig
         DrawTextW(
             dc,
             text.as_ptr(),
-            text.len() as i32,
+            (text.len() - 1) as i32,
             &mut area,
             DT_END_ELLIPSIS
                 | DT_SINGLELINE
@@ -168,6 +171,7 @@ pub unsafe fn transfer(draw: &DRAWITEMSTRUCT, row: &TransferCard) {
     let Some(fonts) = (unsafe { row.fonts.as_ref() }) else {
         return;
     };
+    crate::windows_app::trace_ui("painting queue card");
     let selected = draw.itemState & 1 != 0;
     let (surface, card, highlight, border, text, muted, track) = if row.dark {
         (
@@ -196,6 +200,7 @@ pub unsafe fn transfer(draw: &DRAWITEMSTRUCT, row: &TransferCard) {
     };
     unsafe {
         fill(draw.hDC, &outer, surface);
+        crate::windows_app::trace_ui("painted queue card background");
         rounded(
             draw.hDC,
             &card_area,

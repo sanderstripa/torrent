@@ -85,6 +85,21 @@ fn tr<'a>(english: bool, ru: &'a str, en: &'a str) -> &'a str {
     }
 }
 
+static TRACE_UI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn trace_ui(message: &str) {
+    if TRACE_UI.load(std::sync::atomic::Ordering::Relaxed) {
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("re-ui-trace.txt")
+        {
+            let _ = writeln!(file, "{message}");
+        }
+    }
+}
+
 fn wide(text: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
     text.as_ref().encode_wide().chain(Some(0)).collect()
 }
@@ -228,6 +243,7 @@ unsafe extern "system" fn dispatch(
             1
         }
         WM_DRAWITEM if wparam == 200 => {
+            trace_ui("queue draw begin");
             let Some(draw) = (unsafe { (lparam as *const DRAWITEMSTRUCT).as_ref() }) else {
                 return 0;
             };
@@ -598,6 +614,7 @@ fn settings(
     root: &std::path::Path,
     controls: &Controls,
 ) -> Result<(), String> {
+    trace_ui("settings opening");
     let dialog = Dialog::open(
         owner,
         tr(prefs.english, "Настройки", "Settings"),
@@ -699,6 +716,7 @@ fn settings(
         SendMessageW(add, CB_SETCURSEL, prefs.select_files as usize, 0);
     };
     display(prefs);
+    trace_ui("settings ready");
     dialog.run(|id| {
         let mut updated = prefs.clone();
         match id {
@@ -776,6 +794,7 @@ fn select_torrent_files(
     transfer: &torrent_re_sort::transfers::Transfer<'_>,
     en: bool,
 ) -> Result<Option<Vec<u8>>, String> {
+    trace_ui("file dialog constructing");
     let files = transfer.handle.files()?;
     if files.is_empty() {
         return Err(tr(
@@ -856,6 +875,7 @@ fn select_torrent_files(
         SendMessageW(list, LB_SETHORIZONTALEXTENT, extent, 0);
     };
     redraw(&indices, &priorities);
+    trace_ui("file dialog ready");
     dialog.run(|id| match id {
         ACCEPT => {
             read_selection(&indices, &mut priorities, &remembered);
@@ -1546,6 +1566,8 @@ fn forward_sources() {
 pub fn run() -> Result<(), String> {
     let smoke = std::env::args_os().any(|argument| argument == "--smoke-test");
     let interaction = std::env::args_os().any(|argument| argument == "--interaction-test");
+    TRACE_UI.store(interaction, std::sync::atomic::Ordering::Relaxed);
+    trace_ui("starting");
     let _lock = if smoke || interaction {
         None
     } else {
@@ -1632,12 +1654,15 @@ pub fn run() -> Result<(), String> {
         if window.is_null() {
             return Err(std::io::Error::last_os_error().to_string());
         }
+        trace_ui("created window");
         let _icons = AppIcons::attach(window);
+        trace_ui("attached icon");
         let dark = apply_title_theme(window, prefs.theme);
         if !smoke {
             restore_position(window, &profile);
         }
         let controls = Controls::create(window)?;
+        trace_ui("created controls");
         controls.set_language(prefs.english);
         controls.dark.set(dark);
         controls.layout();
@@ -1657,13 +1682,16 @@ pub fn run() -> Result<(), String> {
                 }
             }
         }
+        trace_ui("initial list refresh begin");
         controls.refresh(&transfers);
+        trace_ui("initial list refresh end");
         if smoke {
             DestroyWindow(window);
         } else {
             DragAcceptFiles(window, 1);
             SetTimer(window, 1, 1000, None);
             ShowWindow(window, SW_SHOW);
+            trace_ui("main window shown");
         }
         let mut message = MSG::default();
         loop {
