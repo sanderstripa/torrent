@@ -1,0 +1,76 @@
+From 2b5e7253b9a6a4cde64d3f2f22d71272f6ad32c5 Mon Sep 17 00:00:00 2001
+From: Neil Horman <nhorman@openssl.org>
+Date: Mon, 14 Apr 2025 11:03:02 -0400
+Subject: [PATCH] Fix winstore provider to work with recent decoder changes
+
+Changes made recently in commit 31b5f3f made changes to how a default
+decoder was created, in which ossl_decoder_instance_new() started
+returning null.  Other storemgmt providers were updated to start using
+ossl_decoder_instance_new_forprov, but the winstore manager seems to
+have got missed.  Fix it up properly
+
+Fixes #27355
+
+Reviewed-by: Viktor Dukhovni <viktor@openssl.org>
+Reviewed-by: Matt Caswell <matt@openssl.org>
+(Merged from https://github.com/openssl/openssl/pull/27384)
+
+(cherry picked from commit 8419baf31222c5f439b09ceb41f7a6e1916eab3b)
+---
+ .../implementations/storemgmt/winstore_store.c  | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/providers/implementations/storemgmt/winstore_store.c b/providers/implementations/storemgmt/winstore_store.c
+index 55dcc2aff20292aedde699faa7eb6902d4a8b7d7..57316c578171844a8fae1e1930dccc1f9f815a3e 100644
+--- a/providers/implementations/storemgmt/winstore_store.c
++++ b/providers/implementations/storemgmt/winstore_store.c
+@@ -183,6 +183,7 @@ static int setup_decoder(struct winstore_ctx_st *ctx)
+ {
+     OSSL_LIB_CTX *libctx = ossl_prov_ctx_get0_libctx(ctx->provctx);
+     const OSSL_ALGORITHM *to_algo = NULL;
++    const char *input_structure = NULL;
+ 
+     if (ctx->dctx != NULL)
+         return 1;
+@@ -198,7 +199,8 @@ static int setup_decoder(struct winstore_ctx_st *ctx)
+         goto err;
+     }
+ 
+-    if (!OSSL_DECODER_CTX_set_input_structure(ctx->dctx, "Certificate")) {
++    input_structure = "Certificate";
++    if (!OSSL_DECODER_CTX_set_input_structure(ctx->dctx, input_structure)) {
+         ERR_raise(ERR_LIB_PROV, ERR_R_OSSL_DECODER_LIB);
+         goto err;
+     }
+@@ -208,6 +210,7 @@ static int setup_decoder(struct winstore_ctx_st *ctx)
+          to_algo++) {
+         OSSL_DECODER *to_obj = NULL;
+         OSSL_DECODER_INSTANCE *to_obj_inst = NULL;
++        const char *input_type;
+ 
+         /*
+          * Create the internal last resort decoder implementation
+@@ -217,12 +220,22 @@ static int setup_decoder(struct winstore_ctx_st *ctx)
+          */
+         to_obj = ossl_decoder_from_algorithm(0, to_algo, NULL);
+         if (to_obj != NULL)
+-            to_obj_inst = ossl_decoder_instance_new(to_obj, ctx->provctx);
++            to_obj_inst = ossl_decoder_instance_new_forprov(to_obj, ctx->provctx,
++                                                            input_structure);
+ 
+         OSSL_DECODER_free(to_obj);
+         if (to_obj_inst == NULL)
+             goto err;
+ 
++        /*
++         * The input type has to be DER
++         */
++        input_type = OSSL_DECODER_INSTANCE_get_input_type(to_obj_inst);
++        if (OPENSSL_strcasecmp(input_type, "DER") != 0) {
++            ossl_decoder_instance_free(to_obj_inst);
++            continue;
++        }
++
+         if (!ossl_decoder_ctx_add_decoder_inst(ctx->dctx,
+                                                to_obj_inst)) {
+             ossl_decoder_instance_free(to_obj_inst);

@@ -214,7 +214,20 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           New-Item "$env:RUNNER_TEMP/vcpkg-cache" -ItemType Directory -Force
           "VCPKG_DEFAULT_BINARY_CACHE=$env:RUNNER_TEMP/vcpkg-cache" >> $env:GITHUB_ENV
+      - name: Prefill vcpkg with the pinned OpenSSL patch
+        run: |
+          $patch = 'openssl-certstore-crash-2b5e7253b9a6a4cde64d3f2f22d71272f6ad32c5.patch'
+          $content = [IO.File]::ReadAllText("$PWD/rust-edition/native/ci/$patch").Replace("`r`n", "`n")
+          $downloads = "$env:RUNNER_TEMP/vcpkg-downloads"
+          New-Item -ItemType Directory $downloads -Force | Out-Null
+          [IO.File]::WriteAllText("$downloads/$patch", $content, [Text.UTF8Encoding]::new($false))
+          $hash = (Get-FileHash "$downloads/$patch" -Algorithm SHA512).Hash
+          if ($hash -ne 'a13054a457ee72fd3d1760810b5323d04be5aaf18f199824515ca596a72e98154ace4fefd747e32a7cc32c6e4ed2363b100bf65a729cf2361fcc76715d5b7cd1') {
+            throw 'Pinned OpenSSL patch checksum differs from vcpkg'
+          }
+          "VCPKG_DOWNLOADS=$downloads" >> $env:GITHUB_ENV
       - uses: actions/cache/restore@v4
+        id: bridge-cache
         with:
           path: ${{ runner.temp }}/vcpkg-cache
           key: vcpkg-20250613-x64-static-release-${{ hashFiles('vcpkg.json', 'triplets/*') }}
@@ -223,6 +236,11 @@ jobs:
           cmake -S rust-edition/native -B re-native -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_MANIFEST_DIR="$PWD" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS="$PWD/triplets" -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cmake --build re-native --config Release --parallel 2
+      - uses: actions/cache/save@v4
+        if: steps.bridge-cache.outputs.cache-hit != 'true'
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-20250613-x64-static-release-${{ hashFiles('vcpkg.json', 'triplets/*') }}
       - name: Test the Rust session and real transfers on Windows
         run: |
           $bridge = (Resolve-Path re-native/Release).Path
