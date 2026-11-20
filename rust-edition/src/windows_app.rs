@@ -70,6 +70,7 @@ const LAYOUT: u32 = WM_APP + 3;
 const REQUEST_CLOSE: u32 = WM_APP + 4;
 const APPLY_THEME: u32 = WM_APP + 5;
 const SHELL_SOURCES: u32 = WM_APP + 6;
+const WINDOW_MOVED: u32 = WM_APP + 7;
 const CLASS: windows_sys::core::PCWSTR = windows_sys::w!("TorrentRustDevelopment");
 thread_local! {
     static SHELL_INBOX: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -178,11 +179,12 @@ unsafe extern "system" fn dispatch(
             unsafe { crate::windows_paint::caption_button(draw, label, window_dark(window)) };
             1
         }
-        WM_SIZE | WM_CLOSE | WM_SETTINGCHANGE
+        WM_MOVE | WM_SIZE | WM_CLOSE | WM_SETTINGCHANGE
             if unsafe { GetWindow(window, GW_OWNER) }.is_null() =>
         {
             let action = match message {
                 WM_SIZE => LAYOUT,
+                WM_MOVE => WINDOW_MOVED,
                 WM_CLOSE => REQUEST_CLOSE,
                 _ => APPLY_THEME,
             };
@@ -1424,6 +1426,23 @@ pub fn run() -> Result<(), String> {
         PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is unavailable")?)
             .join("Torrent RE Development")
     };
+    if !smoke && !interaction && !profile.exists() {
+        if let Some(local) = profile.parent() {
+            let stable = local.join("Torrent");
+            let settings = stable.join("settings.txt");
+            let position = stable.join("window-position.txt");
+            if settings.is_file() || position.is_file() {
+                std::fs::create_dir_all(&profile).map_err(|error| error.to_string())?;
+                for item in [settings, position] {
+                    if item.is_file() {
+                        let name = item.file_name().ok_or("Invalid legacy profile path")?;
+                        std::fs::copy(&item, profile.join(name))
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+            }
+        }
+    }
     let default_folder = downloads_folder().unwrap_or_else(|| profile.join("Downloads"));
     let mut prefs =
         Preferences::load(&profile, default_folder).map_err(|error| error.to_string())?;
@@ -1505,6 +1524,16 @@ pub fn run() -> Result<(), String> {
                 -1 => return Err(std::io::Error::last_os_error().to_string()),
                 0 => break,
                 _ if message.hwnd == window && message.message == LAYOUT => controls.layout(),
+                _ if message.hwnd == window && message.message == WINDOW_MOVED && !smoke => {
+                    SetTimer(window, 2, 250, None);
+                }
+                _ if message.hwnd == window
+                    && message.message == WM_TIMER
+                    && message.wParam == 2 =>
+                {
+                    KillTimer(window, 2);
+                    let _ = save_position(window, &profile);
+                }
                 _ if message.hwnd == window && message.message == CONTEXT => {
                     context_menu(window, &controls, message.lParam)
                 }
@@ -1624,8 +1653,28 @@ pub fn run() -> Result<(), String> {
                         SETTINGS => settings(window, &mut prefs, &profile, &controls),
                         _ => Ok(()),
                     };
-                    if let Err(error) = result {
-                        show_error(&error);
+                    match result {
+                        Err(error) => show_error(&error),
+                        Ok(())
+                            if [
+                                ADD_MAGNET,
+                                ADD_TORRENT,
+                                PAUSE,
+                                RESUME,
+                                STOP,
+                                REMOVE,
+                                UP,
+                                DOWN,
+                                FILES,
+                            ]
+                            .contains(&message.wParam) =>
+                        {
+                            if let Err(error) = transfers.save() {
+                                show_error(&error);
+                            }
+                            last_save = std::time::Instant::now();
+                        }
+                        _ => {}
                     }
                     controls.refresh_selection(&transfers, selected);
                 }
