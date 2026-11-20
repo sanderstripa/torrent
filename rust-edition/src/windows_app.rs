@@ -18,6 +18,7 @@ use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromRect, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
+use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows_sys::Win32::System::SystemServices::SS_CENTERIMAGE;
@@ -26,7 +27,9 @@ use windows_sys::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR, OPENFILENAMEW,
 };
 use windows_sys::Win32::UI::Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, SetActiveWindow, VK_ESCAPE};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    EnableWindow, SetActiveWindow, VK_DELETE, VK_ESCAPE, VK_RETURN,
+};
 use windows_sys::Win32::UI::Shell::{
     DragAcceptFiles, DragFinish, DragQueryFileW, FOLDERID_Downloads, SHBrowseForFolderW,
     SHGetKnownFolderPath, SHGetPathFromIDListW, ShellExecuteW, BIF_RETURNONLYFSDIRS, BROWSEINFOW,
@@ -66,6 +69,11 @@ const CONTEXT: u32 = WM_APP + 2;
 const LAYOUT: u32 = WM_APP + 3;
 const REQUEST_CLOSE: u32 = WM_APP + 4;
 const APPLY_THEME: u32 = WM_APP + 5;
+const SHELL_SOURCES: u32 = WM_APP + 6;
+const CLASS: windows_sys::core::PCWSTR = windows_sys::w!("TorrentRustDevelopment");
+thread_local! {
+    static SHELL_INBOX: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 
 fn tr<'a>(english: bool, ru: &'a str, en: &'a str) -> &'a str {
     if english {
@@ -97,6 +105,32 @@ unsafe extern "system" fn dispatch(
     lparam: LPARAM,
 ) -> LRESULT {
     match message {
+        WM_COPYDATA if unsafe { GetWindow(window, GW_OWNER) }.is_null() => {
+            let Some(packet) = (unsafe { (lparam as *const COPYDATASTRUCT).as_ref() }) else {
+                return 0;
+            };
+            let length = packet.cbData as usize;
+            if packet.dwData != 1
+                || !(2..=65_536).contains(&length)
+                || length % 2 != 0
+                || packet.lpData.is_null()
+            {
+                return 0;
+            }
+            let buffer =
+                unsafe { std::slice::from_raw_parts(packet.lpData.cast::<u16>(), length / 2) };
+            if buffer.last() != Some(&0) || buffer[..buffer.len() - 1].contains(&0) {
+                return 0;
+            }
+            let source = String::from_utf16_lossy(&buffer[..buffer.len() - 1]);
+            SHELL_INBOX.with(|inbox| inbox.borrow_mut().push(source));
+            unsafe { PostMessageW(window, SHELL_SOURCES, 0, 0) };
+            1
+        }
+        WM_COMMAND if wparam & 0xffff == 200 && wparam >> 16 == LBN_DBLCLK as usize => {
+            unsafe { PostMessageW(window, ACTION, FILES, 0) };
+            0
+        }
         WM_LBUTTONUP
             if unsafe {
                 !GetPropW(window, windows_sys::w!("TorrentSettingsBackdrop")).is_null()
@@ -384,12 +418,19 @@ impl Dialog {
                 ShowWindow(self.window, SW_SHOW);
             }
             let mut message = MSG::default();
+            let mut deferred = Vec::new();
             while IsWindow(self.window) != 0 {
                 match GetMessageW(&mut message, null_mut(), 0, 0) {
                     -1 => break,
                     0 => {
                         PostQuitMessage(message.wParam as i32);
                         break;
+                    }
+                    _ if message.hwnd == self.owner
+                        && [REQUEST_CLOSE, SHELL_SOURCES, WM_DROPFILES]
+                            .contains(&message.message) =>
+                    {
+                        deferred.push((message.message, message.wParam, message.lParam));
                     }
                     _ if message.hwnd == self.window && message.message == ACTION => {
                         if command(message.wParam) {
@@ -405,6 +446,9 @@ impl Dialog {
                         DispatchMessageW(&message);
                     }
                 }
+            }
+            for (message, wparam, lparam) in deferred {
+                PostMessageW(self.owner, message, wparam, lparam);
             }
         }
     }
@@ -707,7 +751,7 @@ fn select_torrent_files(
     let list = dialog.control(
         "LISTBOX",
         "",
-        WS_BORDER | WS_VSCROLL | WS_TABSTOP | LBS_EXTENDEDSEL as u32,
+        WS_BORDER | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP | LBS_EXTENDEDSEL as u32,
         (20, 52, 670, 352),
         0,
     )?;
@@ -742,6 +786,7 @@ fn select_torrent_files(
     };
     let redraw = |indices: &[usize], priorities: &[u8]| unsafe {
         SendMessageW(list, LB_RESETCONTENT, 0, 0);
+        let mut extent = 0;
         for (row, &index) in indices.iter().enumerate() {
             let file = &files[index];
             let level = match priorities[index] {
@@ -751,7 +796,9 @@ fn select_torrent_files(
                 _ => tr(en, "Обычный", "Normal"),
             };
             let label = format!("{}  •  {} B  •  {level}", file.path, file.size);
-            SendMessageW(list, LB_ADDSTRING, 0, wide(label).as_ptr() as LPARAM);
+            let units = wide(label);
+            extent = extent.max(units.len().saturating_mul(12));
+            SendMessageW(list, LB_ADDSTRING, 0, units.as_ptr() as LPARAM);
             SendMessageW(
                 list,
                 LB_SETSEL,
@@ -759,6 +806,7 @@ fn select_torrent_files(
                 row as LPARAM,
             );
         }
+        SendMessageW(list, LB_SETHORIZONTALEXTENT, extent, 0);
     };
     redraw(&indices, &priorities);
     dialog.run(|id| match id {
@@ -840,7 +888,11 @@ impl Controls {
         let list = child(
             "LISTBOX",
             "",
-            WS_VSCROLL | WS_TABSTOP | LBS_OWNERDRAWFIXED as u32 | LBS_HASSTRINGS as u32,
+            WS_VSCROLL
+                | WS_TABSTOP
+                | LBS_OWNERDRAWFIXED as u32
+                | LBS_HASSTRINGS as u32
+                | LBS_NOTIFY as u32,
             (16, 84, 870, 520),
             200,
         )?;
@@ -1309,6 +1361,40 @@ impl Drop for ProcessLock {
     }
 }
 
+fn forward_sources() {
+    let existing = unsafe { FindWindowW(CLASS, null()) };
+    if existing.is_null() {
+        return;
+    }
+    for source in std::env::args_os().skip(1) {
+        let mut data = wide(source);
+        let bytes = data.len().saturating_mul(2);
+        if bytes > 65_536 {
+            continue;
+        }
+        let packet = COPYDATASTRUCT {
+            dwData: 1,
+            cbData: bytes as u32,
+            lpData: data.as_mut_ptr().cast(),
+        };
+        unsafe {
+            SendMessageTimeoutW(
+                existing,
+                WM_COPYDATA,
+                0,
+                (&packet as *const COPYDATASTRUCT) as LPARAM,
+                SMTO_ABORTIFHUNG,
+                2000,
+                null_mut(),
+            );
+        }
+    }
+    unsafe {
+        ShowWindow(existing, SW_RESTORE);
+        SetForegroundWindow(existing);
+    }
+}
+
 pub fn run() -> Result<(), String> {
     let smoke = std::env::args_os().any(|argument| argument == "--smoke-test");
     let interaction = std::env::args_os().any(|argument| argument == "--interaction-test");
@@ -1322,6 +1408,7 @@ pub fn run() -> Result<(), String> {
         }
         let lock = ProcessLock(mutex);
         if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            forward_sources();
             return Ok(());
         }
         Some(lock)
@@ -1350,13 +1437,13 @@ pub fn run() -> Result<(), String> {
         if instance.is_null() {
             return Err(std::io::Error::last_os_error().to_string());
         }
-        let class = wide("TorrentRustDevelopment");
+        let class = CLASS;
         let window_class = WNDCLASSW {
             lpfnWndProc: Some(dispatch),
             hInstance: instance,
             hCursor: LoadCursorW(null_mut(), IDC_ARROW),
             hbrBackground: (COLOR_WINDOW as usize + 1) as *mut c_void,
-            lpszClassName: class.as_ptr(),
+            lpszClassName: class,
             ..zeroed()
         };
         if RegisterClassW(&window_class) == 0 {
@@ -1365,7 +1452,7 @@ pub fn run() -> Result<(), String> {
         let title = wide("Torrent Rust Edition");
         let window = CreateWindowExW(
             0,
-            class.as_ptr(),
+            class,
             title.as_ptr(),
             WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
             CW_USEDEFAULT,
@@ -1389,6 +1476,7 @@ pub fn run() -> Result<(), String> {
         controls.dark.set(dark);
         controls.layout();
         let mut prompted = std::collections::HashSet::new();
+        let mut last_save = std::time::Instant::now();
         if !smoke {
             for source in std::env::args_os()
                 .skip(1)
@@ -1439,7 +1527,27 @@ pub fn run() -> Result<(), String> {
                     {
                         show_error(&error);
                     }
+                    if last_save.elapsed().as_secs() >= 30 && !transfers.ordered().is_empty() {
+                        last_save = std::time::Instant::now();
+                        if let Err(error) = transfers.save() {
+                            eprintln!("{error}");
+                        }
+                    }
                     controls.refresh(&transfers)
+                }
+                _ if message.hwnd == window && message.message == SHELL_SOURCES => {
+                    let sources =
+                        SHELL_INBOX.with(|inbox| std::mem::take(&mut *inbox.borrow_mut()));
+                    for source in sources {
+                        if let Err(error) = transfers.add(
+                            &source,
+                            &prefs.folder.to_string_lossy(),
+                            prefs.select_files,
+                        ) {
+                            show_error(&error);
+                        }
+                    }
+                    controls.refresh(&transfers);
                 }
                 _ if message.hwnd == window && message.message == WM_DROPFILES => {
                     for source in drop_files(message.wParam as _) {
@@ -1520,6 +1628,21 @@ pub fn run() -> Result<(), String> {
                         show_error(&error);
                     }
                     controls.refresh_selection(&transfers, selected);
+                }
+                _ if message.hwnd == controls.list
+                    && message.message == WM_KEYDOWN
+                    && [VK_DELETE as usize, VK_RETURN as usize].contains(&message.wParam) =>
+                {
+                    PostMessageW(
+                        window,
+                        ACTION,
+                        if message.wParam == VK_DELETE as usize {
+                            REMOVE
+                        } else {
+                            FILES
+                        },
+                        0,
+                    );
                 }
                 _ if IsDialogMessageW(window, &message) != 0 => {}
                 _ => {
