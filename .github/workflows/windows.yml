@@ -252,9 +252,9 @@ jobs:
           $bridge = (Resolve-Path re-native/Release).Path
           $env:PATH = "$bridge;$env:PATH"
           $env:CARGO_ENCODED_RUSTFLAGS = "-L" + [char]31 + "native=$bridge"
-          cargo build --locked --target x86_64-pc-windows-msvc --features libtorrent --manifest-path rust-edition/Cargo.toml --bin torrent-re-windows
+          cargo build --locked --release --target x86_64-pc-windows-msvc --features libtorrent --manifest-path rust-edition/Cargo.toml --bin torrent-re-windows
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $exe = "rust-edition/target/x86_64-pc-windows-msvc/debug/torrent-re-windows.exe"
+          $exe = "rust-edition/target/x86_64-pc-windows-msvc/release/torrent-re-windows.exe"
           $p = Start-Process $exe -ArgumentList "--smoke-test" -PassThru
           if (!$p.WaitForExit(30000)) { $p.Kill(); throw "Rust window smoke test timed out" }
           if ($p.ExitCode) { throw "Rust window smoke test failed ($($p.ExitCode))" }
@@ -262,4 +262,7 @@ jobs:
         run: |
           $bridge = (Resolve-Path re-native/Release).Path
           $env:PATH = "$bridge;$env:PATH"
-          ./rust-edition/tests/windows-ui.ps1 -Executable "rust-edition/target/x86_64-pc-windows-msvc/debug/torrent-re-windows.exe"
+          ./rust-edition/tests/windows-ui.ps1 -Executable "rust-edition/target/x86_64-pc-windows-msvc/release/torrent-re-windows.exe"
+      - name: Verify installer without publishing it
+        run: |
+          ./rust-edition/installer/check-package.ps1 -Executable "rust-edition/target/x86_64-pc-windows-msvc/release/torrent-re-windows.exe" -Bridge "re-native/Release/torrent_re_libtorrent.dll" -DependencyShares "re-native/vcpkg_installed/x64-windows-static/share"
