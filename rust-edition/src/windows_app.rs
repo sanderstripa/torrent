@@ -19,6 +19,7 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+use windows_sys::Win32::System::SystemServices::SS_CENTERIMAGE;
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR, OPENFILENAMEW,
@@ -46,6 +47,13 @@ const BY_SIZE: usize = 114;
 const PRIORITY_LOW: usize = 115;
 const PRIORITY_NORMAL: usize = 116;
 const PRIORITY_HIGH: usize = 117;
+const OPEN_ADD: usize = 118;
+const MINIMIZE: usize = 119;
+const CLOSE: usize = 120;
+const CONTEXT: u32 = WM_APP + 2;
+const LAYOUT: u32 = WM_APP + 3;
+const REQUEST_CLOSE: u32 = WM_APP + 4;
+const APPLY_THEME: u32 = WM_APP + 5;
 
 fn tr<'a>(english: bool, ru: &'a str, en: &'a str) -> &'a str {
     if english {
@@ -77,6 +85,60 @@ unsafe extern "system" fn dispatch(
     lparam: LPARAM,
 ) -> LRESULT {
     match message {
+        WM_ERASEBKGND if unsafe { GetWindow(window, GW_OWNER) }.is_null() => {
+            let mut area = RECT::default();
+            unsafe { GetClientRect(window, &mut area) };
+            unsafe { crate::windows_paint::background(wparam as _, area, window_dark(window)) };
+            1
+        }
+        WM_CTLCOLORSTATIC | WM_CTLCOLORLISTBOX | WM_CTLCOLORDLG => unsafe {
+            crate::windows_paint::control_background(wparam as _, window_dark(window)) as LRESULT
+        },
+        WM_DRAWITEM if [OPEN_ADD, SETTINGS, MINIMIZE, CLOSE].contains(&wparam) => {
+            let draw = unsafe { &*(lparam as *const DRAWITEMSTRUCT) };
+            let label = match wparam {
+                OPEN_ADD => "+",
+                SETTINGS => "⚙",
+                MINIMIZE => "−",
+                _ => "×",
+            };
+            unsafe { crate::windows_paint::caption_button(draw, label, window_dark(window)) };
+            1
+        }
+        WM_SIZE | WM_CLOSE | WM_SETTINGCHANGE
+            if unsafe { GetWindow(window, GW_OWNER) }.is_null() =>
+        {
+            let action = match message {
+                WM_SIZE => LAYOUT,
+                WM_CLOSE => REQUEST_CLOSE,
+                _ => APPLY_THEME,
+            };
+            unsafe { PostMessageW(window, action, 0, 0) };
+            0
+        }
+        WM_CONTEXTMENU => {
+            unsafe { PostMessageW(window, CONTEXT, wparam, lparam) };
+            0
+        }
+        WM_NCHITTEST if unsafe { GetWindow(window, GW_OWNER) }.is_null() => {
+            let hit = unsafe { DefWindowProcW(window, message, wparam, lparam) };
+            if hit == HTCLIENT as isize {
+                let mut point = windows_sys::Win32::Foundation::POINT {
+                    x: lparam as i16 as i32,
+                    y: (lparam >> 16) as i16 as i32,
+                };
+                unsafe { windows_sys::Win32::Graphics::Gdi::ScreenToClient(window, &mut point) };
+                if (0..62).contains(&point.y) {
+                    let child = unsafe { ChildWindowFromPoint(window, point) };
+                    if child == window || child.is_null() || unsafe { GetDlgCtrlID(child) } == 190 {
+                        return HTCAPTION as isize;
+                    }
+                }
+            }
+            hit
+        }
+        WM_NCLBUTTONDBLCLK if wparam == HTCAPTION as usize => 0,
+        WM_SYSCOMMAND if wparam & 0xfff0 == SC_MAXIMIZE as usize => 0,
         WM_MEASUREITEM if wparam == 200 => {
             unsafe { (*(lparam as *mut MEASUREITEMSTRUCT)).itemHeight = 136 };
             1
@@ -85,13 +147,12 @@ unsafe extern "system" fn dispatch(
             unsafe { crate::windows_paint::transfer(&*(lparam as *const DRAWITEMSTRUCT)) };
             1
         }
-        WM_COMMAND
-            if wparam >> 16 == 0 && (ADD_MAGNET..=PRIORITY_HIGH).contains(&(wparam & 0xffff)) =>
-        {
+        WM_COMMAND if wparam >> 16 == 0 && (ADD_MAGNET..=CLOSE).contains(&(wparam & 0xffff)) => {
             unsafe { PostMessageW(window, ACTION, wparam & 0xffff, 0) };
             0
         }
         WM_DESTROY => {
+            unsafe { RemovePropW(window, windows_sys::w!("TorrentDarkMode")) };
             if unsafe { GetWindow(window, GW_OWNER) }.is_null() {
                 unsafe { PostQuitMessage(0) };
             }
@@ -169,6 +230,14 @@ impl Dialog {
         if window.is_null() {
             return Err(std::io::Error::last_os_error().to_string());
         }
+        apply_title_theme(
+            window,
+            if window_dark(owner) {
+                Theme::Dark
+            } else {
+                Theme::Light
+            },
+        );
         Ok(Self { owner, window })
     }
 
@@ -475,7 +544,6 @@ struct Controls {
     dark: std::cell::Cell<bool>,
     fonts: Box<crate::windows_paint::Fonts>,
     cards: std::cell::RefCell<Vec<crate::windows_paint::TransferCard>>,
-    magnet: HWND,
     list: HWND,
 }
 
@@ -483,84 +551,80 @@ impl Controls {
     fn create(window: HWND) -> Result<Self, String> {
         let child =
             |class, label, style, geometry, id| child(window, class, label, style, geometry, id);
-        let magnet = child(
-            "EDIT",
-            "",
-            WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL as u32,
-            (20, 20, 465, 32),
-            0,
-        )?;
         child(
-            "BUTTON",
-            "Magnet",
-            WS_TABSTOP,
-            (495, 20, 100, 32),
-            ADD_MAGNET,
+            "STATIC",
+            "TORRENT.",
+            SS_CENTERIMAGE as u32,
+            (24, 0, 170, 62),
+            190,
         )?;
-        child(
-            "BUTTON",
-            ".torrent",
-            WS_TABSTOP,
-            (605, 20, 100, 32),
-            ADD_TORRENT,
-        )?;
-        child(
-            "BUTTON",
-            "Настройки",
-            WS_TABSTOP,
-            (715, 20, 120, 32),
-            SETTINGS,
-        )?;
-        child("BUTTON", "Файлы", WS_TABSTOP, (700, 62, 100, 32), FILES)?;
-        child("BUTTON", "Пауза", WS_TABSTOP, (20, 62, 100, 32), PAUSE)?;
-        child(
-            "BUTTON",
-            "Продолжить",
-            WS_TABSTOP,
-            (130, 62, 120, 32),
-            RESUME,
-        )?;
-        for (id, label, x) in [
-            (STOP, "Стоп", 260),
-            (REMOVE, "Удалить", 370),
-            (UP, "Выше", 480),
-            (DOWN, "Ниже", 590),
+        for (id, label) in [
+            (OPEN_ADD, "+"),
+            (SETTINGS, "⚙"),
+            (MINIMIZE, "−"),
+            (CLOSE, "×"),
         ] {
-            child("BUTTON", label, WS_TABSTOP, (x, 62, 100, 32), id)?;
+            child(
+                "BUTTON",
+                label,
+                WS_TABSTOP | BS_OWNERDRAW as u32,
+                (0, 0, 32, 32),
+                id,
+            )?;
         }
         let list = child(
             "LISTBOX",
             "",
             WS_VSCROLL | WS_TABSTOP | LBS_OWNERDRAWFIXED as u32 | LBS_HASSTRINGS as u32,
-            (20, 105, 870, 520),
+            (16, 84, 870, 520),
             200,
         )?;
+        let fonts = Box::new(crate::windows_paint::Fonts::new());
+        unsafe {
+            SendMessageW(
+                GetDlgItem(window, 190),
+                WM_SETFONT,
+                fonts.heading() as usize,
+                1,
+            )
+        };
         Ok(Self {
             window,
             english: std::cell::Cell::new(false),
             dark: std::cell::Cell::new(false),
-            fonts: Box::new(crate::windows_paint::Fonts::new()),
+            fonts,
             cards: std::cell::RefCell::new(Vec::new()),
-            magnet,
             list,
         })
     }
 
     fn set_language(&self, english: bool) {
         self.english.set(english);
-        for (id, ru, en) in [
-            (SETTINGS, "Настройки", "Settings"),
-            (FILES, "Файлы", "Files"),
-            (PAUSE, "Пауза", "Pause"),
-            (RESUME, "Продолжить", "Resume"),
-            (STOP, "Стоп", "Stop"),
-            (REMOVE, "Удалить", "Remove"),
-            (UP, "Выше", "Higher"),
-            (DOWN, "Ниже", "Lower"),
-        ] {
-            let button = unsafe { GetDlgItem(self.window, id as i32) };
-            unsafe { SetWindowTextW(button, wide(tr(english, ru, en)).as_ptr()) };
+    }
+
+    fn layout(&self) {
+        let mut available = RECT::default();
+        if unsafe { GetClientRect(self.window, &mut available) } == 0 {
+            return;
         }
+        for (index, id) in [CLOSE, MINIMIZE, SETTINGS, OPEN_ADD]
+            .into_iter()
+            .enumerate()
+        {
+            let button = unsafe { GetDlgItem(self.window, id as i32) };
+            let x = available.right - 46 - index as i32 * 40;
+            unsafe { MoveWindow(button, x, 16, 32, 32, 1) };
+        }
+        unsafe {
+            MoveWindow(
+                self.list,
+                16,
+                84,
+                (available.right - 32).max(1),
+                (available.bottom - 100).max(1),
+                1,
+            )
+        };
     }
 
     fn selected(&self) -> Option<usize> {
@@ -664,9 +728,123 @@ impl Controls {
             windows_sys::Win32::Graphics::Gdi::InvalidateRect(self.list, null(), 1);
         }
     }
+}
 
-    fn magnet(&self) -> String {
-        edit_text(self.magnet).trim().to_owned()
+fn magnet_input(owner: HWND, en: bool) -> Result<Option<String>, String> {
+    let dialog = Dialog::create(owner, "Magnet", 580, 150)?;
+    let edit = dialog.control(
+        "EDIT",
+        "",
+        WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL as u32,
+        (20, 18, 520, 28),
+        0,
+    )?;
+    dialog.buttons(62, en)?;
+    let mut source = None;
+    dialog.run(|id| match id {
+        CANCEL => true,
+        ACCEPT => {
+            let value = edit_text(edit).trim().to_owned();
+            if !value.starts_with("magnet:") {
+                show_error(tr(en, "Введите magnet-ссылку", "Enter a magnet link"));
+                return false;
+            }
+            source = Some(value);
+            true
+        }
+        _ => false,
+    });
+    Ok(source)
+}
+
+fn menu(owner: HWND, x: i32, y: i32, entries: &[(usize, &str)]) -> Option<usize> {
+    unsafe {
+        let menu = CreatePopupMenu();
+        if menu.is_null() {
+            return None;
+        }
+        for &(id, label) in entries {
+            AppendMenuW(menu, MF_STRING, id, wide(label).as_ptr());
+        }
+        let action = TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            x,
+            y,
+            0,
+            owner,
+            null(),
+        );
+        DestroyMenu(menu);
+        (action != 0).then_some(action as usize)
+    }
+}
+
+fn add_menu_entries(en: bool) -> [(usize, &'static str); 2] {
+    [
+        (ADD_TORRENT, tr(en, "Открыть .torrent", "Open .torrent")),
+        (ADD_MAGNET, tr(en, "Добавить magnet", "Add magnet")),
+    ]
+}
+
+fn context_menu(window: HWND, controls: &Controls, location: LPARAM) {
+    let en = controls.english.get();
+    let (x, y) = if location == -1 {
+        let mut area = RECT::default();
+        unsafe { GetWindowRect(controls.list, &mut area) };
+        (area.left + 12, area.top + 12)
+    } else {
+        (location as i16 as i32, (location >> 16) as i16 as i32)
+    };
+    let selected = if location == -1 {
+        controls.selected()
+    } else {
+        let mut point = windows_sys::Win32::Foundation::POINT { x, y };
+        unsafe { windows_sys::Win32::Graphics::Gdi::ScreenToClient(controls.list, &mut point) };
+        let mut area = RECT::default();
+        unsafe { GetClientRect(controls.list, &mut area) };
+        if point.x < 0 || point.y < 0 || point.x >= area.right || point.y >= area.bottom {
+            None
+        } else {
+            let packed = (i64::from(point.y) << 16) | i64::from(point.x & 0xffff);
+            let result =
+                unsafe { SendMessageW(controls.list, LB_ITEMFROMPOINT, 0, packed as LPARAM) };
+            if result >> 16 == 0 {
+                let row = (result & 0xffff) as usize;
+                let count = unsafe { SendMessageW(controls.list, LB_GETCOUNT, 0, 0) };
+                (row < count.max(0) as usize).then_some(row)
+            } else {
+                None
+            }
+        }
+    };
+    let action = if let Some(row) = selected {
+        unsafe { SendMessageW(controls.list, LB_SETCURSEL, row, 0) };
+        menu(
+            window,
+            x,
+            y,
+            &[
+                (PAUSE, tr(en, "Пауза", "Pause")),
+                (RESUME, tr(en, "Возобновить", "Resume")),
+                (STOP, tr(en, "Остановить", "Stop")),
+                (REMOVE, tr(en, "Удалить из списка", "Remove from list")),
+                (UP, tr(en, "Приоритет выше", "Higher priority")),
+                (DOWN, tr(en, "Приоритет ниже", "Lower priority")),
+                (FILES, tr(en, "Файлы", "Files")),
+            ],
+        )
+    } else {
+        let [open, magnet] = add_menu_entries(en);
+        menu(
+            window,
+            x,
+            y,
+            &[open, magnet, (SETTINGS, tr(en, "Настройки", "Settings"))],
+        )
+    };
+    if let Some(action) = action {
+        unsafe { PostMessageW(window, ACTION, action, 0) };
     }
 }
 
@@ -736,6 +914,10 @@ fn prompt_for_files(
     Ok(())
 }
 
+fn window_dark(window: HWND) -> bool {
+    unsafe { !GetPropW(window, windows_sys::w!("TorrentDarkMode")).is_null() }
+}
+
 fn apply_title_theme(window: HWND, theme: Theme) -> bool {
     let dark = match theme {
         Theme::Light => 0,
@@ -758,6 +940,13 @@ fn apply_title_theme(window: HWND, theme: Theme) -> bool {
         }
     };
     unsafe {
+        let property = windows_sys::w!("TorrentDarkMode");
+        if dark != 0 {
+            SetPropW(window, property, 1usize as HANDLE);
+        } else {
+            RemovePropW(window, property);
+        }
+        windows_sys::Win32::Graphics::Gdi::InvalidateRect(window, null(), 1);
         DwmSetWindowAttribute(
             window,
             DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
@@ -916,7 +1105,7 @@ pub fn run() -> Result<(), String> {
             0,
             class.as_ptr(),
             title.as_ptr(),
-            WS_OVERLAPPEDWINDOW,
+            WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             940,
@@ -936,6 +1125,7 @@ pub fn run() -> Result<(), String> {
         let controls = Controls::create(window)?;
         controls.set_language(prefs.english);
         controls.dark.set(dark);
+        controls.layout();
         let mut prompted = std::collections::HashSet::new();
         if !smoke {
             for source in std::env::args_os()
@@ -964,15 +1154,19 @@ pub fn run() -> Result<(), String> {
             match GetMessageW(&mut message, null_mut(), 0, 0) {
                 -1 => return Err(std::io::Error::last_os_error().to_string()),
                 0 => break,
-                _ if message.hwnd == window && message.message == WM_CLOSE => {
+                _ if message.hwnd == window && message.message == LAYOUT => controls.layout(),
+                _ if message.hwnd == window && message.message == CONTEXT => {
+                    context_menu(window, &controls, message.lParam)
+                }
+                _ if message.hwnd == window && message.message == REQUEST_CLOSE => {
                     if !smoke {
                         if let Err(error) = save_position(window, &profile) {
                             show_error(&error.to_string());
                         }
                     }
-                    DispatchMessageW(&message);
+                    DestroyWindow(window);
                 }
-                _ if message.hwnd == window && message.message == WM_SETTINGCHANGE => {
+                _ if message.hwnd == window && message.message == APPLY_THEME => {
                     controls.dark.set(apply_title_theme(window, prefs.theme));
                     controls.refresh(&transfers);
                     DispatchMessageW(&message);
@@ -1001,21 +1195,34 @@ pub fn run() -> Result<(), String> {
                     let destination = prefs.folder.to_string_lossy();
                     let mut selected = controls.selected();
                     let result = match message.wParam {
-                        ADD_MAGNET => {
-                            let source = controls.magnet();
-                            if source.starts_with("magnet:") {
+                        OPEN_ADD => {
+                            let mut anchor = RECT::default();
+                            GetWindowRect(GetDlgItem(window, OPEN_ADD as i32), &mut anchor);
+                            if let Some(action) = menu(
+                                window,
+                                anchor.left,
+                                anchor.bottom,
+                                &add_menu_entries(prefs.english),
+                            ) {
+                                PostMessageW(window, ACTION, action, 0);
+                            }
+                            Ok(())
+                        }
+                        MINIMIZE => {
+                            ShowWindow(window, SW_MINIMIZE);
+                            Ok(())
+                        }
+                        CLOSE => {
+                            PostMessageW(window, WM_CLOSE, 0, 0);
+                            Ok(())
+                        }
+                        ADD_MAGNET => magnet_input(window, prefs.english).and_then(|source| {
+                            source.map_or(Ok(()), |source| {
                                 transfers
                                     .add(&source, &destination, prefs.select_files)
                                     .map(|_| ())
-                            } else {
-                                Err(tr(
-                                    prefs.english,
-                                    "Введите magnet-ссылку",
-                                    "Enter a magnet link",
-                                )
-                                .into())
-                            }
-                        }
+                            })
+                        }),
                         ADD_TORRENT => torrent_file(window).map_or(Ok(()), |source| {
                             transfers
                                 .add(&source, &destination, prefs.select_files)

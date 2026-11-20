@@ -11,6 +11,10 @@ pub struct Fonts {
 }
 
 impl Fonts {
+    pub fn heading(&self) -> HFONT {
+        self.title
+    }
+
     pub fn new() -> Self {
         let font = include_bytes!("../../assets/fonts/Montserrat.ttf");
         let mut loaded = 0;
@@ -245,5 +249,89 @@ pub unsafe fn transfer(draw: &DRAWITEMSTRUCT) {
             &row.footer,
             true,
         );
+    }
+}
+
+pub unsafe fn background(dc: HDC, area: RECT, dark: bool) {
+    let (surface, border) = if dark {
+        (0x202124, 0x303234)
+    } else {
+        (0xfcfcfd, 0xdadbd9)
+    };
+    unsafe {
+        fill(dc, &area, surface);
+        fill(
+            dc,
+            &RECT {
+                top: 61,
+                bottom: 62,
+                ..area
+            },
+            border,
+        );
+    }
+}
+
+pub unsafe fn control_background(dc: HDC, dark: bool) -> HBRUSH {
+    let (surface, text) = if dark {
+        (0x202124, 0xe6e7e9)
+    } else {
+        (0xfcfcfd, 0x17191c)
+    };
+    unsafe {
+        SetTextColor(dc, color(text));
+        SetBkColor(dc, color(surface));
+        SetDCBrushColor(dc, color(surface));
+        GetStockObject(DC_BRUSH)
+    }
+}
+
+pub unsafe fn caption_button(draw: &DRAWITEMSTRUCT, text: &str, dark: bool) {
+    let (surface, ink, pressed) = if dark {
+        (0x202124, 0x96979d, 0x303136)
+    } else {
+        (0xfcfcfd, 0x73767b, 0xeeeeef)
+    };
+    let area = draw.rcItem;
+    let font = unsafe {
+        CreateFontW(
+            -19,
+            0,
+            0,
+            0,
+            400,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET as u32,
+            OUT_DEFAULT_PRECIS as u32,
+            CLIP_DEFAULT_PRECIS as u32,
+            CLEARTYPE_QUALITY as u32,
+            DEFAULT_PITCH as u32,
+            windows_sys::w!("Segoe UI Symbol"),
+        )
+    };
+    unsafe {
+        fill(draw.hDC, &area, surface);
+        let active = draw.itemState & (1 | 16) != 0;
+        if active {
+            rounded(draw.hDC, &area, pressed, pressed, 32);
+        }
+        let old = SelectObject(draw.hDC, font);
+        let mut area = area;
+        let text: Vec<_> = text.encode_utf16().collect();
+        SetTextColor(draw.hDC, color(ink));
+        SetBkMode(draw.hDC, TRANSPARENT as i32);
+        DrawTextW(
+            draw.hDC,
+            text.as_ptr(),
+            text.len() as i32,
+            &mut area,
+            DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX,
+        );
+        if !old.is_null() {
+            SelectObject(draw.hDC, old);
+        }
+        DeleteObject(font);
     }
 }
