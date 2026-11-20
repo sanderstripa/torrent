@@ -23,6 +23,7 @@ use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR, OPENFILENAMEW,
 };
+use windows_sys::Win32::UI::Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, SetActiveWindow, VK_ESCAPE};
 use windows_sys::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
@@ -42,6 +43,17 @@ const ACCEPT: usize = 111;
 const CANCEL: usize = 112;
 const BY_NAME: usize = 113;
 const BY_SIZE: usize = 114;
+const PRIORITY_LOW: usize = 115;
+const PRIORITY_NORMAL: usize = 116;
+const PRIORITY_HIGH: usize = 117;
+
+fn tr<'a>(english: bool, ru: &'a str, en: &'a str) -> &'a str {
+    if english {
+        en
+    } else {
+        ru
+    }
+}
 
 fn wide(text: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
     text.as_ref().encode_wide().chain(Some(0)).collect()
@@ -65,7 +77,17 @@ unsafe extern "system" fn dispatch(
     lparam: LPARAM,
 ) -> LRESULT {
     match message {
-        WM_COMMAND if wparam >> 16 == 0 && (ADD_MAGNET..=BY_SIZE).contains(&(wparam & 0xffff)) => {
+        WM_MEASUREITEM if wparam == 200 => {
+            unsafe { (*(lparam as *mut MEASUREITEMSTRUCT)).itemHeight = 136 };
+            1
+        }
+        WM_DRAWITEM if wparam == 200 => {
+            unsafe { crate::windows_paint::transfer(&*(lparam as *const DRAWITEMSTRUCT)) };
+            1
+        }
+        WM_COMMAND
+            if wparam >> 16 == 0 && (ADD_MAGNET..=PRIORITY_HIGH).contains(&(wparam & 0xffff)) =>
+        {
             unsafe { PostMessageW(window, ACTION, wparam & 0xffff, 0) };
             0
         }
@@ -150,9 +172,21 @@ impl Dialog {
         Ok(Self { owner, window })
     }
 
-    fn buttons(&self, y: i32) -> Result<(), String> {
-        self.control("BUTTON", "ОК", WS_TABSTOP, (20, y, 100, 30), ACCEPT)?;
-        self.control("BUTTON", "Отмена", WS_TABSTOP, (130, y, 100, 30), CANCEL)?;
+    fn buttons(&self, y: i32, english: bool) -> Result<(), String> {
+        self.control(
+            "BUTTON",
+            tr(english, "ОК", "OK"),
+            WS_TABSTOP,
+            (20, y, 100, 30),
+            ACCEPT,
+        )?;
+        self.control(
+            "BUTTON",
+            tr(english, "Отмена", "Cancel"),
+            WS_TABSTOP,
+            (130, y, 100, 30),
+            CANCEL,
+        )?;
         Ok(())
     }
 
@@ -212,7 +246,8 @@ impl Drop for Dialog {
 
 fn settings(owner: HWND, prefs: &Preferences) -> Result<Option<Preferences>, String> {
     use torrent_re_sort::profile::Theme;
-    let dialog = Dialog::create(owner, "Настройки", 590, 250)?;
+    let en = prefs.english;
+    let dialog = Dialog::create(owner, tr(en, "Настройки", "Settings"), 590, 250)?;
     let folder = dialog.control(
         "EDIT",
         &prefs.folder.to_string_lossy(),
@@ -222,7 +257,11 @@ fn settings(owner: HWND, prefs: &Preferences) -> Result<Option<Preferences>, Str
     )?;
     let files = dialog.control(
         "BUTTON",
-        "Выбирать файлы перед загрузкой",
+        tr(
+            en,
+            "Выбирать файлы перед загрузкой",
+            "Choose files before downloading",
+        ),
         WS_TABSTOP | BS_AUTOCHECKBOX as u32,
         (20, 58, 270, 24),
         0,
@@ -244,19 +283,27 @@ fn settings(owner: HWND, prefs: &Preferences) -> Result<Option<Preferences>, Str
     unsafe {
         SendMessageW(files, BM_SETCHECK, prefs.select_files as usize, 0);
         SendMessageW(english, BM_SETCHECK, prefs.english as usize, 0);
-        for item in ["Светлая", "Тёмная", "Системная"] {
+        for item in [
+            tr(en, "Светлая", "Light"),
+            tr(en, "Тёмная", "Dark"),
+            tr(en, "Системная", "System"),
+        ] {
             SendMessageW(theme, CB_ADDSTRING, 0, wide(item).as_ptr() as LPARAM);
         }
         SendMessageW(theme, CB_SETCURSEL, prefs.theme as usize, 0);
     }
-    dialog.buttons(160)?;
+    dialog.buttons(160, en)?;
     let mut updated = None;
     dialog.run(|id| match id {
         CANCEL => true,
         ACCEPT => {
             let folder = PathBuf::from(edit_text(folder));
             if !folder.is_absolute() {
-                show_error("Укажите абсолютный путь к папке загрузок.");
+                show_error(tr(
+                    en,
+                    "Укажите абсолютный путь к папке загрузок.",
+                    "Enter an absolute download folder path.",
+                ));
                 return false;
             }
             let theme = match unsafe { SendMessageW(theme, CB_GETCURSEL, 0, 0) } {
@@ -302,10 +349,16 @@ fn compare_names(a: &str, b: &str) -> std::cmp::Ordering {
 fn select_torrent_files(
     owner: HWND,
     transfer: &torrent_re_sort::transfers::Transfer<'_>,
+    en: bool,
 ) -> Result<Option<Vec<u8>>, String> {
     let files = transfer.handle.files()?;
     if files.is_empty() {
-        return Err("Файлы станут доступны после получения метаданных.".into());
+        return Err(tr(
+            en,
+            "Файлы станут доступны после получения метаданных.",
+            "Files will become available when metadata arrives.",
+        )
+        .into());
     }
     let mut priorities = transfer.handle.file_priorities()?;
     priorities.resize(files.len(), 4);
@@ -316,7 +369,7 @@ fn select_torrent_files(
             }
         }
     }
-    let dialog = Dialog::create(owner, "Файлы торрента", 730, 510)?;
+    let dialog = Dialog::create(owner, tr(en, "Файлы торрента", "Torrent files"), 730, 510)?;
     let list = dialog.control(
         "LISTBOX",
         "",
@@ -327,30 +380,43 @@ fn select_torrent_files(
     dialog.control("BUTTON", "По имени", WS_TABSTOP, (20, 14, 110, 28), BY_NAME)?;
     dialog.control(
         "BUTTON",
-        "По размеру",
+        tr(en, "По размеру", "By size"),
         WS_TABSTOP,
         (140, 14, 110, 28),
         BY_SIZE,
     )?;
-    dialog.buttons(418)?;
+    for (id, label, x) in [
+        (PRIORITY_LOW, tr(en, "Низкий", "Low"), 270),
+        (PRIORITY_NORMAL, tr(en, "Обычный", "Normal"), 380),
+        (PRIORITY_HIGH, tr(en, "Высокий", "High"), 490),
+    ] {
+        dialog.control("BUTTON", label, WS_TABSTOP, (x, 14, 100, 28), id)?;
+    }
+    dialog.buttons(418, en)?;
     let mut indices: Vec<_> = (0..files.len()).collect();
     let mut accepted = false;
+    let mut remembered: Vec<u8> = priorities
+        .iter()
+        .map(|&p| if p == 0 { 4 } else { p })
+        .collect();
     let mut sorting = (0, false);
-    let read_selection = |indices: &[usize], priorities: &mut [u8]| {
+    let read_selection = |indices: &[usize], priorities: &mut [u8], remembered: &[u8]| {
         for (row, &index) in indices.iter().enumerate() {
             let selected = unsafe { SendMessageW(list, LB_GETSEL, row, 0) } > 0;
-            priorities[index] = if selected {
-                priorities[index].max(1)
-            } else {
-                0
-            };
+            priorities[index] = if selected { remembered[index] } else { 0 };
         }
     };
     let redraw = |indices: &[usize], priorities: &[u8]| unsafe {
         SendMessageW(list, LB_RESETCONTENT, 0, 0);
         for (row, &index) in indices.iter().enumerate() {
             let file = &files[index];
-            let label = format!("{}  •  {} B", file.path, file.size);
+            let level = match priorities[index] {
+                0 => tr(en, "Пропустить", "Skip"),
+                1 => tr(en, "Низкий", "Low"),
+                7 => tr(en, "Высокий", "High"),
+                _ => tr(en, "Обычный", "Normal"),
+            };
+            let label = format!("{}  •  {} B  •  {level}", file.path, file.size);
             SendMessageW(list, LB_ADDSTRING, 0, wide(label).as_ptr() as LPARAM);
             SendMessageW(
                 list,
@@ -363,13 +429,29 @@ fn select_torrent_files(
     redraw(&indices, &priorities);
     dialog.run(|id| match id {
         ACCEPT => {
-            read_selection(&indices, &mut priorities);
+            read_selection(&indices, &mut priorities, &remembered);
             accepted = true;
             true
         }
         CANCEL => true,
+        PRIORITY_LOW | PRIORITY_NORMAL | PRIORITY_HIGH => {
+            read_selection(&indices, &mut priorities, &remembered);
+            let row = unsafe { SendMessageW(list, LB_GETCARETINDEX, 0, 0) };
+            if let Some(&index) = usize::try_from(row).ok().and_then(|row| indices.get(row)) {
+                let priority = match id {
+                    PRIORITY_LOW => 1,
+                    PRIORITY_HIGH => 7,
+                    _ => 4,
+                };
+                priorities[index] = priority;
+                remembered[index] = priority;
+                redraw(&indices, &priorities);
+                unsafe { SendMessageW(list, LB_SETCARETINDEX, row as usize, 0) };
+            }
+            false
+        }
         BY_NAME | BY_SIZE => {
-            read_selection(&indices, &mut priorities);
+            read_selection(&indices, &mut priorities, &remembered);
             sorting = (id, sorting.0 == id && !sorting.1);
             indices.sort_by(|&a, &b| {
                 let order = if id == BY_SIZE {
@@ -388,6 +470,11 @@ fn select_torrent_files(
 }
 
 struct Controls {
+    window: HWND,
+    english: std::cell::Cell<bool>,
+    dark: std::cell::Cell<bool>,
+    fonts: Box<crate::windows_paint::Fonts>,
+    cards: std::cell::RefCell<Vec<crate::windows_paint::TransferCard>>,
     magnet: HWND,
     list: HWND,
 }
@@ -444,11 +531,36 @@ impl Controls {
         let list = child(
             "LISTBOX",
             "",
-            WS_BORDER | WS_VSCROLL | WS_TABSTOP,
+            WS_VSCROLL | WS_TABSTOP | LBS_OWNERDRAWFIXED as u32 | LBS_HASSTRINGS as u32,
             (20, 105, 870, 520),
             200,
         )?;
-        Ok(Self { magnet, list })
+        Ok(Self {
+            window,
+            english: std::cell::Cell::new(false),
+            dark: std::cell::Cell::new(false),
+            fonts: Box::new(crate::windows_paint::Fonts::new()),
+            cards: std::cell::RefCell::new(Vec::new()),
+            magnet,
+            list,
+        })
+    }
+
+    fn set_language(&self, english: bool) {
+        self.english.set(english);
+        for (id, ru, en) in [
+            (SETTINGS, "Настройки", "Settings"),
+            (FILES, "Файлы", "Files"),
+            (PAUSE, "Пауза", "Pause"),
+            (RESUME, "Продолжить", "Resume"),
+            (STOP, "Стоп", "Stop"),
+            (REMOVE, "Удалить", "Remove"),
+            (UP, "Выше", "Higher"),
+            (DOWN, "Ниже", "Lower"),
+        ] {
+            let button = unsafe { GetDlgItem(self.window, id as i32) };
+            unsafe { SetWindowTextW(button, wide(tr(english, ru, en)).as_ptr()) };
+        }
     }
 
     fn selected(&self) -> Option<usize> {
@@ -464,29 +576,84 @@ impl Controls {
         let top = unsafe { SendMessageW(self.list, LB_GETTOPINDEX, 0, 0) }.max(0);
         unsafe { SendMessageW(self.list, WM_SETREDRAW, 0, 0) };
         unsafe { SendMessageW(self.list, LB_RESETCONTENT, 0, 0) };
+        let en = self.english.get();
+        let mut cards = self.cards.borrow_mut();
+        cards.clear();
+        cards.reserve(transfers.ordered().len());
         for entry in transfers.ordered() {
-            let label = match entry.handle.status() {
+            let mut card = crate::windows_paint::TransferCard::new();
+            card.attach_fonts(&self.fonts);
+            card.dark = self.dark.get();
+            match entry.handle.status() {
                 Ok((name, status)) => {
-                    let progress = status.progress_ppm as f64 / 10_000.0;
+                    card.title = name;
+                    card.paused = status.paused || entry.stopped;
                     let state = if entry.selection_pending {
-                        "Ожидание выбора файлов"
+                        tr(en, "Выбор файлов", "Choose files")
                     } else if entry.stopped {
-                        "Остановлен"
+                        tr(en, "Остановлено", "Stopped")
                     } else if status.paused {
-                        "Пауза"
+                        tr(en, "Пауза", "Paused")
+                    } else if !status.has_metadata {
+                        tr(en, "Получение списка файлов", "Fetching metadata")
                     } else if status.seeding {
-                        "Раздача"
+                        tr(en, "Завершено · Раздача", "Complete · Seeding")
                     } else {
-                        "Загрузка"
+                        tr(en, "Загрузка", "Downloading")
                     };
-                    format!(
-                        "{name}  •  {state}  •  {progress:.1}%  •  ↓ {} KiB/s",
-                        status.download_rate / 1024
-                    )
+                    let size = status.wanted as f64 / (1024.0 * 1024.0);
+                    let size = format!("{size:.1}");
+                    let size = if en { size } else { size.replace('.', ",") };
+                    card.details = format!("{size} {} · {state}", tr(en, "МБ", "MB"));
+                    if !entry.selection_pending {
+                        card.progress = status.progress_ppm;
+                        card.progress_label = if status.seeding {
+                            "✓".into()
+                        } else {
+                            format!("{}%", status.progress_ppm / 10_000)
+                        };
+                        if status.seeding {
+                            card.footer = "100%".into();
+                        } else if card.paused {
+                            card.footer = state.into();
+                        } else if status.download_rate > 0 {
+                            let seconds = (status.wanted - status.wanted_done).max(0)
+                                / i64::from(status.download_rate);
+                            card.footer = format!(
+                                "{} {} {} {} {}",
+                                tr(en, "Осталось", "Remaining"),
+                                seconds / 60,
+                                tr(en, "мин", "min"),
+                                seconds % 60,
+                                tr(en, "сек", "sec")
+                            );
+                        }
+                    }
                 }
-                Err(error) => format!("{}: {error}", entry.key),
+                Err(error) => {
+                    card.title = entry.key.clone();
+                    card.details = error;
+                }
             };
-            unsafe { SendMessageW(self.list, LB_ADDSTRING, 0, wide(label).as_ptr() as LPARAM) };
+            cards.push(card);
+        }
+        for card in cards.iter() {
+            unsafe {
+                let row = SendMessageW(
+                    self.list,
+                    LB_ADDSTRING,
+                    0,
+                    wide(&card.title).as_ptr() as LPARAM,
+                );
+                if row >= 0 {
+                    SendMessageW(
+                        self.list,
+                        LB_SETITEMDATA,
+                        row as usize,
+                        card as *const _ as LPARAM,
+                    );
+                }
+            }
         }
         if let Some(row) = selected {
             unsafe { SendMessageW(self.list, LB_SETCURSEL, row, 0) };
@@ -548,6 +715,7 @@ fn prompt_for_files(
     owner: HWND,
     queue: &mut Transfers<'_>,
     prompted: &mut std::collections::HashSet<String>,
+    en: bool,
 ) -> Result<(), String> {
     let next = queue.ordered().iter().position(|entry| {
         entry.selection_pending
@@ -561,14 +729,14 @@ fn prompt_for_files(
     if let Some(index) = next {
         let entry = &queue.ordered()[index];
         prompted.insert(entry.key.clone());
-        if let Some(priorities) = select_torrent_files(owner, entry)? {
+        if let Some(priorities) = select_torrent_files(owner, entry, en)? {
             queue.select_files(index, &priorities)?;
         }
     }
     Ok(())
 }
 
-fn apply_title_theme(window: HWND, theme: Theme) {
+fn apply_title_theme(window: HWND, theme: Theme) -> bool {
     let dark = match theme {
         Theme::Light => 0,
         Theme::Dark => 1,
@@ -597,6 +765,7 @@ fn apply_title_theme(window: HWND, theme: Theme) {
             std::mem::size_of_val(&dark) as u32,
         );
     }
+    dark != 0
 }
 
 fn monitor_work(monitor: windows_sys::Win32::Graphics::Gdi::HMONITOR) -> Option<Rect> {
@@ -760,11 +929,13 @@ pub fn run() -> Result<(), String> {
         if window.is_null() {
             return Err(std::io::Error::last_os_error().to_string());
         }
-        apply_title_theme(window, prefs.theme);
+        let dark = apply_title_theme(window, prefs.theme);
         if !smoke {
             restore_position(window, &profile);
         }
         let controls = Controls::create(window)?;
+        controls.set_language(prefs.english);
+        controls.dark.set(dark);
         let mut prompted = std::collections::HashSet::new();
         if !smoke {
             for source in std::env::args_os()
@@ -802,11 +973,14 @@ pub fn run() -> Result<(), String> {
                     DispatchMessageW(&message);
                 }
                 _ if message.hwnd == window && message.message == WM_SETTINGCHANGE => {
-                    apply_title_theme(window, prefs.theme);
+                    controls.dark.set(apply_title_theme(window, prefs.theme));
+                    controls.refresh(&transfers);
                     DispatchMessageW(&message);
                 }
                 _ if message.hwnd == window && message.message == WM_TIMER => {
-                    if let Err(error) = prompt_for_files(window, &mut transfers, &mut prompted) {
+                    if let Err(error) =
+                        prompt_for_files(window, &mut transfers, &mut prompted, prefs.english)
+                    {
                         show_error(&error);
                     }
                     controls.refresh(&transfers)
@@ -834,7 +1008,12 @@ pub fn run() -> Result<(), String> {
                                     .add(&source, &destination, prefs.select_files)
                                     .map(|_| ())
                             } else {
-                                Err("Введите magnet-ссылку".into())
+                                Err(tr(
+                                    prefs.english,
+                                    "Введите magnet-ссылку",
+                                    "Enter a magnet link",
+                                )
+                                .into())
                             }
                         }
                         ADD_TORRENT => torrent_file(window).map_or(Ok(()), |source| {
@@ -856,9 +1035,11 @@ pub fn run() -> Result<(), String> {
                                 .map(|row| selected = Some(row))
                         }),
                         FILES => selected.map_or(Ok(()), |row| {
-                            if let Some(priorities) =
-                                select_torrent_files(window, &transfers.ordered()[row])?
-                            {
+                            if let Some(priorities) = select_torrent_files(
+                                window,
+                                &transfers.ordered()[row],
+                                prefs.english,
+                            )? {
                                 transfers.select_files(row, &priorities)?;
                             }
                             Ok(())
@@ -869,7 +1050,8 @@ pub fn run() -> Result<(), String> {
                                     .map_err(|error| error.to_string())?;
                                 updated.save(&profile).map_err(|error| error.to_string())?;
                                 prefs = updated;
-                                apply_title_theme(window, prefs.theme);
+                                controls.set_language(prefs.english);
+                                controls.dark.set(apply_title_theme(window, prefs.theme));
                             }
                             Ok(())
                         }),

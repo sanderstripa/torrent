@@ -2,6 +2,8 @@
 
 #[cfg(windows)]
 mod windows_app;
+#[cfg(windows)]
+mod windows_paint;
 
 #[cfg(windows)]
 fn main() {
