@@ -230,7 +230,7 @@ jobs:
         id: bridge-cache
         with:
           path: ${{ runner.temp }}/vcpkg-cache
-          key: vcpkg-20250613-x64-static-release-${{ hashFiles('vcpkg.json', 'triplets/*') }}
+          key: rust-edition-vcpkg-20250613-windows2022-x64-static-release-${{ hashFiles('vcpkg.json', 'triplets/*') }}
       - name: Build only the new libtorrent bridge
         run: |
           cmake -S rust-edition/native -B re-native -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_MANIFEST_DIR="$PWD" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS="$PWD/triplets" -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
@@ -240,7 +240,7 @@ jobs:
         if: steps.bridge-cache.outputs.cache-hit != 'true'
         with:
           path: ${{ runner.temp }}/vcpkg-cache
-          key: vcpkg-20250613-x64-static-release-${{ hashFiles('vcpkg.json', 'triplets/*') }}
+          key: rust-edition-vcpkg-20250613-windows2022-x64-static-release-${{ hashFiles('vcpkg.json', 'triplets/*') }}
       - name: Test the Rust session and real transfers on Windows
         run: |
           $bridge = (Resolve-Path re-native/Release).Path
