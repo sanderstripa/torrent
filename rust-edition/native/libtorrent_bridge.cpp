@@ -276,4 +276,13 @@ RE_EXPORT bool re_info_hash(lt::torrent_handle* handle, char* output,
     });
 }
 
+RE_EXPORT bool re_move_queue(lt::torrent_handle* handle, bool up,
+                             char* error, std::size_t capacity) noexcept {
+    return checked(error, capacity, [&] {
+        if (up) handle->queue_position_up();
+        else handle->queue_position_down();
+        return true;
+    });
+}
+
 }

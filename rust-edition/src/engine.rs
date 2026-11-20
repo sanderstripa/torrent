@@ -135,6 +135,8 @@ extern "C" {
         capacity: usize,
     ) -> bool;
 
+    fn re_move_queue(handle: *mut c_void, up: bool, error: *mut c_char, capacity: usize) -> bool;
+
 }
 
 fn checked<T>(operation: impl FnOnce(*mut c_char, usize) -> Option<T>) -> Result<T, String> {
@@ -389,7 +391,13 @@ impl Torrent<'_> {
         result.map(|()| data)
     }
 
-    pub fn remove(self) -> Result<(), String> {
+    pub fn move_queue(&self, up: bool) -> Result<(), String> {
+        checked(|error, capacity| unsafe {
+            re_move_queue(self.handle.as_ptr(), up, error, capacity).then_some(())
+        })
+    }
+
+    pub fn remove(&self) -> Result<(), String> {
         checked(|error, capacity| unsafe {
             re_remove(
                 self.session.native.as_ptr(),

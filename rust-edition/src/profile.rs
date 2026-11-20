@@ -250,6 +250,23 @@ impl ResumeEntry {
     }
 }
 
+pub fn remove_resume_entry(root: &Path, key: &str) -> io::Result<()> {
+    if !valid_key(key) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid resume key",
+        ));
+    }
+    // Delete the resume payload first: discovery only considers entries with one.
+    for extension in ["resume", "state"] {
+        match fs::remove_file(root.join(format!("{key}.{extension}"))) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            result => result?,
+        }
+    }
+    Ok(())
+}
+
 pub fn save_queue_order(root: &Path, keys: &[&str]) -> io::Result<()> {
     let mut order = String::new();
     let mut seen = std::collections::HashSet::new();
