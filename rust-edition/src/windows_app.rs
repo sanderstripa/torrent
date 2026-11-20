@@ -17,6 +17,7 @@ use windows_sys::Win32::Graphics::Gdi::COLOR_WINDOW;
 use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromRect, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
+use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows_sys::Win32::System::SystemServices::SS_CENTERIMAGE;
@@ -26,7 +27,10 @@ use windows_sys::Win32::UI::Controls::Dialogs::{
 };
 use windows_sys::Win32::UI::Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, SetActiveWindow, VK_ESCAPE};
-use windows_sys::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW};
+use windows_sys::Win32::UI::Shell::{
+    DragAcceptFiles, DragFinish, DragQueryFileW, FOLDERID_Downloads, SHBrowseForFolderW,
+    SHGetKnownFolderPath, SHGetPathFromIDListW, ShellExecuteW, BIF_RETURNONLYFSDIRS, BROWSEINFOW,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 const ACTION: u32 = WM_APP + 1;
@@ -50,6 +54,14 @@ const PRIORITY_HIGH: usize = 117;
 const OPEN_ADD: usize = 118;
 const MINIMIZE: usize = 119;
 const CLOSE: usize = 120;
+const CHOOSE_FOLDER: usize = 121;
+const ABOUT_UPDATE: usize = 122;
+const ABOUT_CONNECT: usize = 123;
+const THEME_SYSTEM: usize = 124;
+const THEME_LIGHT: usize = 125;
+const THEME_DARK: usize = 126;
+const CHANGE_LANGUAGE: usize = 127;
+const CHANGE_ADD: usize = 128;
 const CONTEXT: u32 = WM_APP + 2;
 const LAYOUT: u32 = WM_APP + 3;
 const REQUEST_CLOSE: u32 = WM_APP + 4;
@@ -85,6 +97,33 @@ unsafe extern "system" fn dispatch(
     lparam: LPARAM,
 ) -> LRESULT {
     match message {
+        WM_LBUTTONUP
+            if unsafe {
+                !GetPropW(window, windows_sys::w!("TorrentSettingsBackdrop")).is_null()
+            } =>
+        {
+            let sheet = unsafe { GetPropW(window, windows_sys::w!("TorrentSettingsBackdrop")) };
+            unsafe { PostMessageW(sheet, ACTION, CANCEL, 0) };
+            0
+        }
+        WM_ERASEBKGND
+            if unsafe {
+                !GetPropW(window, windows_sys::w!("TorrentSettingsBackdrop")).is_null()
+            } =>
+        {
+            let mut area = RECT::default();
+            unsafe {
+                GetClientRect(window, &mut area);
+                windows_sys::Win32::Graphics::Gdi::FillRect(
+                    wparam as _,
+                    &area,
+                    windows_sys::Win32::Graphics::Gdi::GetStockObject(
+                        windows_sys::Win32::Graphics::Gdi::BLACK_BRUSH,
+                    ),
+                );
+            }
+            1
+        }
         WM_ERASEBKGND if unsafe { GetWindow(window, GW_OWNER) }.is_null() => {
             let mut area = RECT::default();
             unsafe { GetClientRect(window, &mut area) };
@@ -147,7 +186,11 @@ unsafe extern "system" fn dispatch(
             unsafe { crate::windows_paint::transfer(&*(lparam as *const DRAWITEMSTRUCT)) };
             1
         }
-        WM_COMMAND if wparam >> 16 == 0 && (ADD_MAGNET..=CLOSE).contains(&(wparam & 0xffff)) => {
+        WM_COMMAND
+            if (wparam >> 16 == 0 && (ADD_MAGNET..=THEME_DARK).contains(&(wparam & 0xffff)))
+                || (wparam >> 16 == CBN_SELCHANGE as usize
+                    && [CHANGE_LANGUAGE, CHANGE_ADD].contains(&(wparam & 0xffff))) =>
+        {
             unsafe { PostMessageW(window, ACTION, wparam & 0xffff, 0) };
             0
         }
@@ -203,20 +246,41 @@ fn edit_text(edit: HWND) -> String {
 struct Dialog {
     owner: HWND,
     window: HWND,
+    sheet: bool,
+    backdrop: HWND,
 }
 
 impl Dialog {
     fn create(owner: HWND, title: &str, width: i32, height: i32) -> Result<Self, String> {
+        Self::open(owner, title, width, height, false)
+    }
+
+    fn open(
+        owner: HWND,
+        title: &str,
+        width: i32,
+        height: i32,
+        sheet: bool,
+    ) -> Result<Self, String> {
         let mut owner_rect = RECT::default();
         unsafe { GetWindowRect(owner, &mut owner_rect) };
         let x = owner_rect.left + (owner_rect.right - owner_rect.left - width) / 2;
-        let y = owner_rect.top + (owner_rect.bottom - owner_rect.top - height) / 2;
+        let y = if sheet {
+            owner_rect.top
+        } else {
+            owner_rect.top + (owner_rect.bottom - owner_rect.top - height) / 2
+        };
         let window = unsafe {
             CreateWindowExW(
-                WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT,
+                (if sheet { 0 } else { WS_EX_DLGMODALFRAME }) | WS_EX_CONTROLPARENT,
                 wide("TorrentRustDevelopment").as_ptr(),
                 wide(title).as_ptr(),
-                WS_POPUP | WS_CAPTION | WS_SYSMENU,
+                WS_POPUP
+                    | if sheet {
+                        WS_CLIPCHILDREN
+                    } else {
+                        WS_CAPTION | WS_SYSMENU
+                    },
                 x,
                 y,
                 width,
@@ -238,7 +302,37 @@ impl Dialog {
                 Theme::Light
             },
         );
-        Ok(Self { owner, window })
+        let backdrop = if sheet {
+            unsafe {
+                let backdrop = CreateWindowExW(
+                    WS_EX_LAYERED | WS_EX_NOACTIVATE,
+                    wide("TorrentRustDevelopment").as_ptr(),
+                    wide("").as_ptr(),
+                    WS_POPUP,
+                    owner_rect.left,
+                    owner_rect.top,
+                    owner_rect.right - owner_rect.left,
+                    owner_rect.bottom - owner_rect.top,
+                    owner,
+                    null_mut(),
+                    GetModuleHandleW(null()),
+                    null(),
+                );
+                if !backdrop.is_null() {
+                    SetPropW(backdrop, windows_sys::w!("TorrentSettingsBackdrop"), window);
+                    SetLayeredWindowAttributes(backdrop, 0, 42, LWA_ALPHA);
+                }
+                backdrop
+            }
+        } else {
+            null_mut()
+        };
+        Ok(Self {
+            owner,
+            window,
+            sheet,
+            backdrop,
+        })
     }
 
     fn buttons(&self, y: i32, english: bool) -> Result<(), String> {
@@ -273,7 +367,22 @@ impl Dialog {
     fn run(&self, mut command: impl FnMut(usize) -> bool) {
         unsafe {
             EnableWindow(self.owner, 0);
-            ShowWindow(self.window, SW_SHOW);
+            if !self.backdrop.is_null() {
+                ShowWindow(self.backdrop, SW_SHOWNOACTIVATE);
+            }
+            let mut client_animation = 0_i32;
+            SystemParametersInfoW(
+                SPI_GETCLIENTAREAANIMATION,
+                0,
+                (&mut client_animation as *mut i32).cast(),
+                0,
+            );
+            if !self.sheet
+                || client_animation == 0
+                || AnimateWindow(self.window, 220, AW_SLIDE | AW_VER_POSITIVE | AW_ACTIVATE) == 0
+            {
+                ShowWindow(self.window, SW_SHOW);
+            }
             let mut message = MSG::default();
             while IsWindow(self.window) != 0 {
                 match GetMessageW(&mut message, null_mut(), 0, 0) {
@@ -306,91 +415,247 @@ impl Drop for Dialog {
         unsafe {
             EnableWindow(self.owner, 1);
             if IsWindow(self.window) != 0 {
+                if self.sheet && IsWindowVisible(self.window) != 0 {
+                    let mut motion = 0_i32;
+                    SystemParametersInfoW(
+                        SPI_GETCLIENTAREAANIMATION,
+                        0,
+                        (&mut motion as *mut i32).cast(),
+                        0,
+                    );
+                    if motion != 0 {
+                        AnimateWindow(self.window, 160, AW_SLIDE | AW_VER_NEGATIVE | AW_HIDE);
+                    }
+                }
                 DestroyWindow(self.window);
+            }
+            if !self.backdrop.is_null() {
+                RemovePropW(self.backdrop, windows_sys::w!("TorrentSettingsBackdrop"));
+                DestroyWindow(self.backdrop);
             }
             SetActiveWindow(self.owner);
         }
     }
 }
 
-fn settings(owner: HWND, prefs: &Preferences) -> Result<Option<Preferences>, String> {
-    use torrent_re_sort::profile::Theme;
-    let en = prefs.english;
-    let dialog = Dialog::create(owner, tr(en, "Настройки", "Settings"), 590, 250)?;
-    let folder = dialog.control(
-        "EDIT",
-        &prefs.folder.to_string_lossy(),
-        WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL as u32,
-        (20, 20, 530, 28),
-        0,
+fn downloads_folder() -> Option<PathBuf> {
+    let mut allocation = null_mut();
+    let result =
+        unsafe { SHGetKnownFolderPath(&FOLDERID_Downloads, 0, null_mut(), &mut allocation) };
+    if result < 0 || allocation.is_null() {
+        return None;
+    }
+    let mut count = 0;
+    unsafe {
+        while *allocation.add(count) != 0 {
+            count += 1;
+        }
+        let units = std::slice::from_raw_parts(allocation, count);
+        let path = PathBuf::from(
+            <std::ffi::OsString as std::os::windows::ffi::OsStringExt>::from_wide(units),
+        );
+        CoTaskMemFree(allocation.cast());
+        Some(path)
+    }
+}
+
+fn choose_folder(owner: HWND, en: bool) -> Option<PathBuf> {
+    let title = wide(tr(en, "Папка загрузок", "Download folder"));
+    let mut display_name = [0_u16; 260];
+    let dialog = BROWSEINFOW {
+        hwndOwner: owner,
+        pszDisplayName: display_name.as_mut_ptr(),
+        lpszTitle: title.as_ptr(),
+        ulFlags: BIF_RETURNONLYFSDIRS,
+        ..unsafe { zeroed() }
+    };
+    let result = unsafe { SHBrowseForFolderW(&dialog) };
+    if result.is_null() {
+        return None;
+    }
+    let mut buffer = [0_u16; 260];
+    let status = unsafe { SHGetPathFromIDListW(result, buffer.as_mut_ptr()) };
+    unsafe { CoTaskMemFree(result.cast()) };
+    let end = buffer
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(buffer.len());
+    (status != 0).then(|| {
+        PathBuf::from(
+            <std::ffi::OsString as std::os::windows::ffi::OsStringExt>::from_wide(&buffer[..end]),
+        )
+    })
+}
+
+fn open_url(owner: HWND, url: &str) -> bool {
+    unsafe {
+        ShellExecuteW(
+            owner,
+            windows_sys::w!("open"),
+            wide(url).as_ptr(),
+            null(),
+            null(),
+            SW_SHOWNORMAL,
+        ) as usize
+            > 32
+    }
+}
+
+fn settings(
+    owner: HWND,
+    prefs: &mut Preferences,
+    root: &std::path::Path,
+    controls: &Controls,
+) -> Result<(), String> {
+    let dialog = Dialog::open(
+        owner,
+        tr(prefs.english, "Настройки", "Settings"),
+        720,
+        560,
+        true,
     )?;
-    let files = dialog.control(
-        "BUTTON",
-        tr(
-            en,
-            "Выбирать файлы перед загрузкой",
-            "Choose files before downloading",
-        ),
-        WS_TABSTOP | BS_AUTOCHECKBOX as u32,
-        (20, 58, 270, 24),
-        0,
-    )?;
-    let english = dialog.control(
-        "BUTTON",
-        "English",
-        WS_TABSTOP | BS_AUTOCHECKBOX as u32,
-        (20, 90, 150, 24),
-        0,
-    )?;
-    let theme = dialog.control(
+    let mut fields = Vec::new();
+    let label = |text, y, width| {
+        dialog.control("STATIC", text, SS_CENTERIMAGE as u32, (28, y, width, 32), 0)
+    };
+    fields.push(label("", 12, 620)?);
+    dialog.control("BUTTON", "×", WS_TABSTOP, (655, 12, 34, 32), ACCEPT)?;
+    fields.push(label("", 62, 370)?);
+    let system = dialog.control("BUTTON", "", WS_TABSTOP, (422, 62, 90, 32), THEME_SYSTEM)?;
+    let light = dialog.control("BUTTON", "", WS_TABSTOP, (512, 62, 90, 32), THEME_LIGHT)?;
+    let dark = dialog.control("BUTTON", "", WS_TABSTOP, (602, 62, 90, 32), THEME_DARK)?;
+    fields.push(label("", 117, 370)?);
+    let language = dialog.control(
         "COMBOBOX",
         "",
         WS_TABSTOP | CBS_DROPDOWNLIST as u32,
-        (20, 122, 190, 125),
+        (422, 117, 270, 120),
+        CHANGE_LANGUAGE,
+    )?;
+    fields.push(label("", 172, 385)?);
+    let folder = dialog.control(
+        "EDIT",
+        &prefs.folder.to_string_lossy(),
+        WS_BORDER | ES_READONLY as u32 | ES_AUTOHSCROLL as u32,
+        (337, 172, 245, 30),
         0,
     )?;
+    let choose = dialog.control("BUTTON", "", WS_TABSTOP, (592, 172, 100, 32), CHOOSE_FOLDER)?;
+    fields.push(label("", 227, 370)?);
+    let add = dialog.control(
+        "COMBOBOX",
+        "",
+        WS_TABSTOP | CBS_DROPDOWNLIST as u32,
+        (422, 227, 270, 120),
+        CHANGE_ADD,
+    )?;
+    fields.push(label("", 302, 620)?);
+    label("Torrent 1.4.0 Rust Edition", 348, 620)?;
+    label("Sander Stripa", 382, 620)?;
+    let updates = dialog.control("BUTTON", "", WS_TABSTOP, (28, 433, 145, 32), ABOUT_UPDATE)?;
+    dialog.control(
+        "BUTTON",
+        "by connect.",
+        WS_TABSTOP,
+        (302, 500, 116, 32),
+        ABOUT_CONNECT,
+    )?;
     unsafe {
-        SendMessageW(files, BM_SETCHECK, prefs.select_files as usize, 0);
-        SendMessageW(english, BM_SETCHECK, prefs.english as usize, 0);
-        for item in [
-            tr(en, "Светлая", "Light"),
-            tr(en, "Тёмная", "Dark"),
-            tr(en, "Системная", "System"),
-        ] {
-            SendMessageW(theme, CB_ADDSTRING, 0, wide(item).as_ptr() as LPARAM);
+        for field in fields.iter().copied() {
+            SendMessageW(field, WM_SETFONT, controls.fonts.heading() as usize, 1);
         }
-        SendMessageW(theme, CB_SETCURSEL, prefs.theme as usize, 0);
+        for value in ["Русский", "English"] {
+            SendMessageW(language, CB_ADDSTRING, 0, wide(value).as_ptr() as LPARAM);
+        }
     }
-    dialog.buttons(160, en)?;
-    let mut updated = None;
-    dialog.run(|id| match id {
-        CANCEL => true,
-        ACCEPT => {
-            let folder = PathBuf::from(edit_text(folder));
-            if !folder.is_absolute() {
-                show_error(tr(
-                    en,
-                    "Укажите абсолютный путь к папке загрузок.",
-                    "Enter an absolute download folder path.",
-                ));
+    let display = |prefs: &Preferences| unsafe {
+        let en = prefs.english;
+        let headings = [
+            tr(en, "Настройки", "Settings"),
+            tr(en, "Тема", "Theme"),
+            tr(en, "Язык интерфейса", "Interface language"),
+            tr(en, "Папка загрузок", "Download folder"),
+            tr(en, "При добавлении торрента", "On adding a torrent"),
+            tr(en, "О Torrent", "About Torrent"),
+        ];
+        SetWindowTextW(dialog.window, wide(headings[0]).as_ptr());
+        for (field, title) in fields.iter().zip(headings) {
+            SetWindowTextW(*field, wide(title).as_ptr());
+        }
+        for (button, theme, title) in [
+            (system, Theme::System, tr(en, "Системная", "System")),
+            (light, Theme::Light, tr(en, "Светлая", "Light")),
+            (dark, Theme::Dark, tr(en, "Тёмная", "Dark")),
+        ] {
+            let title = if prefs.theme == theme {
+                format!("✓ {title}")
+            } else {
+                title.into()
+            };
+            SetWindowTextW(button, wide(title).as_ptr());
+        }
+        SetWindowTextW(choose, wide(tr(en, "Выбрать…", "Browse…")).as_ptr());
+        SetWindowTextW(updates, wide(tr(en, "Обновление", "Updates")).as_ptr());
+        SetWindowTextW(folder, wide(prefs.folder.as_os_str()).as_ptr());
+        SendMessageW(language, CB_SETCURSEL, en as usize, 0);
+        SendMessageW(add, CB_RESETCONTENT, 0, 0);
+        for item in [
+            tr(en, "Начать загрузку", "Start download"),
+            tr(en, "Выбрать файлы", "Choose files"),
+        ] {
+            SendMessageW(add, CB_ADDSTRING, 0, wide(item).as_ptr() as LPARAM);
+        }
+        SendMessageW(add, CB_SETCURSEL, prefs.select_files as usize, 0);
+    };
+    display(prefs);
+    dialog.run(|id| {
+        let mut updated = prefs.clone();
+        match id {
+            ACCEPT | CANCEL => return true,
+            THEME_SYSTEM => updated.theme = Theme::System,
+            THEME_LIGHT => updated.theme = Theme::Light,
+            THEME_DARK => updated.theme = Theme::Dark,
+            CHANGE_LANGUAGE => {
+                updated.english = unsafe { SendMessageW(language, CB_GETCURSEL, 0, 0) } == 1
+            }
+            CHANGE_ADD => {
+                updated.select_files = unsafe { SendMessageW(add, CB_GETCURSEL, 0, 0) } == 1
+            }
+            CHOOSE_FOLDER => {
+                let Some(path) = choose_folder(dialog.window, prefs.english) else {
+                    return false;
+                };
+                updated.folder = path;
+            }
+            ABOUT_UPDATE | ABOUT_CONNECT => {
+                let url = if id == ABOUT_UPDATE {
+                    "https://github.com/sanderstripa/torrent/releases/latest"
+                } else {
+                    "https://connect.sanderstripa.com/?utm_source=chatgpt.com"
+                };
+                if !open_url(dialog.window, url) {
+                    show_error(tr(
+                        prefs.english,
+                        "Не удалось открыть ссылку.",
+                        "Could not open the link.",
+                    ));
+                }
                 return false;
             }
-            let theme = match unsafe { SendMessageW(theme, CB_GETCURSEL, 0, 0) } {
-                1 => Theme::Dark,
-                2 => Theme::System,
-                _ => Theme::Light,
-            };
-            updated = Some(Preferences {
-                folder,
-                theme,
-                select_files: unsafe { SendMessageW(files, BM_GETCHECK, 0, 0) } == 1,
-                english: unsafe { SendMessageW(english, BM_GETCHECK, 0, 0) } == 1,
-            });
-            true
+            _ => return false,
         }
-        _ => false,
+        if let Err(error) = std::fs::create_dir_all(root).and_then(|()| updated.save(root)) {
+            show_error(&error.to_string());
+        } else {
+            *prefs = updated;
+            controls.set_language(prefs.english);
+            controls.dark.set(apply_title_theme(owner, prefs.theme));
+            apply_title_theme(dialog.window, prefs.theme);
+        }
+        display(prefs);
+        false
     });
-    Ok(updated)
+    Ok(())
 }
 
 fn compare_names(a: &str, b: &str) -> std::cmp::Ordering {
@@ -1072,10 +1337,7 @@ pub fn run() -> Result<(), String> {
         PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is unavailable")?)
             .join("Torrent RE Development")
     };
-    let default_folder = std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| profile.clone())
-        .join("Downloads");
+    let default_folder = downloads_folder().unwrap_or_else(|| profile.join("Downloads"));
     let mut prefs =
         Preferences::load(&profile, default_folder).map_err(|error| error.to_string())?;
     let session = Session::open(PREVIEW_POLICY, smoke || interaction)?;
@@ -1251,17 +1513,7 @@ pub fn run() -> Result<(), String> {
                             }
                             Ok(())
                         }),
-                        SETTINGS => settings(window, &prefs).and_then(|change| {
-                            if let Some(updated) = change {
-                                std::fs::create_dir_all(&profile)
-                                    .map_err(|error| error.to_string())?;
-                                updated.save(&profile).map_err(|error| error.to_string())?;
-                                prefs = updated;
-                                controls.set_language(prefs.english);
-                                controls.dark.set(apply_title_theme(window, prefs.theme));
-                            }
-                            Ok(())
-                        }),
+                        SETTINGS => settings(window, &mut prefs, &profile, &controls),
                         _ => Ok(()),
                     };
                     if let Err(error) = result {

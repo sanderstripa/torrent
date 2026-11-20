@@ -71,8 +71,15 @@ try {
     Command $main 105
     Command $main 110
     $settings = Wait-Visible 'Настройки'
+    Command $settings 126
+    for ($attempt = 0; $attempt -lt 50 -and (Get-Content $prefs)[1] -ne '1 1 0'; $attempt++) {
+        Start-Sleep -Milliseconds 100
+    }
+    if ((Get-Content $prefs)[1] -ne '1 1 0') {
+        throw 'Changing the theme did not save the preference while settings were open'
+    }
     Command $settings 111
-    Start-Sleep -Milliseconds 150
+    Start-Sleep -Milliseconds 400
     [RustTorrentUI]::PostMessage($main, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     if (!$process.WaitForExit(30000)) { throw 'Torrent did not close cleanly' }
     if ($process.ExitCode) { throw "Torrent exited with $($process.ExitCode)" }
