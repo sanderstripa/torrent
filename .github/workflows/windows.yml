@@ -240,3 +240,8 @@ jobs:
           $p = Start-Process $exe -ArgumentList "--smoke-test" -PassThru
           if (!$p.WaitForExit(30000)) { $p.Kill(); throw "Rust window smoke test timed out" }
           if ($p.ExitCode) { throw "Rust window smoke test failed ($($p.ExitCode))" }
+      - name: Exercise the Rust window controls
+        run: |
+          $bridge = (Resolve-Path re-native/Release).Path
+          $env:PATH = "$bridge;$env:PATH"
+          ./rust-edition/tests/windows-ui.ps1 -Executable "rust-edition/target/x86_64-pc-windows-msvc/debug/torrent-re-windows.exe"

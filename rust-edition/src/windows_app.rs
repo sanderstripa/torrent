@@ -124,14 +124,18 @@ struct Dialog {
 
 impl Dialog {
     fn create(owner: HWND, title: &str, width: i32, height: i32) -> Result<Self, String> {
+        let mut owner_rect = RECT::default();
+        unsafe { GetWindowRect(owner, &mut owner_rect) };
+        let x = owner_rect.left + (owner_rect.right - owner_rect.left - width) / 2;
+        let y = owner_rect.top + (owner_rect.bottom - owner_rect.top - height) / 2;
         let window = unsafe {
             CreateWindowExW(
                 WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT,
                 wide("TorrentRustDevelopment").as_ptr(),
                 wide(title).as_ptr(),
                 WS_POPUP | WS_CAPTION | WS_SYSMENU,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
+                x,
+                y,
                 width,
                 height,
                 owner,
@@ -442,7 +446,7 @@ impl Controls {
             "",
             WS_BORDER | WS_VSCROLL | WS_TABSTOP,
             (20, 105, 870, 520),
-            0,
+            200,
         )?;
         Ok(Self { magnet, list })
     }
@@ -684,7 +688,8 @@ impl Drop for ProcessLock {
 
 pub fn run() -> Result<(), String> {
     let smoke = std::env::args_os().any(|argument| argument == "--smoke-test");
-    let _lock = if smoke {
+    let interaction = std::env::args_os().any(|argument| argument == "--interaction-test");
+    let _lock = if smoke || interaction {
         None
     } else {
         let name = wide("Local\\Torrent.RustEdition.Development");
@@ -701,6 +706,10 @@ pub fn run() -> Result<(), String> {
     // The development shell uses a separate profile until migration is validated.
     let profile = if smoke {
         std::env::temp_dir().join(format!("torrent-re-smoke-{}", std::process::id()))
+    } else if interaction {
+        std::env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join("re-ui-test-data")
     } else {
         PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is unavailable")?)
             .join("Torrent RE Development")
@@ -711,7 +720,7 @@ pub fn run() -> Result<(), String> {
         .join("Downloads");
     let mut prefs =
         Preferences::load(&profile, default_folder).map_err(|error| error.to_string())?;
-    let session = Session::open(PREVIEW_POLICY, smoke)?;
+    let session = Session::open(PREVIEW_POLICY, smoke || interaction)?;
     let (mut transfers, warnings) = Transfers::open(&session, &profile.join("session"))?;
     if !warnings.is_empty() && !smoke {
         show_error(&warnings.join("\n"));
@@ -758,7 +767,10 @@ pub fn run() -> Result<(), String> {
         let controls = Controls::create(window)?;
         let mut prompted = std::collections::HashSet::new();
         if !smoke {
-            for source in std::env::args_os().skip(1) {
+            for source in std::env::args_os()
+                .skip(1)
+                .filter(|arg| arg != "--interaction-test")
+            {
                 if let Err(error) = transfers.add(
                     &source.to_string_lossy(),
                     &prefs.folder.to_string_lossy(),
