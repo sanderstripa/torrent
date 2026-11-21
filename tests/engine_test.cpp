@@ -7,6 +7,7 @@
 #include <libtorrent/settings_pack.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <thread>
@@ -45,6 +46,44 @@ int main() {
   {
    Engine e(root/"magnet-state");auto h=e.add(magnet,utf8((root/"magnet-transfer").wstring()),true);h.connect_peer(lt::tcp::endpoint(lt::address_v4::loopback(),seed.listen_port()));waitFor([&]{return bool(h.torrent_file());},"magnet metadata not fetched");require(h.status().total_wanted_done==0,"payload downloaded before file selection");h.prioritize_files({lt::top_priority});h.unset_flags(lt::torrent_flags::default_dont_download);h.resume();waitFor([&]{return h.status().is_seeding;},"magnet transfer did not finish");e.shutdown();
    h.flush_cache();waitFor([&]{std::ifstream file(root/"magnet-transfer"/"sample.bin",std::ios::binary);std::string content((std::istreambuf_iterator<char>(file)),{});return content==std::string(65536,'T');},"downloaded payload differs from seed");
+  }
+  {
+   Engine e(root/"concurrency-state");
+   auto destination=utf8((root/"concurrency-download").wstring());
+   std::vector<lt::torrent_handle> downloads;
+   for(char digit : std::string("123")) {
+    downloads.push_back(e.add("magnet:?xt=urn:btih:"+std::string(40,digit),destination,false));
+   }
+
+   auto secondSeed=root/"seed"/"second.bin";
+   std::filesystem::copy_file(root/"seed"/"sample.bin",secondSeed);
+   lt::file_storage secondFiles;
+   secondFiles.add_file("second.bin",65536);
+   lt::create_torrent secondCreator(secondFiles,16384,lt::create_torrent::v1_only);
+   auto seedPath=utf8((root/"seed").wstring());
+   lt::set_piece_hashes(secondCreator,seedPath);
+   auto secondTorrent=root/"second.torrent";
+   std::vector<char> secondBytes;
+   lt::bencode(std::back_inserter(secondBytes),secondCreator.generate());
+   {
+    std::ofstream file(secondTorrent,std::ios::binary);
+    file.write(secondBytes.data(),secondBytes.size());
+   }
+   auto first=e.add(utf8(torrent.wstring()),seedPath,false);
+   auto second=e.add(utf8(secondTorrent.wstring()),seedPath,false);
+   auto active=[](lt::torrent_status const& status) {
+    return bool(status.flags&lt::torrent_flags::auto_managed)&&!(status.flags&lt::torrent_flags::paused);
+   };
+   waitFor([&] {
+    auto firstStatus=first.status();
+    auto secondStatus=second.status();
+    return firstStatus.is_seeding&&active(firstStatus)&&secondStatus.is_seeding&&active(secondStatus)
+     &&std::all_of(downloads.begin(),downloads.end(),[&](auto const& handle) {
+      auto status=handle.status();
+      return active(status)&&status.state==lt::torrent_status::downloading_metadata;
+     });
+   },"three downloads and two seeds did not stay active together");
+   e.shutdown();
   }
   seed.remove_torrent(seedHandle);std::cout<<"torrent, magnet, loopback transfer, priorities, pause, stop, persistence, removal: PASS\nTest data: "<<root<<'\n';return 0;
  } catch(std::exception const& e) {std::cerr<<e.what()<<"\nTest data: "<<root<<'\n';return 1;}

@@ -1,3 +1,5 @@
-# Torrent 1.4.0
+# Torrent 1.4.1
 
-Updated only the installer executable icon to the approved golden planet design. Application, runtime installer artwork, shortcuts, file associations and uninstaller retain the existing circular Torrent icon. No application behavior changes.
+Removed the limits of two simultaneous downloads, one simultaneous seed and three active torrents in total. The torrent queue also no longer limits how many active torrents can announce to trackers, DHT or local peer discovery.
+
+This Windows x64 release includes the installer and SHA-256 checksums.
