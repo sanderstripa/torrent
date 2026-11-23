@@ -26,7 +26,7 @@ using Microsoft::WRL::ComPtr;
 static HINSTANCE instance; static HWND mainWindow; static std::unique_ptr<Engine> engine;
 static std::filesystem::path dataRoot;
 static std::filesystem::path knownFolder(REFKNOWNFOLDERID id) {PWSTR value=nullptr; if(FAILED(SHGetKnownFolderPath(id,KF_FLAG_DONT_VERIFY,nullptr,&value)))throw std::runtime_error("Cannot resolve Windows user folder");std::filesystem::path result(value);CoTaskMemFree(value);return result;}
-struct Preferences { std::wstring folder; int action=0, dark=0, english=0; } prefs;
+struct Preferences { std::wstring folder; int action=0, dark=0, english=0; bool closeToTray=true; } prefs;
 static bool windowsDark=false;static int themeTestOverride=-1;
 static bool darkMode(){return prefs.dark==2?windowsDark:prefs.dark==1;}
 static void readWindowsTheme(){DWORD light=1,size=sizeof light;RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",L"AppsUseLightTheme",RRF_RT_REG_DWORD,nullptr,&light,&size);windowsDark=themeTestOverride>=0?themeTestOverride!=0:light==0;}
@@ -38,7 +38,7 @@ static bool smokeTesting=false;static bool designPreview=false,interactionTestin
 static void stage(char const* value) {if(smokeTesting)std::ofstream("Torrent-startup-stages.txt",std::ios::app)<<value<<'\n';}
 static std::wstring tr(wchar_t const* ru,wchar_t const* en) {return prefs.english?en:ru;}
 static void error(std::string const& message);
-static bool savePrefs() {auto temporary=dataRoot/L"settings.tmp";{std::ofstream f(temporary,std::ios::binary|std::ios::trunc);f<<utf8(prefs.folder)<<'\n'<<prefs.action<<' '<<prefs.dark<<' '<<prefs.english;f.flush();if(!f)return false;}return MoveFileExW(temporary.c_str(),(dataRoot/L"settings.txt").c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0; }
+static bool savePrefs() {auto temporary=dataRoot/L"settings.tmp";{std::ofstream f(temporary,std::ios::binary|std::ios::trunc);f<<utf8(prefs.folder)<<'\n'<<prefs.action<<' '<<prefs.dark<<' '<<prefs.english<<' '<<prefs.closeToTray;f.flush();if(!f)return false;}return MoveFileExW(temporary.c_str(),(dataRoot/L"settings.txt").c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0; }
 static std::wstring sizeText(std::int64_t size) { wchar_t b[64];double divisor=1024;std::wstring unit=tr(L"КБ",L"KB");if(size>=1024LL*1024*1024){divisor=1024LL*1024*1024;unit=tr(L"ГБ",L"GB");}else if(size>=1024*1024){divisor=1024*1024;unit=tr(L"МБ",L"MB");}swprintf_s(b,L"%.1f",double(size)/divisor);std::wstring value=b;if(!prefs.english)std::replace(value.begin(),value.end(),L'.',L',');return value+L" "+unit; }
 static HWND control(HWND parent,wchar_t const* cls,std::wstring const& text,DWORD style,int x,int y,int w,int h,int id) { HWND c=CreateWindowExW(0,cls,text.c_str(),WS_CHILD|WS_VISIBLE|style,x,y,w,h,parent,HMENU(INT_PTR(id)),instance,nullptr); SendMessageW(c,WM_SETFONT,WPARAM(GetStockObject(DEFAULT_GUI_FONT)),TRUE); return c; }
 static std::wstring textOf(HWND c) {int n=GetWindowTextLengthW(c); std::wstring t(n+1,0); GetWindowTextW(c,t.data(),n+1); t.resize(n); return t;}
@@ -184,14 +184,15 @@ static float settingsFrom=0,settingsProgress=0;
 static visual::SettingsBackdrop settingsBackdrop;
 static constexpr UINT_PTR settingsTimer=0xc013;
 static D2D1_RECT_F settingsSheet(){float width=std::min(720.f,mainCanvas.width-96.f),height=std::min(560.f,mainCanvas.height-56.f);float left=(mainCanvas.width-width)/2;return D2D1::RectF(left,0,left+width,height);}
-static D2D1_RECT_F overlayControl(int id){auto r=settingsSheet();float right=r.right-28;switch(id){case 0:return D2D1::RectF(right-22,16,right+10,48);case 1:case 2:case 3:{float x=right-270+(id-1)*90;return D2D1::RectF(x,100,x+90,134);}case 4:return D2D1::RectF(right-270,184,right,220);case 5:return D2D1::RectF(right-90,274,right,310);case 6:return D2D1::RectF(right-270,320,right,356);case 7:return D2D1::RectF(right-112,466,right,502);case 8:{float center=(r.left+r.right)/2;return D2D1::RectF(center-44,r.bottom-32,center+44,r.bottom-8);}}return {};}
-static int overlayHit(float x,float y){if(settingsProgress<.99f)return -1;for(int id=0;id<9;++id)if(visual::hit(x,y,overlayControl(id)))return id;return -1;}
+static D2D1_RECT_F overlayControl(int id){auto r=settingsSheet();float right=r.right-28;switch(id){case 0:return D2D1::RectF(right-22,16,right+10,48);case 1:case 2:case 3:{float x=right-270+(id-1)*90;return D2D1::RectF(x,100,x+90,134);}case 4:return D2D1::RectF(right-270,184,right,220);case 5:return D2D1::RectF(right-90,274,right,310);case 6:return D2D1::RectF(right-270,320,right,356);case 9:return D2D1::RectF(right-112,364,right,396);case 7:return D2D1::RectF(right-112,466,right,502);case 8:{float center=(r.left+r.right)/2;return D2D1::RectF(center-44,r.bottom-32,center+44,r.bottom-8);}}return {};}
+static int overlayHit(float x,float y){if(settingsProgress<.99f)return -1;for(int id=0;id<10;++id)if(visual::hit(x,y,overlayControl(id)))return id;return -1;}
 static void animateSettings(bool close){settingsClosing=close;settingsFrom=settingsProgress;settingsStarted=GetTickCount64();BOOL motion=TRUE;SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&motion,0);if(!motion){settingsProgress=close?0.f:1.f;settingsOpen=!close;}else SetTimer(mainWindow,settingsTimer,16,nullptr);InvalidateRect(mainWindow,nullptr,FALSE);}
 static void openSettings(){if(settingsOpen)return;paint(mainWindow);DwmFlush();settingsBackdrop.capture(mainWindow,darkMode());settingsOpen=true;settingsFocus=0;settingsHover=-1;settingsProgress=0;animateSettings(false);SetFocus(mainWindow);}
 static void recaptureSettings(){bool opened=settingsOpen;settingsOpen=false;paint(mainWindow);DwmFlush();settingsBackdrop.capture(mainWindow,darkMode());settingsOpen=opened;InvalidateRect(mainWindow,nullptr,FALSE);}
 static void activateSetting(int id){if(id==0){animateSettings(true);return;}auto before=prefs;if(id>=1&&id<=3)prefs.dark=id==1?2:id==2?0:1;
  if(id==5){auto folder=prefs.folder;if(browse(mainWindow,folder))prefs.folder=folder;}
  if(id==4||id==6){auto r=overlayControl(id);POINT point{int(r.left*mainCanvas.scale),int(r.bottom*mainCanvas.scale)};ClientToScreen(mainWindow,&point);int choice=id==4?visual::menu(mainWindow,point,{{1,L"Русский",prefs.english==0},{2,L"English",prefs.english==1}},darkMode()):visual::menu(mainWindow,point,{{1,tr(L"Начать загрузку",L"Start download"),prefs.action==0},{2,tr(L"Выбрать файлы",L"Choose files"),prefs.action==1}},darkMode());if(choice){if(id==4)prefs.english=choice-1;else prefs.action=choice-1;}}
+ if(id==9)prefs.closeToTray=!prefs.closeToTray;
  if(id==8){ShellExecuteW(mainWindow,L"open",L"https://connect.sanderstripa.com/?utm_source=chatgpt.com",nullptr,nullptr,SW_SHOWNORMAL);return;}
  if(id==7){ShellExecuteW(mainWindow,L"open",L"https://github.com/sanderstripa/torrent/releases/latest",nullptr,nullptr,SW_SHOWNORMAL);return;}
  settingsSaveFailed=!savePrefs();if(settingsSaveFailed)prefs=before;visual::frame(mainWindow,darkMode(),true);recaptureSettings();}
@@ -208,13 +209,69 @@ static void drawSettings(){auto& c=mainCanvas;settingsBackdrop.draw(c);auto r=se
  heading(tr(L"Язык интерфейса",L"Interface language"),146);auto lang=overlayControl(4);c.box(lang,field,7,line);c.label(prefs.english?L"English":L"Русский",D2D1::RectF(lang.left+12,lang.top,lang.right-30,lang.bottom),13);c.chevron(lang.right-22,lang.top+15);
  heading(tr(L"Загрузки",L"Downloads"),234);c.label(tr(L"Папка загрузок",L"Download folder"),D2D1::RectF(left,274,right-280,310),13);c.box(D2D1::RectF(right-270,274,right-100,310),field,7,line);c.label(prefs.folder,D2D1::RectF(right-260,274,right-110,310),12,false,c.muted());c.button(tr(L"Выбрать",L"Choose"),overlayControl(5),false,settingsHover==5);
  c.label(tr(L"При добавлении торрента",L"On adding a torrent"),D2D1::RectF(left,320,right-280,356),13);auto action=overlayControl(6);c.box(action,field,7,line);c.label(prefs.action?tr(L"Выбрать файлы",L"Choose files"):tr(L"Начать загрузку",L"Start download"),D2D1::RectF(action.left+12,action.top,action.right-30,action.bottom),12);c.chevron(action.right-22,action.top+15);
- heading(tr(L"О Torrent",L"About Torrent"),370);c.label(tr(L"Версия Torrent",L"Torrent version"),D2D1::RectF(left,405,right-150,432),13);c.label(L"1.4.1",D2D1::RectF(right-150,405,right,432),13,false,0,DWRITE_TEXT_ALIGNMENT_TRAILING);c.line(left,434,right,434,line,1);c.label(tr(L"Разработчик",L"Developer"),D2D1::RectF(left,436,right-180,463),13);c.label(L"Sander Stripa",D2D1::RectF(right-180,436,right,463),13,false,c.muted(),DWRITE_TEXT_ALIGNMENT_TRAILING);c.button(tr(L"Обновить",L"Update"),overlayControl(7),false,settingsHover==7);
+ c.label(tr(L"Скрывать в трей при закрытии",L"Hide to tray on close"),D2D1::RectF(left,364,right-125,396),13);
+ c.button(prefs.closeToTray?tr(L"Включено",L"On"):tr(L"Выключено",L"Off"),overlayControl(9),false,settingsHover==9);
+ c.label(tr(L"О Torrent",L"About Torrent"),D2D1::RectF(left,396,right,420),13,true);c.label(tr(L"Версия Torrent",L"Torrent version"),D2D1::RectF(left,420,right-150,442),13);c.label(L"1.4.1",D2D1::RectF(right-150,420,right,442),13,false,0,DWRITE_TEXT_ALIGNMENT_TRAILING);c.line(left,443,right,443,line,1);c.label(tr(L"Разработчик",L"Developer"),D2D1::RectF(left,444,right-180,465),13);c.label(L"Sander Stripa",D2D1::RectF(right-180,444,right,465),13,false,c.muted(),DWRITE_TEXT_ALIGNMENT_TRAILING);c.button(tr(L"Обновить",L"Update"),overlayControl(7),false,settingsHover==7);
  if(settingsSaveFailed)c.label(tr(L"Не удалось сохранить настройки",L"Could not save settings"),D2D1::RectF(left,504,right,524),12,false,0xc95050);
  c.label(L"by connect.",overlayControl(8),11,false,settingsHover==8?(c.dark?0xb6b7bd:0x55585d):c.muted(),DWRITE_TEXT_ALIGNMENT_CENTER);
  if(mainKeyboardFocus&&settingsFocus>=0)c.focus(overlayControl(settingsFocus));c.rt->SetTransform(D2D1::Matrix3x2F::Identity());
 }
 
 static WindowPosition windowPosition;
+static constexpr UINT trayMessage=WM_APP+10, reopenMessage=WM_APP+11, exitMessage=WM_APP+12;
+static UINT taskbarCreated;
+static bool hiddenToTray=false;
+
+static NOTIFYICONDATAW trayData(HWND w) {
+ NOTIFYICONDATAW icon{sizeof(NOTIFYICONDATAW)};
+ icon.hWnd=w;
+ icon.uID=1;
+ icon.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP;
+ icon.uCallbackMessage=trayMessage;
+ icon.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(1));
+ wcscpy_s(icon.szTip,L"Torrent");
+ return icon;
+}
+
+static bool addTrayIcon(HWND w) {
+ auto icon=trayData(w);
+ return Shell_NotifyIconW(NIM_ADD,&icon)!=FALSE;
+}
+
+static void revealMainWindow(HWND w) {
+ ShowWindow(w,IsIconic(w)?SW_RESTORE:SW_SHOW);
+ HWND active=w;
+ if(!IsWindowEnabled(w)){
+  HWND popup=GetLastActivePopup(w);
+  if(IsWindowVisible(popup)&&IsWindowEnabled(popup))active=popup;
+ }
+ if(!SetForegroundWindow(active)){
+  SetWindowPos(active,HWND_TOP,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+  FLASHWINFO flash{sizeof(FLASHWINFO),w,FLASHW_TRAY,3,0};
+  FlashWindowEx(&flash);
+ }
+ if(hiddenToTray){
+  auto icon=trayData(w);
+  Shell_NotifyIconW(NIM_DELETE,&icon);
+  hiddenToTray=false;
+ }
+}
+
+static void showTrayMenu(HWND w) {
+ POINT point{};
+ GetCursorPos(&point);
+ HMENU menu=CreatePopupMenu();
+ if(!menu)return;
+ AppendMenuW(menu,MF_STRING,1,tr(L"Открыть Torrent",L"Open Torrent").c_str());
+ AppendMenuW(menu,MF_STRING,2,tr(L"Выход",L"Exit").c_str());
+ SetForegroundWindow(w);
+ int action=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,point.x,point.y,0,w,nullptr);
+ DestroyMenu(menu);
+ PostMessageW(w,WM_NULL,0,0);
+ if(action==1)revealMainWindow(w);
+ if(action==2)PostMessageW(w,exitMessage,0,0);
+}
+
 static lt::torrent_handle selectedTorrent;
 static int selectedIndex(){for(int i=0;i<int(engine->items.size());++i)if(engine->items[i].handle==selectedTorrent)return i;return -1;}
 static int rowAt(int y){int row=(y-86+scroll)/136;return y>=86&&row>=0&&row<int(engine->items.size())&&(y-86+scroll)%136<124?row:-1;}
@@ -236,6 +293,10 @@ static void context(int row,POINT p) {std::vector<visual::MenuItem> entries;if(r
  if(id==9){openSettings();return;}if(id==1) openTorrent(); if(id==2) {Dialog d{0};if(dialog(d)&&!d.result.empty()) add(d.result);} if(row>=0&&id>=3) {auto& item=engine->items[row];auto h=item.handle; if(id==3||id==5) {h.unset_flags(lt::torrent_flags::auto_managed);h.pause(); item.stopped=id==5;} if(id==4) {item.stopped=false; if(!item.selectPending) h.set_flags(lt::torrent_flags::auto_managed);h.resume();} if(id==6) engine->remove(h); if(id==7) {h.queue_position_up();if(row>0) std::swap(engine->items[row],engine->items[row-1]);} if(id==8) {h.queue_position_down();if(row+1<int(engine->items.size())) std::swap(engine->items[row],engine->items[row+1]);} engine->save();} InvalidateRect(mainWindow,nullptr,FALSE);
 }
 static LRESULT CALLBACK windowProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
+ if(taskbarCreated&&m==taskbarCreated){
+  if(hiddenToTray&&!addTrayIcon(w))revealMainWindow(w);
+  return 0;
+ }
  if(mainCanvas.animationMessage(w,m,wp))return 0;
  try {
  switch(m) {
@@ -273,15 +334,33 @@ static LRESULT CALLBACK windowProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
  case WM_MOUSEWHEEL: {if(settingsOpen)return 0;RECT r;GetClientRect(w,&r);int viewport=int(r.bottom/(GetDpiForWindow(w)/96.f))-86; scroll=std::clamp(scroll-GET_WHEEL_DELTA_WPARAM(wp)/3,0,std::max(0,int(engine->items.size())*136-viewport));InvalidateRect(w,nullptr,FALSE);return 0;}
  case WM_LBUTTONUP:{float scale=GetDpiForWindow(w)/96.f;float x=GET_X_LPARAM(lp)/scale,y=GET_Y_LPARAM(lp)/scale;RECT r;GetClientRect(w,&r);if(settingsOpen){int id=overlayHit(x,y);if(id>=0)activateSetting(id);else if(!visual::hit(x,y,settingsSheet()))animateSettings(true);return 0;}int hit=mainHit(x,y,r.right/scale);mainKeyboardFocus=(wp&0x10000)!=0;mainFocused=mainKeyboardFocus?hit:-1;if(hit==3){SendMessageW(w,WM_CLOSE,0,0);return 0;}if(hit==2){ShowWindow(w,SW_MINIMIZE);return 0;}if(hit==0){POINT p;GetCursorPos(&p);context(-1,p);}else{int row=rowAt(int(y));selectedTorrent=row>=0?engine->items[row].handle:lt::torrent_handle{};}SetFocus(w);InvalidateRect(w,nullptr,FALSE);return 0;}
  case WM_LBUTTONDBLCLK: {if(settingsOpen)return 0;int row=rowAt(int(GET_Y_LPARAM(lp)/(GetDpiForWindow(w)/96.f)));if(row>=0){selectedTorrent=engine->items[row].handle;Dialog d{2};d.handle=selectedTorrent;dialog(d);}return 0;}
- case WM_KEYDOWN: {if(settingsOpen){if(wp==VK_ESCAPE)animateSettings(true);else if(wp==VK_TAB){mainKeyboardFocus=true;settingsFocus=(settingsFocus+((GetKeyState(VK_SHIFT)&0x8000)?8:1))%9;InvalidateRect(w,nullptr,FALSE);}else if(wp==VK_RETURN||wp==VK_SPACE)activateSetting(settingsFocus);return 0;}if(wp==VK_F10&&(GetKeyState(VK_SHIFT)&0x8000)){POINT p{24,62};ClientToScreen(w,&p);context(-1,p);return 0;}if(wp==VK_TAB){mainKeyboardFocus=true;int ids[]={0,2,3};int at=mainFocused==2?1:mainFocused==3?2:0;mainFocused=ids[(at+((GetKeyState(VK_SHIFT)&0x8000)?2:1))%3];InvalidateRect(w,nullptr,FALSE);return 0;}if((wp==VK_RETURN||wp==VK_SPACE)&&mainFocused>=0){RECT r;GetClientRect(w,&r);float scale=GetDpiForWindow(w)/96.f;PostMessageW(w,WM_LBUTTONUP,0x10000,MAKELPARAM(int(r.right-(mainFocused==0?110:mainFocused==2?70:30)*scale),int(32*scale)));return 0;}int row=selectedIndex();if(row>=0&&wp==VK_DELETE){engine->remove(selectedTorrent);selectedTorrent=engine->items.empty()?lt::torrent_handle{}:engine->items[std::min(row,int(engine->items.size())-1)].handle;InvalidateRect(w,nullptr,FALSE);return 0;}if(row>=0&&wp==VK_SPACE){if(lp&(1LL<<30))return 0;auto& item=engine->items[row];auto h=item.handle;auto flags=h.status().flags;if(item.stopped||((flags&lt::torrent_flags::paused)&&!(flags&lt::torrent_flags::auto_managed))){item.stopped=false;if(!item.selectPending)h.set_flags(lt::torrent_flags::auto_managed);h.resume();}else{h.unset_flags(lt::torrent_flags::auto_managed);h.pause();}engine->save();InvalidateRect(w,nullptr,FALSE);return 0;}break;}
+ case WM_KEYDOWN: {if(settingsOpen){if(wp==VK_ESCAPE)animateSettings(true);else if(wp==VK_TAB){mainKeyboardFocus=true;constexpr int order[]={0,1,2,3,4,5,6,9,7,8};auto at=std::find(std::begin(order),std::end(order),settingsFocus)-std::begin(order);settingsFocus=order[(at+((GetKeyState(VK_SHIFT)&0x8000)?9:1))%10];InvalidateRect(w,nullptr,FALSE);}else if(wp==VK_RETURN||wp==VK_SPACE)activateSetting(settingsFocus);return 0;}if(wp==VK_F10&&(GetKeyState(VK_SHIFT)&0x8000)){POINT p{24,62};ClientToScreen(w,&p);context(-1,p);return 0;}if(wp==VK_TAB){mainKeyboardFocus=true;int ids[]={0,2,3};int at=mainFocused==2?1:mainFocused==3?2:0;mainFocused=ids[(at+((GetKeyState(VK_SHIFT)&0x8000)?2:1))%3];InvalidateRect(w,nullptr,FALSE);return 0;}if((wp==VK_RETURN||wp==VK_SPACE)&&mainFocused>=0){RECT r;GetClientRect(w,&r);float scale=GetDpiForWindow(w)/96.f;PostMessageW(w,WM_LBUTTONUP,0x10000,MAKELPARAM(int(r.right-(mainFocused==0?110:mainFocused==2?70:30)*scale),int(32*scale)));return 0;}int row=selectedIndex();if(row>=0&&wp==VK_DELETE){engine->remove(selectedTorrent);selectedTorrent=engine->items.empty()?lt::torrent_handle{}:engine->items[std::min(row,int(engine->items.size())-1)].handle;InvalidateRect(w,nullptr,FALSE);return 0;}if(row>=0&&wp==VK_SPACE){if(lp&(1LL<<30))return 0;auto& item=engine->items[row];auto h=item.handle;auto flags=h.status().flags;if(item.stopped||((flags&lt::torrent_flags::paused)&&!(flags&lt::torrent_flags::auto_managed))){item.stopped=false;if(!item.selectPending)h.set_flags(lt::torrent_flags::auto_managed);h.resume();}else{h.unset_flags(lt::torrent_flags::auto_managed);h.pause();}engine->save();InvalidateRect(w,nullptr,FALSE);return 0;}break;}
  case WM_CONTEXTMENU: {if(settingsOpen)return 0;POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)},local=p;ScreenToClient(w,&local);context(rowAt(int(local.y/(GetDpiForWindow(w)/96.f))),p);return 0;}
  case WM_DROPFILES: {HDROP drop=HDROP(wp);UINT count=DragQueryFileW(drop,0xffffffff,nullptr,0);for(UINT i=0;i<count;++i){wchar_t path[32768];DragQueryFileW(drop,i,path,32768);add(path);}DragFinish(drop);return 0;}
- case WM_COPYDATA: {auto c=reinterpret_cast<COPYDATASTRUCT*>(lp);if(c->dwData==1&&c->cbData>=sizeof(wchar_t)&&c->cbData<=65536&&reinterpret_cast<wchar_t*>(c->lpData)[c->cbData/sizeof(wchar_t)-1]==0) add(static_cast<wchar_t*>(c->lpData));SetForegroundWindow(w);return TRUE;}
- case WM_TIMER: {if(wp==settingsTimer){float elapsed=std::min(1.f,float(GetTickCount64()-settingsStarted)/220.f),ease=1-std::pow(1-elapsed,3.f);settingsProgress=settingsFrom+((settingsClosing?0.f:1.f)-settingsFrom)*ease;if(elapsed>=1){KillTimer(w,settingsTimer);if(settingsClosing){settingsOpen=false;settingsBackdrop.reset();}}InvalidateRect(w,nullptr,FALSE);return 0;}if(wp==100){KillTimer(w,100);settingsProgress=1;paint(w);visual::capture(w,L"settings.png");settingsOpen=false;PostMessageW(w,WM_TIMER,101,0);return 0;}if(wp==WindowPosition::timer){windowPosition.save(w);return 0;}if(wp==99){KillTimer(w,99);visual::capture(w,L"main.png");openSettings();SetTimer(w,100,350,nullptr);return 0;}if(wp==101){Dialog files{2};files.fixture=true;files.names={L"01. Серия 1.mkv",L"02. Серия 2.mkv",L"03. Серия 3.mkv",L"04. Постер.jpg",L"05. Readme.txt"};files.sizes={L"1,2 ГБ",L"1,3 ГБ",L"1,3 ГБ",L"3,4 МБ",L"12 КБ"};files.priorities={0,7,7,1,0};files.remembered={4,7,7,1,4};files.bytes={1288490188LL,1395864371LL,1395864371LL,3565158LL,12288LL};dialog(files);PostMessageW(w,WM_CLOSE,0,0);return 0;}engine->tick(); static int seconds=0;if(++seconds%30==0)engine->save();if(!engine->errors.empty()){auto e=engine->errors.back();engine->errors.clear();error(e);}InvalidateRect(w,nullptr,FALSE);if(IsWindowEnabled(w)&&!settingsOpen){for(auto& item:engine->items)if(item.selectPending&&!item.selectionShown&&item.handle.torrent_file()){item.selectionShown=true;Dialog d{2};d.handle=item.handle;dialog(d);break;}}return 0;}
- case WM_CLOSE:if(!closing){windowPosition.save(w);closing=true;KillTimer(w,1);EnableWindow(w,FALSE);engine->shutdown();DestroyWindow(w);}return 0;
- case WM_DESTROY:PostQuitMessage(0);return 0;
+ case trayMessage:
+  if(lp==WM_LBUTTONDBLCLK)revealMainWindow(w);
+  if(lp==WM_RBUTTONUP)showTrayMenu(w);
+  return 0;
+ case reopenMessage:revealMainWindow(w);return 0;
+ case WM_COPYDATA: {auto c=reinterpret_cast<COPYDATASTRUCT*>(lp);revealMainWindow(w);if(c->dwData==1&&c->cbData>=sizeof(wchar_t)&&c->cbData<=65536&&reinterpret_cast<wchar_t*>(c->lpData)[c->cbData/sizeof(wchar_t)-1]==0) add(static_cast<wchar_t*>(c->lpData));return TRUE;}
+ case WM_TIMER: {if(wp==settingsTimer){float elapsed=std::min(1.f,float(GetTickCount64()-settingsStarted)/220.f),ease=1-std::pow(1-elapsed,3.f);settingsProgress=settingsFrom+((settingsClosing?0.f:1.f)-settingsFrom)*ease;if(elapsed>=1){KillTimer(w,settingsTimer);if(settingsClosing){settingsOpen=false;settingsBackdrop.reset();}}InvalidateRect(w,nullptr,FALSE);return 0;}if(wp==100){KillTimer(w,100);settingsProgress=1;paint(w);visual::capture(w,L"settings.png");settingsOpen=false;PostMessageW(w,WM_TIMER,101,0);return 0;}if(wp==WindowPosition::timer){windowPosition.save(w);return 0;}if(wp==99){KillTimer(w,99);visual::capture(w,L"main.png");openSettings();SetTimer(w,100,350,nullptr);return 0;}if(wp==101){Dialog files{2};files.fixture=true;files.names={L"01. Серия 1.mkv",L"02. Серия 2.mkv",L"03. Серия 3.mkv",L"04. Постер.jpg",L"05. Readme.txt"};files.sizes={L"1,2 ГБ",L"1,3 ГБ",L"1,3 ГБ",L"3,4 МБ",L"12 КБ"};files.priorities={0,7,7,1,0};files.remembered={4,7,7,1,4};files.bytes={1288490188LL,1395864371LL,1395864371LL,3565158LL,12288LL};dialog(files);PostMessageW(w,WM_CLOSE,0,0);return 0;}engine->tick(); static int seconds=0;if(++seconds%30==0)engine->save();if(!hiddenToTray&&!engine->errors.empty()){auto e=engine->errors.back();engine->errors.clear();error(e);}InvalidateRect(w,nullptr,FALSE);if(!hiddenToTray&&IsWindowEnabled(w)&&!settingsOpen){for(auto& item:engine->items)if(item.selectPending&&!item.selectionShown&&item.handle.torrent_file()){item.selectionShown=true;Dialog d{2};d.handle=item.handle;dialog(d);break;}}return 0;}
+ case WM_CLOSE:
+  if(!smokeTesting&&prefs.closeToTray){
+   if(!hiddenToTray&&addTrayIcon(w)){
+    windowPosition.save(w);
+    hiddenToTray=true;
+    ShowWindow(w,SW_HIDE);
+   }
+   if(!hiddenToTray)error("Could not create the notification area icon.");
+   return 0;
+  }
+  [[fallthrough]];
+ case exitMessage:if(!closing){windowPosition.save(w);closing=true;KillTimer(w,1);EnableWindow(w,FALSE);engine->shutdown();DestroyWindow(w);}return 0;
+ case WM_DESTROY:
+  if(hiddenToTray){auto icon=trayData(w);Shell_NotifyIconW(NIM_DELETE,&icon);}
+  PostQuitMessage(0);return 0;
  }
- } catch(std::exception const& e) {if(smokeTesting){std::ofstream("Torrent-startup-error.txt")<<e.what();PostQuitMessage(1);return 0;}if(m==WM_CLOSE){closing=false;EnableWindow(w,TRUE);SetTimer(w,1,1000,nullptr);}error(e.what());}
+ } catch(std::exception const& e) {if(smokeTesting){std::ofstream("Torrent-startup-error.txt")<<e.what();PostQuitMessage(1);return 0;}if(m==WM_CLOSE||m==exitMessage){if(hiddenToTray)revealMainWindow(w);closing=false;EnableWindow(w,TRUE);SetTimer(w,1,1000,nullptr);}error(e.what());}
  return DefWindowProcW(w,m,wp,lp);
 }
 int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR,int show) {
@@ -289,9 +368,10 @@ int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR,int show) {
  int argc=0;auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);
  interactionTesting=argc==2&&std::wstring(argv[1])==L"--interaction-test";bool darkPreview=argc==2&&std::wstring(argv[1])==L"--visual-test-dark";designPreview=argc==2&&(std::wstring(argv[1])==L"--visual-test"||darkPreview);bool smoke=interactionTesting||designPreview||(argc==2&&std::wstring(argv[1])==L"--smoke-test");
  smokeTesting=smoke;stage("entered wWinMain");
- HANDLE mutex=CreateMutexW(nullptr,FALSE,smoke?L"Local\\Torrent.Native.Client.Test.v1":L"Local\\Torrent.Native.Client.v1"); if(GetLastError()==ERROR_ALREADY_EXISTS) {HWND existing=FindWindowW(L"TorrentMain",nullptr);if(existing){for(int i=1;i<argc;++i){COPYDATASTRUCT c{1,DWORD((wcslen(argv[i])+1)*sizeof(wchar_t)),argv[i]};SendMessageW(existing,WM_COPYDATA,0,LPARAM(&c));}ShowWindow(existing,SW_RESTORE);SetForegroundWindow(existing);}LocalFree(argv);CloseHandle(mutex);CoUninitialize();return 0;}
- try {stage("resolving folders");dataRoot=smoke?std::filesystem::current_path()/(interactionTesting?L"ui-test-data":L"smoke-data"):knownFolder(FOLDERID_LocalAppData)/L"Torrent";prefs.folder=knownFolder(FOLDERID_Downloads).wstring();std::filesystem::create_directories(dataRoot);{std::ifstream f(dataRoot/L"settings.txt",std::ios::binary);std::string folder;if(std::getline(f,folder)){prefs.folder=wide(folder);f>>prefs.action>>prefs.dark>>prefs.english;}}prefs.action=std::clamp(prefs.action,0,1);prefs.dark=std::clamp(prefs.dark,0,2);prefs.english=std::clamp(prefs.english,0,1);if(designPreview)prefs.dark=darkPreview?1:0;readWindowsTheme();stage("starting engine");engine=std::make_unique<Engine>(dataRoot/L"session");stage("initializing drawing");
+ HANDLE mutex=CreateMutexW(nullptr,FALSE,smoke?L"Local\\Torrent.Native.Client.Test.v1":L"Local\\Torrent.Native.Client.v1"); if(GetLastError()==ERROR_ALREADY_EXISTS) {HWND existing=FindWindowW(L"TorrentMain",nullptr);if(existing){DWORD pid=0;GetWindowThreadProcessId(existing,&pid);AllowSetForegroundWindow(pid);SendMessageTimeoutW(existing,reopenMessage,0,0,SMTO_ABORTIFHUNG,3000,nullptr);for(int i=1;i<argc;++i){COPYDATASTRUCT c{1,DWORD((wcslen(argv[i])+1)*sizeof(wchar_t)),argv[i]};SendMessageW(existing,WM_COPYDATA,0,LPARAM(&c));}}LocalFree(argv);CloseHandle(mutex);CoUninitialize();return 0;}
+ try {stage("resolving folders");dataRoot=smoke?std::filesystem::current_path()/(interactionTesting?L"ui-test-data":L"smoke-data"):knownFolder(FOLDERID_LocalAppData)/L"Torrent";prefs.folder=knownFolder(FOLDERID_Downloads).wstring();std::filesystem::create_directories(dataRoot);{std::ifstream f(dataRoot/L"settings.txt",std::ios::binary);std::string folder;if(std::getline(f,folder)){prefs.folder=wide(folder);f>>prefs.action>>prefs.dark>>prefs.english;bool closeToTray;if(f>>closeToTray)prefs.closeToTray=closeToTray;}}prefs.action=std::clamp(prefs.action,0,1);prefs.dark=std::clamp(prefs.dark,0,2);prefs.english=std::clamp(prefs.english,0,1);if(designPreview)prefs.dark=darkPreview?1:0;readWindowsTheme();stage("starting engine");engine=std::make_unique<Engine>(dataRoot/L"session");stage("initializing drawing");
+ taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");
  WNDCLASSW wc{};wc.hInstance=h;wc.style=CS_DBLCLKS;wc.lpfnWndProc=windowProc;wc.lpszClassName=L"TorrentMain";wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);wc.hIcon=LoadIconW(h,MAKEINTRESOURCEW(1));if(!RegisterClassW(&wc))throw std::runtime_error("Main class registration failed: "+std::to_string(GetLastError()));wc.lpfnWndProc=dialogProc;wc.lpszClassName=L"TorrentDialog";wc.hbrBackground=nullptr;if(!RegisterClassW(&wc))throw std::runtime_error("Dialog class registration failed: "+std::to_string(GetLastError()));
- stage("creating window");HWND w=CreateWindowExW(0,L"TorrentMain",L"Torrent",WS_POPUP|WS_THICKFRAME|WS_SYSMENU|WS_MINIMIZEBOX,CW_USEDEFAULT,CW_USEDEFAULT,int(940*GetDpiForSystem()/96.f),int(720*GetDpiForSystem()/96.f),nullptr,nullptr,h,nullptr);if(!w)throw std::runtime_error("Window creation failed: "+std::to_string(GetLastError()));stage("window created");windowPosition.restore(w,dataRoot,!smoke||interactionTesting);ShowWindow(w,(designPreview||interactionTesting)?SW_SHOWNOACTIVATE:show);windowPosition.start(w);if(smoke){paint(w);if(!visual::productFont.collection)throw std::runtime_error("Embedded Montserrat could not be loaded");if(!mainCanvas.rt)throw std::runtime_error("Direct2D target could not be created");stage("Direct2D rendered");if(interactionTesting)PostMessageW(w,WM_APP+1,0,0);else if(designPreview)SetTimer(w,99,250,nullptr);else PostMessageW(w,WM_CLOSE,0,0);}else for(int i=1;i<argc;++i)add(argv[i]);LocalFree(argv);MSG m;while(GetMessageW(&m,nullptr,0,0)>0){TranslateMessage(&m);DispatchMessageW(&m);}engine.reset();if(smoke){stage("clean shutdown");CloseHandle(mutex);CoUninitialize();return int(m.wParam);} } catch(std::exception const& e){if(smoke){std::ofstream("Torrent-startup-error.txt")<<e.what();CloseHandle(mutex);CoUninitialize();return 1;}MessageBoxW(nullptr,wide(e.what()).c_str(),L"Torrent",MB_ICONERROR);}
+ stage("creating window");HWND w=CreateWindowExW(0,L"TorrentMain",L"Torrent",WS_POPUP|WS_THICKFRAME|WS_SYSMENU|WS_MINIMIZEBOX,CW_USEDEFAULT,CW_USEDEFAULT,int(940*GetDpiForSystem()/96.f),int(720*GetDpiForSystem()/96.f),nullptr,nullptr,h,nullptr);if(!w)throw std::runtime_error("Window creation failed: "+std::to_string(GetLastError()));stage("window created");windowPosition.restore(w,dataRoot,!smoke||interactionTesting);if(smoke)ShowWindow(w,(designPreview||interactionTesting)?SW_SHOWNOACTIVATE:show);else revealMainWindow(w);windowPosition.start(w);if(smoke){paint(w);if(!visual::productFont.collection)throw std::runtime_error("Embedded Montserrat could not be loaded");if(!mainCanvas.rt)throw std::runtime_error("Direct2D target could not be created");stage("Direct2D rendered");if(interactionTesting)PostMessageW(w,WM_APP+1,0,0);else if(designPreview)SetTimer(w,99,250,nullptr);else PostMessageW(w,WM_CLOSE,0,0);}else for(int i=1;i<argc;++i)add(argv[i]);LocalFree(argv);MSG m;while(GetMessageW(&m,nullptr,0,0)>0){TranslateMessage(&m);DispatchMessageW(&m);}engine.reset();if(smoke){stage("clean shutdown");CloseHandle(mutex);CoUninitialize();return int(m.wParam);} } catch(std::exception const& e){if(smoke){std::ofstream("Torrent-startup-error.txt")<<e.what();CloseHandle(mutex);CoUninitialize();return 1;}MessageBoxW(nullptr,wide(e.what()).c_str(),L"Torrent",MB_ICONERROR);}
  CloseHandle(mutex);CoUninitialize();return 0;
 }
