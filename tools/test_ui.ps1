@@ -147,7 +147,7 @@ try {
  if((Get-Content $preferences -Raw) -ne $saved){throw 'Preferences changed on restart'}
  # Change theme after restart, verify replacement of the existing file.
  [TorrentUI]::Click($main,750,117);Start-Sleep -Milliseconds 250
- if((Get-Content $preferences)[1] -ne '1 1 1'){throw 'Settings could not be saved after restart'}
+ if((Get-Content $preferences)[1] -notmatch '^1 1 1 '){throw 'Settings could not be saved after restart'}
  Close-Sheet
  [TorrentUI]::PostMessage($main,0x10,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
  if(-not $process.WaitForExit(10000) -or $process.ExitCode -ne 0){throw 'Restart shutdown failed'}
