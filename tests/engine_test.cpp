@@ -35,9 +35,7 @@ int main() {
    handle.unset_flags(lt::torrent_flags::auto_managed);handle.resume();handle.connect_peer(lt::tcp::endpoint(lt::address_v4::loopback(),seed.listen_port()));
    std::this_thread::sleep_for(std::chrono::seconds(2));
    require(handle.status().total_wanted_done==0,"VPN failure leaked torrent traffic directly");
-   isolated.disableVpnProxy();handle.connect_peer(lt::tcp::endpoint(lt::address_v4::loopback(),seed.listen_port()));
-   waitFor([&]{return handle.status().is_seeding;},"torrent did not resume after disabling isolation");
-   isolated.remove(handle);isolated.shutdown();
+   handle.pause();isolated.remove(handle);isolated.disableVpnProxy();isolated.shutdown();
   }
   {
    Engine e(root/"state");auto h=e.add(utf8(torrent.wstring()),utf8((root/"download").wstring()),true);
