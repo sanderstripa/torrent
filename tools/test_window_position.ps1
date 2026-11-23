@@ -71,6 +71,14 @@ function Assert-Position([int]$x,[int]$y) {
  if($r.left -ne $x -or $r.top -ne $y){throw "Wrong restored position $($r.left),$($r.top), expected $x,$y"}
  if([TorrentUI]::IsIconic($main)){throw 'Restored minimized window'}
 }
+function Wait-Visibility([bool]$visible) {
+ for($i=0;$i -lt 150;$i++){
+  if($process.HasExited){throw "Torrent exited while waiting for visibility $visible"}
+  if([TorrentUI]::IsWindowVisible($main) -eq $visible){return}
+  Start-Sleep -Milliseconds 50
+ }
+ throw "Torrent did not reach visibility $visible"
+}
 try {
  Launch
  $work=[Windows.Forms.Screen]::PrimaryScreen.WorkingArea
@@ -106,5 +114,27 @@ try {
  Stop-App
  [IO.File]::WriteAllText($position,'damaged data')
  Launch;Stop-App
+ $process=Start-Process $exe -WorkingDirectory $folder -PassThru
+ $main=[IntPtr]::Zero
+ for($i=0;$i -lt 150;$i++){
+  $main=[TorrentUI]::Find($process.Id,'TorrentMain')
+  if($main -ne [IntPtr]::Zero){break}
+  Start-Sleep -Milliseconds 50
+ }
+ if($main -eq [IntPtr]::Zero){throw 'Missing regular Torrent window'}
+ if(([TorrentUI]::Style($main,-20).ToInt64() -band 8) -ne 0){throw 'Torrent is permanently topmost'}
+ [TorrentUI]::Click($main,910,32)
+ Wait-Visibility $false
+ $second=Start-Process $exe -WorkingDirectory $folder -PassThru
+ try {
+  Wait-Visibility $true
+  if(-not $second.WaitForExit(5000)){throw 'Second instance did not exit'}
+ } finally {if(-not $second.HasExited){$second.Kill()}}
+ if(([TorrentUI]::Style($main,-20).ToInt64() -band 8) -ne 0){throw 'Reopened Torrent is permanently topmost'}
+ [TorrentUI]::Click($main,910,32)
+ Wait-Visibility $false
+ [TorrentUI]::PostMessage($main,0x800C,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
+ if(-not $process.WaitForExit(25000)){throw 'Tray Exit did not shut down'}
+ Write-Output 'PASS: close to tray, reopen via second launch, no topmost style, tray Exit message.'
  Write-Output 'PASS: debounced persistence, forced restart, minimized close, session end, missing monitor, malformed file, unchanged dimensions.'
 } finally {if($process -and -not $process.HasExited){$process.Kill();$process.WaitForExit()}}

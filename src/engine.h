@@ -14,6 +14,8 @@ public:
  void save();
  void shutdown();
  void remove(lt::torrent_handle h);
+ void enableVpnProxy(int port);
+ void disableVpnProxy();
  std::vector<Item> items;
  std::vector<std::string> errors;
 private:
