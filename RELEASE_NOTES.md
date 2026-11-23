@@ -1,4 +1,12 @@
-# Torrent 1.4.2
+# Torrent 1.4.3
+
+## Интерфейс
+
+- Иконка VPN уменьшена и выровнена по центру круглой подложки. Размер подложки совпадает с остальными кнопками окна.
+- В настройках выровнены отступы, расширены элементы VPN и переключатель трея перенесён ниже VPN.
+- Имя разработчика и кнопка «Обновить» больше не перекрываются.
+
+## Изменения в версии 1.4.2
 
 - Torrent now appears in the foreground on first launch and when an existing instance is opened again, without using an always-on-top window.
 - Added an isolated VPN for Torrent traffic with VLESS/Xray and Sudoku keys.

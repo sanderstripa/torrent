@@ -186,15 +186,46 @@ static ULONGLONG settingsStarted=0;
 static float settingsFrom=0,settingsProgress=0;
 static visual::SettingsBackdrop settingsBackdrop;
 static constexpr UINT_PTR settingsTimer=0xc013;
-static D2D1_RECT_F settingsSheet(){float width=std::min(720.f,mainCanvas.width-96.f),height=std::min(660.f,mainCanvas.height-56.f);float left=(mainCanvas.width-width)/2;return D2D1::RectF(left,0,left+width,height);}
-static D2D1_RECT_F overlayControl(int id){auto r=settingsSheet();float right=r.right-28;switch(id){case 0:return D2D1::RectF(right-22,16,right+10,48);case 1:case 2:case 3:{float x=right-270+(id-1)*90;return D2D1::RectF(x,100,x+90,134);}case 4:return D2D1::RectF(right-270,184,right,220);case 5:return D2D1::RectF(right-90,274,right,310);case 6:return D2D1::RectF(right-270,320,right,356);case 9:return D2D1::RectF(right-112,364,right,396);case 10:return D2D1::RectF(right-270,437,right-135,463);case 11:return D2D1::RectF(right-135,437,right,463);case 12:return D2D1::RectF(right-270,470,right,506);case 13:return D2D1::RectF(right-224,512,right-118,544);case 14:return D2D1::RectF(right-106,512,right,544);case 7:return D2D1::RectF(right-112,610,right,642);case 8:{float center=(r.left+r.right)/2;return D2D1::RectF(center-44,r.bottom-28,center+44,r.bottom-4);}}return {};}
-static int overlayHit(float x,float y){if(settingsProgress<.99f)return -1;for(int id=0;id<15;++id)if(visual::hit(x,y,overlayControl(id)))return id;return -1;}
+static constexpr float settingsHeight=700.f;
+static float settingsScaleY(){return std::clamp((mainCanvas.height-16.f)/settingsHeight,.5f,1.f);}
+static D2D1_RECT_F settingsSheet(){
+ float width=std::min(720.f,mainCanvas.width-96.f);
+ float left=(mainCanvas.width-width)/2;
+ return D2D1::RectF(left,0,left+width,settingsHeight);
+}
+static D2D1_RECT_F overlayControl(int id){
+ auto sheet=settingsSheet();
+ float right=sheet.right-28;
+ switch(id){
+ case 0:return D2D1::RectF(right-22,16,right+10,48);
+ case 1:case 2:case 3:{
+  float x=right-270+(id-1)*90;
+  return D2D1::RectF(x,100,x+90,134);
+ }
+ case 4:return D2D1::RectF(right-270,178,right,214);
+ case 5:return D2D1::RectF(right-90,255,right,291);
+ case 6:return D2D1::RectF(right-270,301,right,337);
+ case 10:return D2D1::RectF(right-300,394,right-150,428);
+ case 11:return D2D1::RectF(right-150,394,right,428);
+ case 12:return D2D1::RectF(right-300,443,right,481);
+ case 13:return D2D1::RectF(right-244,493,right-128,529);
+ case 14:return D2D1::RectF(right-116,493,right,529);
+ case 9:return D2D1::RectF(right-112,548,right,584);
+ case 7:return D2D1::RectF(right-112,666,right,696);
+ case 8:{
+  float center=(sheet.left+sheet.right)/2;
+  return D2D1::RectF(center-44,sheet.bottom-28,center+44,sheet.bottom-4);
+ }
+ }
+ return {};
+}
+static int overlayHit(float x,float y){if(settingsProgress<.99f)return -1;y/=settingsScaleY();for(int id=0;id<15;++id)if(visual::hit(x,y,overlayControl(id)))return id;return -1;}
 static void animateSettings(bool close){settingsClosing=close;settingsFrom=settingsProgress;settingsStarted=GetTickCount64();BOOL motion=TRUE;SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&motion,0);if(!motion){settingsProgress=close?0.f:1.f;settingsOpen=!close;}else SetTimer(mainWindow,settingsTimer,16,nullptr);InvalidateRect(mainWindow,nullptr,FALSE);}
 static void openSettings(){if(settingsOpen)return;vpnDraftKey=vpn?vpn->key():L"";vpnProtocol=vpnDraftKey.rfind(L"sudoku://",0)==0?1:0;paint(mainWindow);DwmFlush();settingsBackdrop.capture(mainWindow,darkMode());settingsOpen=true;settingsFocus=0;settingsHover=-1;settingsProgress=0;animateSettings(false);SetFocus(mainWindow);}
 static void recaptureSettings(){bool opened=settingsOpen;settingsOpen=false;paint(mainWindow);DwmFlush();settingsBackdrop.capture(mainWindow,darkMode());settingsOpen=opened;InvalidateRect(mainWindow,nullptr,FALSE);}
 static void activateSetting(int id){if(id==0){animateSettings(true);return;}auto before=prefs;if(id>=1&&id<=3)prefs.dark=id==1?2:id==2?0:1;
  if(id==5){auto folder=prefs.folder;if(browse(mainWindow,folder))prefs.folder=folder;}
- if(id==4||id==6){auto r=overlayControl(id);POINT point{int(r.left*mainCanvas.scale),int(r.bottom*mainCanvas.scale)};ClientToScreen(mainWindow,&point);int choice=id==4?visual::menu(mainWindow,point,{{1,L"Русский",prefs.english==0},{2,L"English",prefs.english==1}},darkMode()):visual::menu(mainWindow,point,{{1,tr(L"Начать загрузку",L"Start download"),prefs.action==0},{2,tr(L"Выбрать файлы",L"Choose files"),prefs.action==1}},darkMode());if(choice){if(id==4)prefs.english=choice-1;else prefs.action=choice-1;}}
+ if(id==4||id==6){auto r=overlayControl(id);POINT point{int(r.left*mainCanvas.scale),int(r.bottom*settingsScaleY()*mainCanvas.scale)};ClientToScreen(mainWindow,&point);int choice=id==4?visual::menu(mainWindow,point,{{1,L"Русский",prefs.english==0},{2,L"English",prefs.english==1}},darkMode()):visual::menu(mainWindow,point,{{1,tr(L"Начать загрузку",L"Start download"),prefs.action==0},{2,tr(L"Выбрать файлы",L"Choose files"),prefs.action==1}},darkMode());if(choice){if(id==4)prefs.english=choice-1;else prefs.action=choice-1;}}
  if(id==9)prefs.closeToTray=!prefs.closeToTray;
  if(id==10||id==11)vpnProtocol=id-10;
  if(id==12){Dialog keyDialog{4};keyDialog.result=vpnDraftKey;if(dialog(keyDialog)){vpnDraftKey=keyDialog.result;if(vpnDraftKey.rfind(L"sudoku://",0)==0)vpnProtocol=1;if(vpnDraftKey.rfind(L"vless://",0)==0)vpnProtocol=0;}recaptureSettings();return;}
@@ -202,7 +233,7 @@ static void activateSetting(int id){if(id==0){animateSettings(true);return;}auto
  if(id==8){ShellExecuteW(mainWindow,L"open",L"https://connect.sanderstripa.com/?utm_source=chatgpt.com",nullptr,nullptr,SW_SHOWNORMAL);return;}
  if(id==7){ShellExecuteW(mainWindow,L"open",L"https://github.com/sanderstripa/torrent/releases/latest",nullptr,nullptr,SW_SHOWNORMAL);return;}
  settingsSaveFailed=!savePrefs();if(settingsSaveFailed)prefs=before;visual::frame(mainWindow,darkMode(),true);recaptureSettings();}
-static void drawSettings(){auto& c=mainCanvas;settingsBackdrop.draw(c);auto r=settingsSheet();float offset=-(r.bottom+32)*(1-settingsProgress);c.rt->SetTransform(D2D1::Matrix3x2F::Translation(0,offset));
+static void drawSettings(){auto& c=mainCanvas;settingsBackdrop.draw(c);auto r=settingsSheet();float offset=-(r.bottom+32)*(1-settingsProgress);c.rt->SetTransform(D2D1::Matrix3x2F::Scale(1.f,settingsScaleY()) * D2D1::Matrix3x2F::Translation(0,offset));
  // Layered translucent silhouettes approximate a diffuse elevation shadow.
  for(int i=24;i>0;--i){c.color(0);c.ink->SetOpacity(c.dark?.012f:.009f);auto shadow=D2D1::RoundedRect(D2D1::RectF(r.left-i*.7f,8,r.right+i*.7f,r.bottom+6+i),14,14);c.rt->FillRoundedRectangle(shadow,c.ink.Get());}c.ink->SetOpacity(1);
  UINT surface=c.dark?0x202124:0xfcfcfd,field=c.dark?0x28292d:0xf3f4f5,line=c.dark?0x35363b:0xe6e7e9;
@@ -212,16 +243,23 @@ static void drawSettings(){auto& c=mainCanvas;settingsBackdrop.draw(c);auto r=se
  auto heading=[&](std::wstring const& text,float y){c.label(text,D2D1::RectF(left,y,right,y+28),13,true);c.line(left,y+31,right,y+31,line,1);};
  heading(tr(L"Внешний вид",L"Appearance"),60);c.label(tr(L"Тема",L"Theme"),D2D1::RectF(left,100,right-280,134),13);
  c.box(D2D1::RectF(right-273,97,right+3,137),field,8,line);for(int id=1;id<=3;++id){auto b=overlayControl(id);bool chosen=prefs.dark==(id==1?2:id==2?0:1);if(chosen)c.box(D2D1::RectF(b.left+2,b.top+1,b.right-2,b.bottom-1),surface,6,line);else if(settingsHover==id)c.box(b,c.selected(),6);c.label(id==1?tr(L"Системная",L"System"):id==2?tr(L"Светлая",L"Light"):tr(L"Тёмная",L"Dark"),b,12,false,0,DWRITE_TEXT_ALIGNMENT_CENTER);}
- heading(tr(L"Язык интерфейса",L"Interface language"),146);auto lang=overlayControl(4);c.box(lang,field,7,line);c.label(prefs.english?L"English":L"Русский",D2D1::RectF(lang.left+12,lang.top,lang.right-30,lang.bottom),13);c.chevron(lang.right-22,lang.top+15);
- heading(tr(L"Загрузки",L"Downloads"),234);c.label(tr(L"Папка загрузок",L"Download folder"),D2D1::RectF(left,274,right-280,310),13);c.box(D2D1::RectF(right-270,274,right-100,310),field,7,line);c.label(prefs.folder,D2D1::RectF(right-260,274,right-110,310),12,false,c.muted());c.button(tr(L"Выбрать",L"Choose"),overlayControl(5),false,settingsHover==5);
- c.label(tr(L"При добавлении торрента",L"On adding a torrent"),D2D1::RectF(left,320,right-280,356),13);auto action=overlayControl(6);c.box(action,field,7,line);c.label(prefs.action?tr(L"Выбрать файлы",L"Choose files"):tr(L"Начать загрузку",L"Start download"),D2D1::RectF(action.left+12,action.top,action.right-30,action.bottom),12);c.chevron(action.right-22,action.top+15);
- c.label(tr(L"Скрывать в трей при закрытии",L"Hide to tray on close"),D2D1::RectF(left,364,right-125,396),13);
- c.button(prefs.closeToTray?tr(L"Включено",L"On"):tr(L"Выключено",L"Off"),overlayControl(9),false,settingsHover==9);
- heading(tr(L"Изолированный VPN",L"Isolated VPN"),400);c.box(D2D1::RectF(right-273,434,right+3,466),field,8,line);for(int id=10;id<=11;++id){auto b=overlayControl(id);bool chosen=vpnProtocol==id-10;if(chosen)c.box(D2D1::RectF(b.left+2,b.top+1,b.right-2,b.bottom-1),surface,6,line);else if(settingsHover==id)c.box(b,c.selected(),6);c.label(id==10?L"Xray · VLESS":L"Sudoku",b,12,false,chosen?c.fg():c.muted(),DWRITE_TEXT_ALIGNMENT_CENTER);}
- c.label(tr(L"Ключ подключения",L"Connection key"),D2D1::RectF(left,470,right-280,506),13);auto key=overlayControl(12);c.box(key,field,7,line);std::wstring masked=vpnDraftKey.empty()?tr(L"Нажмите, чтобы вставить ключ",L"Click to paste a key"):(vpnProtocol?L"sudoku://••••••••••••":L"vless://••••••••••••");c.label(masked,D2D1::RectF(key.left+12,key.top,key.right-28,key.bottom),12,false,vpnDraftKey.empty()?c.muted():c.fg());UINT status=vpn&&vpn->state()==VpnManager::State::connected?(c.dark?0x57d6a3:0x087f5b):0xc95050;c.color(status);c.rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(key.right-16,(key.top+key.bottom)/2),4.5f,4.5f),c.ink.Get());
+ heading(tr(L"Язык интерфейса",L"Interface language"),141);auto lang=overlayControl(4);c.box(lang,field,7,line);c.label(prefs.english?L"English":L"Русский",D2D1::RectF(lang.left+12,lang.top,lang.right-30,lang.bottom),13);c.chevron(lang.right-22,lang.top+15);
+ heading(tr(L"Загрузки",L"Downloads"),218);c.label(tr(L"Папка загрузок",L"Download folder"),D2D1::RectF(left,255,right-280,291),13);c.box(D2D1::RectF(right-270,255,right-100,291),field,7,line);c.label(prefs.folder,D2D1::RectF(right-260,255,right-110,291),12,false,c.muted());c.button(tr(L"Выбрать",L"Choose"),overlayControl(5),false,settingsHover==5);
+ c.label(tr(L"При добавлении торрента",L"On adding a torrent"),D2D1::RectF(left,301,right-280,337),13);auto action=overlayControl(6);c.box(action,field,7,line);c.label(prefs.action?tr(L"Выбрать файлы",L"Choose files"):tr(L"Начать загрузку",L"Start download"),D2D1::RectF(action.left+12,action.top,action.right-30,action.bottom),12);c.chevron(action.right-22,action.top+15);
+ heading(tr(L"Изолированный VPN",L"Isolated VPN"),347);c.box(D2D1::RectF(right-303,391,right+3,431),field,8,line);for(int id=10;id<=11;++id){auto b=overlayControl(id);bool chosen=vpnProtocol==id-10;if(chosen)c.box(D2D1::RectF(b.left+2,b.top+1,b.right-2,b.bottom-1),surface,6,line);else if(settingsHover==id)c.box(b,c.selected(),6);c.label(id==10?L"Xray · VLESS":L"Sudoku",b,12,false,chosen?c.fg():c.muted(),DWRITE_TEXT_ALIGNMENT_CENTER);}
+ c.label(tr(L"Ключ подключения",L"Connection key"),D2D1::RectF(left,443,right-310,481),13);auto key=overlayControl(12);c.box(key,field,7,line);std::wstring masked=vpnDraftKey.empty()?tr(L"Нажмите, чтобы вставить ключ",L"Click to paste a key"):(vpnProtocol?L"sudoku://••••••••••••":L"vless://••••••••••••");c.label(masked,D2D1::RectF(key.left+12,key.top,key.right-28,key.bottom),12,false,vpnDraftKey.empty()?c.muted():c.fg());UINT status=vpn&&vpn->state()==VpnManager::State::connected?(c.dark?0x57d6a3:0x087f5b):0xc95050;c.color(status);c.rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(key.right-16,(key.top+key.bottom)/2),4.5f,4.5f),c.ink.Get());
  c.button(tr(L"Проверить",L"Test"),overlayControl(13),false,settingsHover==13);c.button(tr(L"Сохранить",L"Save"),overlayControl(14),false,settingsHover==14);
- c.label(tr(L"О Torrent",L"About Torrent"),D2D1::RectF(left,550,right,574),13,true);c.label(tr(L"Версия Torrent",L"Torrent version"),D2D1::RectF(left,574,right-150,596),13);c.label(L"1.4.2",D2D1::RectF(right-150,574,right,596),13,false,0,DWRITE_TEXT_ALIGNMENT_TRAILING);c.line(left,597,right,597,line,1);c.label(tr(L"Разработчик",L"Developer"),D2D1::RectF(left,598,right-180,620),13);c.label(L"Sander Stripa",D2D1::RectF(right-180,598,right,620),13,false,c.muted(),DWRITE_TEXT_ALIGNMENT_TRAILING);c.button(tr(L"Обновить",L"Update"),overlayControl(7),false,settingsHover==7);
- if(settingsSaveFailed)c.label(tr(L"Не удалось сохранить настройки",L"Could not save settings"),D2D1::RectF(left,624,right-130,646),12,false,0xc95050);
+ c.line(left,539,right,539,line,1);
+ c.label(tr(L"Скрывать в трей при закрытии",L"Hide to tray on close"),D2D1::RectF(left,548,right-125,584),13);
+ c.button(prefs.closeToTray?tr(L"Включено",L"On"):tr(L"Выключено",L"Off"),overlayControl(9),false,settingsHover==9);
+ heading(tr(L"О Torrent",L"About Torrent"),590);
+ c.label(tr(L"Версия Torrent",L"Torrent version"),D2D1::RectF(left,622,right-150,642),13);
+ c.label(L"1.4.3",D2D1::RectF(right-150,622,right,642),13,false,0,DWRITE_TEXT_ALIGNMENT_TRAILING);
+ c.line(left,643,right,643,line,1);
+ c.label(tr(L"Разработчик",L"Developer"),D2D1::RectF(left,644,right-180,664),13);
+ c.label(L"Sander Stripa",D2D1::RectF(right-180,644,right,664),13,false,c.muted(),DWRITE_TEXT_ALIGNMENT_TRAILING);
+ c.button(tr(L"Обновить",L"Update"),overlayControl(7),false,settingsHover==7);
+ if(settingsSaveFailed)c.label(tr(L"Не удалось сохранить настройки",L"Could not save settings"),D2D1::RectF(left,674,left+245,696),12,false,0xc95050);
  c.label(L"by connect.",overlayControl(8),11,false,settingsHover==8?(c.dark?0xb6b7bd:0x55585d):c.muted(),DWRITE_TEXT_ALIGNMENT_CENTER);
  if(mainKeyboardFocus&&settingsFocus>=0)c.focus(overlayControl(settingsFocus));c.rt->SetTransform(D2D1::Matrix3x2F::Identity());
 }
@@ -321,7 +359,7 @@ static LRESULT CALLBACK windowProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
   // Keep native window dragging available while the sheet owns client input.
   // Test the close button directly so it stays protected during animation too.
   float x=p.x/scale,y=p.y/scale;
-  if(x>=0&&p.x<r.right&&y>=0&&y<62&&!visual::hit(x,y,overlayControl(0)))return HTCAPTION;
+  if(x>=0&&p.x<r.right&&y>=0&&y<62&&!visual::hit(x,y/settingsScaleY(),overlayControl(0)))return HTCAPTION;
   return HTCLIENT;
  }int edge=int(6*scale);bool left=p.x<edge,right=p.x>=r.right-edge,top=p.y<edge,bottom=p.y>=r.bottom-edge;if(top&&left)return HTTOPLEFT;if(top&&right)return HTTOPRIGHT;if(bottom&&left)return HTBOTTOMLEFT;if(bottom&&right)return HTBOTTOMRIGHT;if(left)return HTLEFT;if(right)return HTRIGHT;if(top)return HTTOP;if(bottom)return HTBOTTOM;if(p.y<62*scale&&p.x<r.right-182*scale)return HTCAPTION;return HTCLIENT;}
  case WM_SETCURSOR:if(settingsOpen&&LOWORD(lp)==HTCLIENT){POINT p;GetCursorPos(&p);ScreenToClient(w,&p);float scale=GetDpiForWindow(w)/96.f;SetCursor(LoadCursorW(nullptr,overlayHit(p.x/scale,p.y/scale)==8?IDC_HAND:IDC_ARROW));return TRUE;}break;
@@ -342,9 +380,9 @@ static LRESULT CALLBACK windowProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
  case WM_SIZE:settingsBackdrop.reset();InvalidateRect(w,nullptr,FALSE);return 0;
  case WM_DPICHANGED: {auto r=reinterpret_cast<RECT*>(lp);SetWindowPos(w,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);mainCanvas.rt.Reset();mainCanvas.ink.Reset();HICON titleIcon=HICON(LoadImageW(instance,MAKEINTRESOURCEW(1),IMAGE_ICON,GetSystemMetricsForDpi(SM_CXSMICON,HIWORD(wp)),GetSystemMetricsForDpi(SM_CYSMICON,HIWORD(wp)),LR_DEFAULTCOLOR));HICON previous=HICON(SendMessageW(w,WM_SETICON,ICON_SMALL,LPARAM(titleIcon)));if(previous)DestroyIcon(previous);HICON taskbarIcon=HICON(LoadImageW(instance,MAKEINTRESOURCEW(1),IMAGE_ICON,GetSystemMetricsForDpi(SM_CXICON,HIWORD(wp)),GetSystemMetricsForDpi(SM_CYICON,HIWORD(wp)),LR_DEFAULTCOLOR));previous=HICON(SendMessageW(w,WM_SETICON,ICON_BIG,LPARAM(taskbarIcon)));if(previous)DestroyIcon(previous);return 0;}
  case WM_MOUSEWHEEL: {if(settingsOpen)return 0;RECT r;GetClientRect(w,&r);int viewport=int(r.bottom/(GetDpiForWindow(w)/96.f))-86; scroll=std::clamp(scroll-GET_WHEEL_DELTA_WPARAM(wp)/3,0,std::max(0,int(engine->items.size())*136-viewport));InvalidateRect(w,nullptr,FALSE);return 0;}
- case WM_LBUTTONUP:{float scale=GetDpiForWindow(w)/96.f;float x=GET_X_LPARAM(lp)/scale,y=GET_Y_LPARAM(lp)/scale;RECT r;GetClientRect(w,&r);if(settingsOpen){int id=overlayHit(x,y);if(id>=0)activateSetting(id);else if(!visual::hit(x,y,settingsSheet()))animateSettings(true);return 0;}int hit=mainHit(x,y,r.right/scale);mainKeyboardFocus=(wp&0x10000)!=0;mainFocused=mainKeyboardFocus?hit:-1;if(hit==3){SendMessageW(w,WM_CLOSE,0,0);return 0;}if(hit==2){ShowWindow(w,SW_MINIMIZE);return 0;}if(hit==1){if(prefs.vpnEnabled||vpn->isolated()){vpn->stop(*engine);prefs.vpnEnabled=false;}else if(vpn->key().empty()){openSettings();return 0;}else{prefs.vpnEnabled=true;vpn->start(*engine,vpn->key());}savePrefs();return 0;}if(hit==0){POINT p;GetCursorPos(&p);context(-1,p);}else{int row=rowAt(int(y));selectedTorrent=row>=0?engine->items[row].handle:lt::torrent_handle{};}SetFocus(w);InvalidateRect(w,nullptr,FALSE);return 0;}
+ case WM_LBUTTONUP:{float scale=GetDpiForWindow(w)/96.f;float x=GET_X_LPARAM(lp)/scale,y=GET_Y_LPARAM(lp)/scale;RECT r;GetClientRect(w,&r);if(settingsOpen){int id=overlayHit(x,y);if(id>=0)activateSetting(id);else if(!visual::hit(x,y/settingsScaleY(),settingsSheet()))animateSettings(true);return 0;}int hit=mainHit(x,y,r.right/scale);mainKeyboardFocus=(wp&0x10000)!=0;mainFocused=mainKeyboardFocus?hit:-1;if(hit==3){SendMessageW(w,WM_CLOSE,0,0);return 0;}if(hit==2){ShowWindow(w,SW_MINIMIZE);return 0;}if(hit==1){if(prefs.vpnEnabled||vpn->isolated()){vpn->stop(*engine);prefs.vpnEnabled=false;}else if(vpn->key().empty()){openSettings();return 0;}else{prefs.vpnEnabled=true;vpn->start(*engine,vpn->key());}savePrefs();return 0;}if(hit==0){POINT p;GetCursorPos(&p);context(-1,p);}else{int row=rowAt(int(y));selectedTorrent=row>=0?engine->items[row].handle:lt::torrent_handle{};}SetFocus(w);InvalidateRect(w,nullptr,FALSE);return 0;}
  case WM_LBUTTONDBLCLK: {if(settingsOpen)return 0;int row=rowAt(int(GET_Y_LPARAM(lp)/(GetDpiForWindow(w)/96.f)));if(row>=0){selectedTorrent=engine->items[row].handle;Dialog d{2};d.handle=selectedTorrent;dialog(d);}return 0;}
- case WM_KEYDOWN: {if(settingsOpen){if(wp==VK_ESCAPE)animateSettings(true);else if(wp==VK_TAB){mainKeyboardFocus=true;constexpr int order[]={0,1,2,3,4,5,6,9,10,11,12,13,14,7,8};auto at=std::find(std::begin(order),std::end(order),settingsFocus)-std::begin(order);settingsFocus=order[(at+((GetKeyState(VK_SHIFT)&0x8000)?14:1))%15];InvalidateRect(w,nullptr,FALSE);}else if(wp==VK_RETURN||wp==VK_SPACE)activateSetting(settingsFocus);return 0;}if(wp==VK_F10&&(GetKeyState(VK_SHIFT)&0x8000)){POINT p{24,62};ClientToScreen(w,&p);context(-1,p);return 0;}if(wp==VK_TAB){mainKeyboardFocus=true;int ids[]={1,0,2,3};auto found=std::find(std::begin(ids),std::end(ids),mainFocused);int at=found==std::end(ids)?0:int(found-std::begin(ids));mainFocused=ids[(at+((GetKeyState(VK_SHIFT)&0x8000)?3:1))%4];InvalidateRect(w,nullptr,FALSE);return 0;}if((wp==VK_RETURN||wp==VK_SPACE)&&mainFocused>=0){RECT r;GetClientRect(w,&r);float scale=GetDpiForWindow(w)/96.f;int offset=mainFocused==1?150:mainFocused==0?110:mainFocused==2?70:30;PostMessageW(w,WM_LBUTTONUP,0x10000,MAKELPARAM(int((r.right/scale-offset)*scale),int(32*scale)));return 0;}int row=selectedIndex();if(row>=0&&wp==VK_DELETE){engine->remove(selectedTorrent);selectedTorrent=engine->items.empty()?lt::torrent_handle{}:engine->items[std::min(row,int(engine->items.size())-1)].handle;InvalidateRect(w,nullptr,FALSE);return 0;}if(row>=0&&wp==VK_SPACE){if(lp&(1LL<<30))return 0;auto& item=engine->items[row];auto h=item.handle;auto flags=h.status().flags;if(item.stopped||((flags&lt::torrent_flags::paused)&&!(flags&lt::torrent_flags::auto_managed))){item.stopped=false;if(!item.selectPending)h.set_flags(lt::torrent_flags::auto_managed);h.resume();}else{h.unset_flags(lt::torrent_flags::auto_managed);h.pause();}engine->save();InvalidateRect(w,nullptr,FALSE);return 0;}break;}
+ case WM_KEYDOWN: {if(settingsOpen){if(wp==VK_ESCAPE)animateSettings(true);else if(wp==VK_TAB){mainKeyboardFocus=true;constexpr int order[]={0,1,2,3,4,5,6,10,11,12,13,14,9,7,8};auto at=std::find(std::begin(order),std::end(order),settingsFocus)-std::begin(order);settingsFocus=order[(at+((GetKeyState(VK_SHIFT)&0x8000)?14:1))%15];InvalidateRect(w,nullptr,FALSE);}else if(wp==VK_RETURN||wp==VK_SPACE)activateSetting(settingsFocus);return 0;}if(wp==VK_F10&&(GetKeyState(VK_SHIFT)&0x8000)){POINT p{24,62};ClientToScreen(w,&p);context(-1,p);return 0;}if(wp==VK_TAB){mainKeyboardFocus=true;int ids[]={1,0,2,3};auto found=std::find(std::begin(ids),std::end(ids),mainFocused);int at=found==std::end(ids)?0:int(found-std::begin(ids));mainFocused=ids[(at+((GetKeyState(VK_SHIFT)&0x8000)?3:1))%4];InvalidateRect(w,nullptr,FALSE);return 0;}if((wp==VK_RETURN||wp==VK_SPACE)&&mainFocused>=0){RECT r;GetClientRect(w,&r);float scale=GetDpiForWindow(w)/96.f;int offset=mainFocused==1?150:mainFocused==0?110:mainFocused==2?70:30;PostMessageW(w,WM_LBUTTONUP,0x10000,MAKELPARAM(int((r.right/scale-offset)*scale),int(32*scale)));return 0;}int row=selectedIndex();if(row>=0&&wp==VK_DELETE){engine->remove(selectedTorrent);selectedTorrent=engine->items.empty()?lt::torrent_handle{}:engine->items[std::min(row,int(engine->items.size())-1)].handle;InvalidateRect(w,nullptr,FALSE);return 0;}if(row>=0&&wp==VK_SPACE){if(lp&(1LL<<30))return 0;auto& item=engine->items[row];auto h=item.handle;auto flags=h.status().flags;if(item.stopped||((flags&lt::torrent_flags::paused)&&!(flags&lt::torrent_flags::auto_managed))){item.stopped=false;if(!item.selectPending)h.set_flags(lt::torrent_flags::auto_managed);h.resume();}else{h.unset_flags(lt::torrent_flags::auto_managed);h.pause();}engine->save();InvalidateRect(w,nullptr,FALSE);return 0;}break;}
  case WM_CONTEXTMENU: {if(settingsOpen)return 0;POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)},local=p;ScreenToClient(w,&local);context(rowAt(int(local.y/(GetDpiForWindow(w)/96.f))),p);return 0;}
  case WM_DROPFILES: {HDROP drop=HDROP(wp);UINT count=DragQueryFileW(drop,0xffffffff,nullptr,0);for(UINT i=0;i<count;++i){wchar_t path[32768];DragQueryFileW(drop,i,path,32768);add(path);}DragFinish(drop);return 0;}
  case trayMessage:

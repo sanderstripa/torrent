@@ -64,9 +64,9 @@ try {
  # Default sheet is centered at x=110..830 in a 940x720 client.
  [TorrentUI]::Click($main,750,117);Start-Sleep -Milliseconds 250
  if((Get-Content $preferences)[1] -notmatch '^0 1 0 '){throw 'Dark theme did not save immediately'}
- Choose-Last 650 202
+ Choose-Last 650 196
  if((Get-Content $preferences)[1] -notmatch '^0 1 1 '){throw 'Language did not save immediately'}
- Choose-Last 650 338
+ Choose-Last 650 319
  if((Get-Content $preferences)[1] -notmatch '^1 1 1 '){throw 'File selection action did not save'}
  [TorrentUI]::Save($main,(Join-Path $folder 'settings-dark-live.png'))
  [TorrentUI]::CheckPixel($main,(Join-Path $folder 'settings-dark-live.png'),140,20,0x202124)
@@ -96,6 +96,14 @@ try {
   $themeX=if($theme -eq 'dark'){750}else{665}
   [TorrentUI]::Click($main,$themeX,117);Start-Sleep -Milliseconds 180;Close-Sheet
   $scale=[TorrentUI]::GetDpiForWindow($main)/96.0
+  foreach($center in @(790,830)){
+   [TorrentUI]::SendMessage($main,0x200,[IntPtr]::Zero,[IntPtr](([int](32*$scale) -shl 16) -bor [int]($center*$scale)))|Out-Null
+   Start-Sleep -Milliseconds 220
+   $hoverPath=Join-Path $folder ("header-hover-$center-$theme.png")
+   [TorrentUI]::Save($main,$hoverPath)
+   $tile=if($theme -eq 'dark'){0x202125}else{0xEDEDEF}
+   [TorrentUI]::CheckPixel($main,$hoverPath,$center,20,$tile)
+  }
   [TorrentUI]::SendMessage($main,0x200,[IntPtr]::Zero,[IntPtr](([int](32*$scale) -shl 16) -bor [int](910*$scale)))|Out-Null
   Start-Sleep -Milliseconds 220
   $path=Join-Path $folder ('close-hover-'+$theme+'.png');[TorrentUI]::Save($main,$path)
