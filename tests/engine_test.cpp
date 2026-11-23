@@ -28,6 +28,18 @@ int main() {
   auto waitFor=[&](auto predicate,char const* message) {auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(25);while(!predicate()){if(std::chrono::steady_clock::now()>deadline)throw std::runtime_error(message);std::this_thread::sleep_for(std::chrono::milliseconds(100));}};
   waitFor([&]{return seed.listen_port()!=0;},"loopback seed did not listen");
   {
+   Engine isolated(root/"vpn-state");
+   auto handle=isolated.add(utf8(torrent.wstring()),utf8((root/"vpn-download").wstring()),false);
+   boost::asio::ip::tcp::acceptor blockedProbe(probeContext,{boost::asio::ip::address_v4::loopback(),0});auto blockedPort=blockedProbe.local_endpoint().port();blockedProbe.close();
+   isolated.enableVpnProxy(blockedPort);
+   handle.unset_flags(lt::torrent_flags::auto_managed);handle.resume();handle.connect_peer(lt::tcp::endpoint(lt::address_v4::loopback(),seed.listen_port()));
+   std::this_thread::sleep_for(std::chrono::seconds(2));
+   require(handle.status().total_wanted_done==0,"VPN failure leaked torrent traffic directly");
+   isolated.disableVpnProxy();handle.connect_peer(lt::tcp::endpoint(lt::address_v4::loopback(),seed.listen_port()));
+   waitFor([&]{return handle.status().is_seeding;},"torrent did not resume after disabling isolation");
+   isolated.remove(handle);isolated.shutdown();
+  }
+  {
    Engine e(root/"state");auto h=e.add(utf8(torrent.wstring()),utf8((root/"download").wstring()),true);
    require(e.items.size()==1,"torrent was not added");require(bool(h.torrent_file()),"metadata missing");
    std::vector<lt::download_priority_t> priorities{lt::top_priority};h.prioritize_files(priorities);h.unset_flags(lt::torrent_flags::auto_managed);h.pause();e.items[0].selectPending=false;e.items[0].stopped=true;

@@ -63,11 +63,11 @@ try {
  [TorrentUI]::SettingsDragCheck($main)
  # Default sheet is centered at x=110..830 in a 940x720 client.
  [TorrentUI]::Click($main,750,117);Start-Sleep -Milliseconds 250
- if((Get-Content $preferences)[1] -ne '0 1 0'){throw 'Dark theme did not save immediately'}
+ if((Get-Content $preferences)[1] -notmatch '^0 1 0 '){throw 'Dark theme did not save immediately'}
  Choose-Last 650 202
- if((Get-Content $preferences)[1] -ne '0 1 1'){throw 'Language did not save immediately'}
+ if((Get-Content $preferences)[1] -notmatch '^0 1 1 '){throw 'Language did not save immediately'}
  Choose-Last 650 338
- if((Get-Content $preferences)[1] -ne '1 1 1'){throw 'File selection action did not save'}
+ if((Get-Content $preferences)[1] -notmatch '^1 1 1 '){throw 'File selection action did not save'}
  [TorrentUI]::Save($main,(Join-Path $folder 'settings-dark-live.png'))
  [TorrentUI]::CheckPixel($main,(Join-Path $folder 'settings-dark-live.png'),140,20,0x202124)
  [TorrentUI]::Click($main,575,117);Start-Sleep -Milliseconds 200

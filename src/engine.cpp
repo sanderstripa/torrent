@@ -57,6 +57,34 @@ void Engine::tick() {
  }
 }
 void Engine::remove(lt::torrent_handle h) { auto item=std::find_if(items.begin(),items.end(),[&](auto const& i){return i.handle==h;}); if(item==items.end())return; auto id=item->key; session.remove_torrent(h); std::erase_if(items,[&](auto const& i){return i.handle==h;}); std::filesystem::remove(root/(id+".resume")); std::filesystem::remove(root/(id+".state")); persistOrder(); }
+void Engine::enableVpnProxy(int port) {
+ lt::settings_pack proxy;
+ proxy.set_int(lt::settings_pack::proxy_type,lt::settings_pack::socks5);
+ proxy.set_str(lt::settings_pack::proxy_hostname,"127.0.0.1");
+ proxy.set_int(lt::settings_pack::proxy_port,port);
+ proxy.set_bool(lt::settings_pack::proxy_peer_connections,true);
+ proxy.set_bool(lt::settings_pack::proxy_tracker_connections,true);
+ proxy.set_bool(lt::settings_pack::proxy_hostnames,true);
+ proxy.set_bool(lt::settings_pack::enable_dht,false);
+ proxy.set_bool(lt::settings_pack::enable_lsd,false);
+ proxy.set_bool(lt::settings_pack::enable_upnp,false);
+ proxy.set_bool(lt::settings_pack::enable_natpmp,false);
+ session.apply_settings(proxy);
+}
+void Engine::disableVpnProxy() {
+ lt::settings_pack direct;
+ direct.set_int(lt::settings_pack::proxy_type,lt::settings_pack::none);
+ direct.set_str(lt::settings_pack::proxy_hostname,"");
+ direct.set_int(lt::settings_pack::proxy_port,0);
+ direct.set_bool(lt::settings_pack::proxy_peer_connections,false);
+ direct.set_bool(lt::settings_pack::proxy_tracker_connections,false);
+ direct.set_bool(lt::settings_pack::proxy_hostnames,true);
+ direct.set_bool(lt::settings_pack::enable_dht,true);
+ direct.set_bool(lt::settings_pack::enable_lsd,true);
+ direct.set_bool(lt::settings_pack::enable_upnp,true);
+ direct.set_bool(lt::settings_pack::enable_natpmp,true);
+ session.apply_settings(direct);
+}
 void Engine::shutdown() {
  auto drain=[&] {auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(20);while(outstanding>0) {session.wait_for_alert(std::chrono::milliseconds(100));tick();if(std::chrono::steady_clock::now()>deadline)throw std::runtime_error("Resume save timed out; previous saved state is preserved");}};
  drain();save();drain();

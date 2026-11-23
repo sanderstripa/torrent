@@ -29,6 +29,9 @@ jobs:
         with:
           path: ${{ runner.temp }}/vcpkg-cache
           key: vcpkg-20250613-x64-static-release-${{ hashFiles('vcpkg.json', 'triplets/*') }}
+      - name: Prepare and test isolated VPN components
+        shell: pwsh
+        run: ./scripts/prepare-vpn-components.ps1 -Destination "$PWD/vpn-runtime"
       - name: Configure
         run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
       - uses: actions/cache/save@v4
@@ -67,7 +70,7 @@ jobs:
           Get-ChildItem build/vcpkg_installed/x64-windows-static/share -Filter copyright -Recurse | ForEach-Object { Copy-Item $_.FullName ("dist/app/licenses/" + $_.Directory.Name + ".txt") }
           $size = (Get-ChildItem dist/app -File -Recurse | Measure-Object Length -Sum).Sum
           "Installed payload bytes: $size" | Tee-Object -FilePath dist/size.txt
-          if ($size -gt 50MB) { throw "Installed payload exceeds 50 MiB budget" }
+          if ($size -gt 150MB) { throw "Installed payload exceeds 150 MiB budget" }
       - name: Build installer
         run: |
           choco install nsis --no-progress -y
@@ -129,16 +132,16 @@ jobs:
         with:
           name: Torrent-Windows-x64
           path: dist/
-      - name: Publish verified 1.4.1 release
+      - name: Publish verified 1.4.2 release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v1.4.1 *> $null
+          gh release view v1.4.2 *> $null
           if ($LASTEXITCODE -eq 0) { throw 'Refusing to overwrite an existing release' }
-          $files = @('dist/Torrent-1.4.1-Release-x64.exe','dist/Torrent-Windows-x64.zip')
+          $files = @('dist/Torrent-1.4.2-Release-x64.exe','dist/Torrent-Windows-x64.zip')
           $sums = foreach ($file in $files) { "$((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($file))" }
           $sums | Set-Content -LiteralPath SHA256SUMS.txt -Encoding ascii
-          gh release create v1.4.1 dist/Torrent-1.4.1-Release-x64.exe dist/Torrent-Windows-x64.zip SHA256SUMS.txt --target $env:GITHUB_SHA --latest --title 'Torrent v1.4.1' --notes-file RELEASE_NOTES.md
+          gh release create v1.4.2 dist/Torrent-1.4.2-Release-x64.exe dist/Torrent-Windows-x64.zip SHA256SUMS.txt --target $env:GITHUB_SHA --latest --title 'Torrent v1.4.2' --notes-file RELEASE_NOTES.md
           if ($LASTEXITCODE -ne 0) { throw 'Verified release publication failed' }
