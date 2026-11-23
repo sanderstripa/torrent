@@ -52,6 +52,7 @@ function Wait-Window([string]$Class) {
 }
 function Key([IntPtr]$w,[int]$k){[TorrentUI]::PostMessage($w,0x100,[IntPtr]$k,[IntPtr]::Zero)|Out-Null;Start-Sleep -Milliseconds 80}
 function Reopen { [TorrentUI]::PostMessage($main,0x8001,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null;Start-Sleep -Milliseconds 400 }
+function Open-General { [TorrentUI]::Click($main,240,125);Start-Sleep -Milliseconds 120 }
 function Close-Sheet {Key $main 0x1B;Start-Sleep -Milliseconds 300}
 function Choose-Last([int]$x,[int]$y) {
  [TorrentUI]::Click($main,$x,$y);$menu=Wait-Window 'TorrentStyledPopup'
@@ -61,15 +62,18 @@ try {
  $main=Wait-Window 'TorrentMain';Start-Sleep -Milliseconds 450
  if([TorrentUI]::Find($process.Id,'TorrentDialog') -ne [IntPtr]::Zero){throw 'Settings opened a separate dialog'}
  [TorrentUI]::SettingsDragCheck($main)
- # Default sheet is centered at x=110..830 in a 940x720 client.
+ # Open General from the overview, then switch to Downloads using the sidebar.
+ Open-General
  [TorrentUI]::Click($main,750,117);Start-Sleep -Milliseconds 250
  if((Get-Content $preferences)[1] -notmatch '^0 1 0 '){throw 'Dark theme did not save immediately'}
- Choose-Last 650 196
+ Choose-Last 650 181
  if((Get-Content $preferences)[1] -notmatch '^0 1 1 '){throw 'Language did not save immediately'}
- Choose-Last 650 319
+ [TorrentUI]::Click($main,180,183);Start-Sleep -Milliseconds 120
+ Choose-Last 650 181
  if((Get-Content $preferences)[1] -notmatch '^1 1 1 '){throw 'File selection action did not save'}
  [TorrentUI]::Save($main,(Join-Path $folder 'settings-dark-live.png'))
  [TorrentUI]::CheckPixel($main,(Join-Path $folder 'settings-dark-live.png'),140,20,0x202124)
+ [TorrentUI]::Click($main,180,141);Start-Sleep -Milliseconds 120
  [TorrentUI]::Click($main,575,117);Start-Sleep -Milliseconds 200
  [TorrentUI]::SendMessage($main,0x8004,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
  Start-Sleep -Milliseconds 150
@@ -93,8 +97,19 @@ try {
  [TorrentUI]::Click($main,30,600);Start-Sleep -Milliseconds 350
  foreach($theme in @('dark','light')){
   Reopen
+  Open-General
   $themeX=if($theme -eq 'dark'){750}else{665}
-  [TorrentUI]::Click($main,$themeX,117);Start-Sleep -Milliseconds 180;Close-Sheet
+  [TorrentUI]::Click($main,$themeX,117);Start-Sleep -Milliseconds 180
+  [TorrentUI]::Save($main,(Join-Path $folder ("settings-general-$theme.png")))
+  $pages=@{183='downloads';225='vpn';267='about';99='overview'}
+  foreach($y in @(183,225,267,99)){
+   [TorrentUI]::Click($main,179,$y);Start-Sleep -Milliseconds 120
+   $sectionPath=Join-Path $folder ("settings-"+$pages[$y]+"-$theme.png")
+   [TorrentUI]::Save($main,$sectionPath)
+   $surface=if($theme -eq 'dark'){0x202124}else{0xFCFCFD}
+   [TorrentUI]::CheckPixel($main,$sectionPath,140,20,$surface)
+  }
+  Close-Sheet
   $scale=[TorrentUI]::GetDpiForWindow($main)/96.0
   foreach($center in @(790,830)){
    [TorrentUI]::SendMessage($main,0x200,[IntPtr]::Zero,[IntPtr](([int](32*$scale) -shl 16) -bor [int]($center*$scale)))|Out-Null
@@ -154,6 +169,7 @@ try {
  $main=Wait-Window 'TorrentMain';Start-Sleep -Milliseconds 450
  if((Get-Content $preferences -Raw) -ne $saved){throw 'Preferences changed on restart'}
  # Change theme after restart, verify replacement of the existing file.
+ Open-General
  [TorrentUI]::Click($main,750,117);Start-Sleep -Milliseconds 250
  if((Get-Content $preferences)[1] -notmatch '^1 1 1 '){throw 'Settings could not be saved after restart'}
  Close-Sheet
