@@ -1676,8 +1676,13 @@ pub fn run() -> Result<(), String> {
             .map_err(|error| error.to_string())?
             .join("re-ui-test-data")
     } else {
-        PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is unavailable")?)
-            .join("Torrent RE Development")
+        PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is unavailable")?).join(
+            if cfg!(feature = "rqbit") {
+                "Torrent Rust Edition"
+            } else {
+                "Torrent RE Development"
+            },
+        )
     };
     if !smoke && !interaction && !profile.exists() {
         if let Some(local) = profile.parent() {

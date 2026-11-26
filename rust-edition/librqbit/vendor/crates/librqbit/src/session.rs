@@ -1,0 +1,2774 @@
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, HashMap, HashSet},
+    io::Read,
+    net::SocketAddr,
+    path::{Component, Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+
+use crate::{
+    ApiError, CreateTorrentOptions, ManagedTorrent, ManagedTorrentShared,
+    api::TorrentIdOrHash,
+    api_error::WithStatus,
+    bitv_factory::{BitVFactory, NonPersistentBitVFactory},
+    create_torrent,
+    create_torrent_file::CreateTorrentResult,
+    dht_utils::{ReadMetainfoResult, read_metainfo_from_peer_receiver},
+    ip_ranges::IpRanges,
+    limits::{Limits, LimitsConfig},
+    listen::{Accept, ListenerOptions},
+    merge_streams::merge_streams,
+    peer_connection::PeerConnectionOptions,
+    peer_info_reader::MetadataHashes,
+    read_buf::ReadBuf,
+    session_persistence::{SessionPersistenceStore, json::JsonSessionPersistenceStore},
+    session_stats::SessionStats,
+    spawn_utils::BlockingSpawner,
+    storage::{
+        BoxStorageFactory, MoveStorageMode, MoveStorageOutcome, MoveStorageRequest,
+        StorageFactoryExt, TorrentStorage, filesystem::FilesystemStorageFactory,
+    },
+    stream_connect::{
+        ConnectionKind, ConnectionOptions, SocksProxyConfig, StreamConnector, StreamConnectorArgs,
+    },
+    torrent_state::{
+        ManagedTorrentHandle, ManagedTorrentLocked, ManagedTorrentOptions, ManagedTorrentState,
+        MoveInProgress, Quiesced, StorageLoan, StorageLocation, TorrentMetadata, TorrentStateLive,
+        alt_info_hash, initializing::TorrentStateInitializing,
+    },
+    type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite, PeerStream},
+    webseed::{WebSeeds, merge_web_seed_urls},
+};
+use anyhow::{Context, bail};
+use arc_swap::ArcSwapOption;
+use bencode::bencode_serialize_to_writer;
+use buffers::{ByteBuf, ByteBufOwned};
+use bytes::Bytes;
+use clone_to_owned::CloneToOwned;
+use dht::{Dht, DhtBuilder, DhtConfig, DhtPersistenceConfig, Id20, PersistentDht, dht_listen_addr};
+use futures::{
+    FutureExt, Stream, StreamExt, TryFutureExt,
+    future::BoxFuture,
+    stream::{BoxStream, FuturesUnordered},
+};
+use http::StatusCode;
+use itertools::Itertools;
+use librqbit_core::{
+    crate_version,
+    directories::get_configuration_directory,
+    hash_id::Id32,
+    magnet::Magnet,
+    peer_id::generate_azereus_style,
+    spawn_utils::spawn_with_cancel,
+    torrent_metainfo::{TorrentMetaV1Owned, ValidatedTorrentMetaV1Info, compute_info_hashes},
+};
+use librqbit_lsd::{LocalServiceDiscovery, LocalServiceDiscoveryOptions};
+use librqbit_utp::BindDevice;
+use parking_lot::RwLock;
+use peer_binary_protocol::Handshake;
+use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
+use tokio_util::sync::{CancellationToken, DropGuard};
+use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
+use tracker_comms::{TrackerComms, UdpTrackerClient};
+
+pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
+
+pub type TorrentId = usize;
+
+struct ParsedTorrentFile {
+    meta: TorrentMetaV1Owned,
+    torrent_bytes: Bytes,
+}
+
+fn torrent_from_bytes(bytes: Bytes) -> anyhow::Result<ParsedTorrentFile> {
+    trace!(
+        "all fields in torrent: {:#?}",
+        bencode::dyn_from_bytes::<ByteBuf>(&bytes)
+    );
+    let parsed = librqbit_core::torrent_metainfo::torrent_from_bytes(&bytes)?;
+    Ok(ParsedTorrentFile {
+        meta: parsed.clone_to_owned(Some(&bytes)),
+        torrent_bytes: bytes,
+    })
+}
+
+#[derive(Default)]
+pub struct SessionDatabase {
+    torrents: HashMap<TorrentId, ManagedTorrentHandle>,
+}
+
+impl SessionDatabase {
+    fn add_torrent(&mut self, torrent: ManagedTorrentHandle, id: TorrentId) {
+        self.torrents.insert(id, torrent);
+    }
+}
+
+pub struct Session {
+    // Core state and services
+    pub(crate) db: RwLock<SessionDatabase>,
+    next_id: AtomicUsize,
+    pub(crate) bitv_factory: Arc<dyn BitVFactory>,
+    spawner: BlockingSpawner,
+
+    // Network
+    peer_id: Id20,
+    announce_port: Option<u16>,
+    listen_addr: Option<SocketAddr>,
+    dht: Option<Dht>,
+    pub(crate) connector: Arc<StreamConnector>,
+    pub(crate) reqwest_client: reqwest::Client,
+    udp_tracker_client: Option<UdpTrackerClient>,
+    disable_trackers: bool,
+    disable_web_seeds: bool,
+
+    // Lifecycle management
+    cancellation_token: CancellationToken,
+    _cancellation_token_drop_guard: DropGuard,
+
+    // Runtime settings
+    output_folder: PathBuf,
+    peer_opts: PeerConnectionOptions,
+    default_storage_factory: Option<BoxStorageFactory>,
+    persistence: Option<Arc<dyn SessionPersistenceStore>>,
+    trackers: HashSet<url::Url>,
+
+    lsd: Option<LocalServiceDiscovery>,
+
+    // Limits and throttling
+    pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
+    pub ratelimits: Limits,
+
+    pub blocklist: IpRanges,
+    pub allowlist: Option<IpRanges>,
+
+    // Monitoring / tracing / logging
+    pub(crate) stats: Arc<SessionStats>,
+    root_span: Option<tracing::Span>,
+
+    // Feature flags
+    #[cfg(feature = "disable-upload")]
+    _disable_upload: bool,
+    pub ipv4_only: bool,
+    pub peer_limit: Option<usize>,
+    client_name_and_version: String,
+}
+
+/// A 40 character hex string is a v1 info hash. Checking the length alone
+/// also matches URLs that happen to be 40 characters long, such as
+/// https://nyaa.si/download/1234567.torrent.
+fn is_bare_info_hash(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+async fn torrent_from_url(
+    reqwest_client: &reqwest::Client,
+    url: &str,
+) -> anyhow::Result<ParsedTorrentFile> {
+    let response = reqwest_client
+        .get(url)
+        .send()
+        .await
+        .context("error downloading torrent metadata")?;
+    if !response.status().is_success() {
+        bail!("GET {} returned {}", url, response.status())
+    }
+    let b = response
+        .bytes()
+        .await
+        .with_context(|| format!("error reading response body from {url}"))?;
+    torrent_from_bytes(b).context("error decoding torrent")
+}
+
+fn compute_only_files_regex<ByteBuf: AsRef<[u8]>>(
+    torrent: &ValidatedTorrentMetaV1Info<ByteBuf>,
+    filename_re: &str,
+) -> anyhow::Result<Vec<usize>> {
+    let filename_re = regex::Regex::new(filename_re).context("filename regex is incorrect")?;
+    let mut only_files = Vec::new();
+    for (idx, fd) in torrent.iter_file_details().enumerate() {
+        let full_path = fd.filename.to_pathbuf();
+        if filename_re.is_match(full_path.to_str().unwrap()) {
+            only_files.push(idx);
+        }
+    }
+    if only_files.is_empty() {
+        bail!("none of the filenames match the given regex")
+    }
+    Ok(only_files)
+}
+
+fn compute_only_files(
+    info: &ValidatedTorrentMetaV1Info<ByteBufOwned>,
+    only_files: Option<Vec<usize>>,
+    only_files_regex: Option<String>,
+    list_only: bool,
+) -> anyhow::Result<Option<Vec<usize>>> {
+    match (only_files, only_files_regex) {
+        (Some(_), Some(_)) => {
+            bail!("only_files and only_files_regex are mutually exclusive");
+        }
+        (Some(only_files), None) => {
+            let total_files = info.iter_file_lengths().count();
+            for id in only_files.iter().copied() {
+                if id >= total_files {
+                    bail!("file id {} is out of range", id);
+                }
+            }
+            Ok(Some(only_files))
+        }
+        (None, Some(filename_re)) => {
+            let only_files = compute_only_files_regex(info, &filename_re)?;
+            for (idx, fd) in info.iter_file_details().enumerate() {
+                if !only_files.contains(&idx) {
+                    continue;
+                }
+                if !list_only {
+                    info!(filename=?fd.filename, "will download");
+                }
+            }
+            Ok(Some(only_files))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
+fn merge_two_optional_streams<T>(
+    s1: Option<impl Stream<Item = T> + Unpin + Send + 'static>,
+    s2: Option<impl Stream<Item = T> + Unpin + Send + 'static>,
+) -> Option<BoxStream<'static, T>> {
+    match (s1, s2) {
+        (Some(s1), None) => Some(Box::pin(s1)),
+        (None, Some(s2)) => Some(Box::pin(s2)),
+        (Some(s1), Some(s2)) => Some(Box::pin(merge_streams(s1, s2))),
+        (None, None) => None,
+    }
+}
+
+/// Options for adding new torrents to the session.
+//
+// Serialize/deserialize is for Tauri.
+#[derive(Default, Serialize, Deserialize)]
+pub struct AddTorrentOptions {
+    /// Start in paused state.
+    #[serde(default)]
+    pub paused: bool,
+    /// A regex to only download files matching it.
+    pub only_files_regex: Option<String>,
+    /// An explicit list of file IDs to download.
+    /// To see the file indices, run with "list_only".
+    pub only_files: Option<Vec<usize>>,
+    /// Allow writing on top of existing files, including when resuming a torrent.
+    /// You probably want to set it, however for safety it's not default.
+    ///
+    /// Even when all the torrent pieces have been written, `overwrite` needs to
+    /// be enabled in order to resume/seed the torrent.
+    #[serde(default)]
+    pub overwrite: bool,
+    /// Only list the files in the torrent without starting it.
+    #[serde(default)]
+    pub list_only: bool,
+    /// The output folder for the torrent. If not set, the session's default one will be used.
+    pub output_folder: Option<String>,
+    /// Sub-folder within session's default output folder. Will error if "output_folder" if also set.
+    /// By default, multi-torrent files are downloaded to a sub-folder.
+    pub sub_folder: Option<String>,
+    /// Peer connection options, timeouts etc. If not set, session's defaults will be used.
+    pub peer_opts: Option<PeerConnectionOptions>,
+
+    /// Force a refresh interval for polling trackers.
+    pub force_tracker_interval: Option<Duration>,
+
+    #[serde(default)]
+    pub disable_trackers: bool,
+
+    #[serde(default)]
+    pub ratelimits: LimitsConfig,
+
+    /// Initial peers to start of with.
+    pub initial_peers: Option<Vec<SocketAddr>>,
+
+    /// Max concurrent connected peers.
+    pub peer_limit: Option<usize>,
+
+    /// This is used to restore the session from serialized state.
+    pub preferred_id: Option<usize>,
+
+    #[serde(skip)]
+    pub storage_factory: Option<BoxStorageFactory>,
+
+    // Custom trackers
+    pub trackers: Option<Vec<String>>,
+
+    /// Web seeds (BEP 19 HTTP(S) URLs) to download from, added to the ones the torrent or the
+    /// magnet link carries (or, with `replace_web_seeds`, used instead of them). Unusable and
+    /// duplicate URLs are skipped. Can be changed later with [`Session::add_web_seed`] and
+    /// [`Session::remove_web_seed`].
+    #[serde(default)]
+    pub web_seeds: Option<Vec<String>>,
+
+    /// `web_seeds` replaces the web seeds of the torrent or magnet link instead of adding to
+    /// them, so that a web seed removed with [`Session::remove_web_seed`] stays removed when the
+    /// torrent is added again. Without `web_seeds` this does nothing.
+    #[serde(default)]
+    pub replace_web_seeds: bool,
+
+    /// Never contact the web seeds of this torrent. They are still listed and persisted.
+    #[serde(default)]
+    pub disable_web_seeds: bool,
+
+    /// Seed mode: if there's no valid fastresume bitfield and every selected file already
+    /// exists with exactly its expected length, take every selected piece as present without
+    /// hashing anything (pieces shared with an unselected file that isn't complete on disk
+    /// excepted). For content the user knows is complete, e.g. re-seeding after moving it or
+    /// a torrent just created from it. If a selected file is missing or has another length,
+    /// the files are checked as usual. Needs [`Self::overwrite`] like any add over existing
+    /// files. Not kept: once added, the stored bitfield says what the torrent has.
+    #[serde(default)]
+    pub skip_initial_check: bool,
+
+    /// Files stored under another path than the torrent gives them, by file index, with
+    /// that path relative to the output folder (see [`Session::rename_file`]). This is how
+    /// session persistence restores renames; the paths are validated like a rename's.
+    #[serde(default)]
+    pub renamed_files: BTreeMap<usize, PathBuf>,
+}
+
+pub struct ListOnlyResponse {
+    pub info_hash: Id20,
+    /// BEP 52: the SHA-256 info hash of a v2 or hybrid torrent.
+    pub info_hash_v2: Option<Id32>,
+    pub info: ValidatedTorrentMetaV1Info<ByteBufOwned>,
+    pub only_files: Option<Vec<usize>>,
+    pub output_folder: PathBuf,
+    pub seen_peers: Vec<SocketAddr>,
+    pub torrent_bytes: Bytes,
+}
+
+#[allow(clippy::large_enum_variant)]
+pub enum AddTorrentResponse {
+    AlreadyManaged(TorrentId, ManagedTorrentHandle),
+    ListOnly(ListOnlyResponse),
+    Added(TorrentId, ManagedTorrentHandle),
+}
+
+impl AddTorrentResponse {
+    pub fn into_handle(self) -> Option<ManagedTorrentHandle> {
+        match self {
+            Self::AlreadyManaged(_, handle) => Some(handle),
+            Self::ListOnly(_) => None,
+            Self::Added(_, handle) => Some(handle),
+        }
+    }
+}
+
+pub fn read_local_file_including_stdin(filename: &str) -> anyhow::Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    if filename == "-" {
+        std::io::stdin()
+            .read_to_end(&mut buf)
+            .context("error reading stdin")?;
+    } else {
+        std::fs::File::open(filename)
+            .context("error opening")?
+            .read_to_end(&mut buf)
+            .context("error reading")?;
+    }
+    Ok(buf)
+}
+
+pub enum AddTorrent<'a> {
+    Url(Cow<'a, str>),
+    TorrentFileBytes(Bytes),
+}
+
+impl<'a> AddTorrent<'a> {
+    // Don't call this from HTTP API.
+    #[inline(never)]
+    pub fn from_cli_argument(path: &'a str) -> anyhow::Result<Self> {
+        if SUPPORTED_SCHEMES.iter().any(|s| path.starts_with(s)) {
+            return Ok(Self::Url(Cow::Borrowed(path)));
+        }
+        if path.len() == 40 && !Path::new(path).exists() && Magnet::parse(path).is_ok() {
+            return Ok(Self::Url(Cow::Borrowed(path)));
+        }
+        Self::from_local_filename(path)
+    }
+
+    pub fn from_url(url: impl Into<Cow<'a, str>>) -> Self {
+        Self::Url(url.into())
+    }
+
+    pub fn from_bytes(bytes: impl Into<Bytes>) -> Self {
+        Self::TorrentFileBytes(bytes.into())
+    }
+
+    // Don't call this from HTTP API.
+    #[inline(never)]
+    pub fn from_local_filename(filename: &str) -> anyhow::Result<Self> {
+        let file = read_local_file_including_stdin(filename)
+            .with_context(|| format!("error reading local file {filename:?}"))?;
+        Ok(Self::TorrentFileBytes(file.into()))
+    }
+
+    pub fn into_bytes(self) -> Bytes {
+        match self {
+            Self::Url(s) => s.into_owned().into_bytes().into(),
+            Self::TorrentFileBytes(b) => b,
+        }
+    }
+}
+
+pub enum SessionPersistenceConfig {
+    /// The filename for persistence. By default uses an OS-specific folder.
+    Json { folder: Option<PathBuf> },
+    #[cfg(feature = "postgres")]
+    Postgres { connection_string: String },
+}
+
+impl SessionPersistenceConfig {
+    pub fn default_json_persistence_folder() -> anyhow::Result<PathBuf> {
+        let dir = get_configuration_directory("session")?;
+        Ok(dir.data_dir().to_owned())
+    }
+}
+
+/// Configuration for the DHT subsystem.
+/// Set to `None` in `SessionOptions::dht` to disable DHT entirely.
+pub struct DhtSessionConfig {
+    /// Bootstrap nodes (host:port or ip:port). Uses built-in defaults if None.
+    pub bootstrap_addrs: Option<Vec<String>>,
+    /// The DHT listen port. Priority: this explicit port -> persisted port
+    /// (when persistence is enabled) -> random. The bind IP is derived from
+    /// `SessionOptions::ipv4_only` (`0.0.0.0` if true, `[::]` otherwise).
+    /// Use `SessionOptions::bind_device_name` to scope the bind to a specific
+    /// network interface.
+    pub port: Option<u16>,
+    /// Persistence behavior. If None, persistence is disabled.
+    pub persistence: Option<DhtPersistenceConfig>,
+}
+
+impl Default for DhtSessionConfig {
+    fn default() -> Self {
+        Self {
+            bootstrap_addrs: None,
+            port: None,
+            persistence: Some(DhtPersistenceConfig::default()),
+        }
+    }
+}
+
+pub struct SessionOptions {
+    /// DHT configuration. Set to None to disable DHT entirely.
+    /// Defaults to DHT enabled with persistence.
+    pub dht: Option<DhtSessionConfig>,
+
+    /// What network device to bind to for DHT, BT-UDP, BT-TCP, trackers and LSD.
+    /// On OSX will use IP(V6)_BOUND_IF, on Linux will use SO_BINDTODEVICE.
+    pub bind_device_name: Option<String>,
+
+    /// Disable tracker communication
+    pub disable_trackers: bool,
+
+    /// Never contact web seeds (BEP 19), for any torrent of the session. They are still listed
+    /// and persisted.
+    pub disable_web_seeds: bool,
+
+    /// Enable fastresume, to restore state quickly after restart.
+    pub fastresume: bool,
+
+    /// Turn on to dump session contents into a file periodically, so that on next start
+    /// all remembered torrents will continue where they left off.
+    pub persistence: Option<SessionPersistenceConfig>,
+
+    /// The peer ID to use. If not specified, a random one will be generated.
+    pub peer_id: Option<Id20>,
+
+    /// Options for listening on TCP and/or uTP for incoming connections.
+    pub listen: Option<ListenerOptions>,
+    /// Options for connecting to peers (for outgiong connections).
+    pub connect: Option<ConnectionOptions>,
+
+    pub default_storage_factory: Option<BoxStorageFactory>,
+
+    pub cancellation_token: Option<CancellationToken>,
+
+    /// how many concurrent torrent initializations can happen
+    pub concurrent_init_limit: Option<usize>,
+
+    /// How many blocking threads does the tokio runtime have.
+    /// Will limit blocking work to that number to avoid starving the runtime.
+    pub runtime_worker_threads: Option<usize>,
+
+    /// the root span to use. If not set will be None.
+    pub root_span: Option<tracing::Span>,
+
+    pub ratelimits: LimitsConfig,
+
+    pub blocklist_url: Option<String>,
+    pub allowlist_url: Option<String>,
+
+    // The list of tracker URLs to always use for each torrent.
+    pub trackers: HashSet<url::Url>,
+
+    /// Default peer limit per torrent.
+    pub peer_limit: Option<usize>,
+
+    #[cfg(feature = "disable-upload")]
+    pub disable_upload: bool,
+
+    /// Disable LSD multicast
+    pub disable_local_service_discovery: bool,
+
+    /// Force IPv4 only.
+    pub ipv4_only: bool,
+
+    /// Override the client name and version used in User-Agent headers and
+    /// peer extended handshakes. Defaults to "rqbit X.Y.Z".
+    pub client_name_and_version: Option<String>,
+}
+
+impl Default for SessionOptions {
+    fn default() -> Self {
+        Self {
+            dht: Some(DhtSessionConfig::default()),
+            bind_device_name: None,
+            disable_trackers: false,
+            disable_web_seeds: false,
+            fastresume: false,
+            persistence: None,
+            peer_id: None,
+            listen: None,
+            connect: None,
+            default_storage_factory: None,
+            cancellation_token: None,
+            concurrent_init_limit: None,
+            runtime_worker_threads: None,
+            root_span: None,
+            ratelimits: LimitsConfig::default(),
+            blocklist_url: None,
+            allowlist_url: None,
+            trackers: HashSet::new(),
+            peer_limit: None,
+            #[cfg(feature = "disable-upload")]
+            disable_upload: false,
+            disable_local_service_discovery: false,
+            ipv4_only: false,
+            client_name_and_version: None,
+        }
+    }
+}
+
+fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[url::Url]) -> anyhow::Result<Bytes> {
+    #[derive(Serialize)]
+    struct Tmp<'a> {
+        announce: &'a str,
+        #[serde(rename = "announce-list")]
+        announce_list: &'a [&'a [url::Url]],
+        info: bencode::raw_value::RawValue<&'a [u8]>,
+    }
+
+    let mut w = Vec::new();
+    let v = Tmp {
+        info: bencode::raw_value::RawValue(info_bytes),
+        announce: trackers.first().map(|s| s.as_str()).unwrap_or(""),
+        announce_list: &[trackers],
+    };
+    bencode_serialize_to_writer(&v, &mut w)?;
+    Ok(w.into())
+}
+
+pub(crate) struct CheckedIncomingConnection {
+    pub kind: ConnectionKind,
+    pub addr: SocketAddr,
+    pub reader: BoxAsyncReadVectored,
+    pub writer: BoxAsyncWrite,
+    pub read_buf: ReadBuf,
+    pub handshake: Handshake,
+}
+
+struct InternalAddResult {
+    info_hash: Id20,
+    info_hash_v2: Option<Id32>,
+    metadata: Option<TorrentMetadata>,
+    trackers: Vec<url::Url>,
+    name: Option<String>,
+    /// The web seeds of the torrent file or the magnet link.
+    web_seeds: Vec<String>,
+}
+
+impl Session {
+    /// Create a new session with default options.
+    /// The passed in folder will be used as a default unless overridden per torrent.
+    /// It will run a DHT server/client, a TCP listener and .
+    #[inline(never)]
+    pub fn new(default_output_folder: PathBuf) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
+        Self::new_with_opts(default_output_folder, SessionOptions::default())
+    }
+
+    pub fn cancellation_token(&self) -> &CancellationToken {
+        &self.cancellation_token
+    }
+
+    pub fn client_name_and_version(&self) -> &str {
+        &self.client_name_and_version
+    }
+
+    /// Create a new session with options.
+    #[inline(never)]
+    pub fn new_with_opts(
+        default_output_folder: PathBuf,
+        mut opts: SessionOptions,
+    ) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
+        async move {
+            let peer_id = opts
+                .peer_id
+                .unwrap_or_else(|| generate_azereus_style(*b"rQ", crate_version!()));
+            let token = opts.cancellation_token.take().unwrap_or_default();
+
+            #[cfg(feature = "disable-upload")]
+            if opts.disable_upload {
+                warn!("uploading disabled");
+            }
+
+            let proxy_url = opts.connect.as_ref().and_then(|c| c.proxy_url.as_ref());
+            let proxy_config = proxy_url
+                .map(|url| {
+                    anyhow::ensure!(
+                        url.starts_with("socks5h://"),
+                        "isolated sessions require socks5h"
+                    );
+                    let config = SocksProxyConfig::parse(url)?;
+                    anyhow::ensure!(
+                        config.is_loopback(),
+                        "isolated sessions require a loopback proxy"
+                    );
+                    Ok::<_, anyhow::Error>(config)
+                })
+                .transpose()?;
+            let isolated = proxy_config.is_some();
+
+            if isolated {
+                opts.listen = None;
+                opts.dht = None;
+                opts.disable_local_service_discovery = true;
+            }
+
+            let bind_device = match opts.bind_device_name.as_ref() {
+                Some(name) => Some(
+                    BindDevice::new_from_name(name)
+                        .with_context(|| format!("error creating bind device {name}"))?,
+                ),
+                None => None,
+            };
+
+            let listen_result = if let Some(listen_opts) = opts.listen.take() {
+                Some(
+                    listen_opts
+                        .start(
+                            opts.root_span.as_ref().and_then(|s| s.id()),
+                            token.child_token(),
+                            bind_device.as_ref(),
+                        )
+                        .await
+                        .context("error starting listeners")?,
+                )
+            } else {
+                None
+            };
+
+            let dht = if let Some(dht_config) = opts.dht.take() {
+                let dht = if let Some(persistence_config) = dht_config.persistence {
+                    PersistentDht::create(
+                        persistence_config,
+                        dht_config.port,
+                        opts.ipv4_only,
+                        dht_config.bootstrap_addrs,
+                        Some(token.clone()),
+                        bind_device.as_ref(),
+                    )
+                    .await
+                    .context("error initializing persistent DHT")?
+                } else {
+                    let listen_addr = dht_listen_addr(dht_config.port, None, opts.ipv4_only);
+                    DhtBuilder::with_config(DhtConfig {
+                        bootstrap_addrs: dht_config.bootstrap_addrs,
+                        cancellation_token: Some(token.child_token()),
+                        bind_device: bind_device.as_ref(),
+                        listen_addr: Some(listen_addr),
+                        ..Default::default()
+                    })
+                    .await
+                    .context("error initializing DHT")?
+                };
+
+                Some(dht)
+            } else {
+                None
+            };
+            let peer_opts = opts
+                .connect
+                .as_ref()
+                .and_then(|p| p.peer_opts)
+                .unwrap_or_default();
+
+            async fn persistence_factory(
+                opts: &SessionOptions,
+                spawner: BlockingSpawner,
+            ) -> anyhow::Result<(
+                Option<Arc<dyn SessionPersistenceStore>>,
+                Arc<dyn BitVFactory>,
+            )> {
+                macro_rules! make_result {
+                    ($store:expr) => {
+                        if opts.fastresume {
+                            Ok((Some($store.clone()), $store))
+                        } else {
+                            Ok((Some($store), Arc::new(NonPersistentBitVFactory {})))
+                        }
+                    };
+                }
+
+                match &opts.persistence {
+                    Some(SessionPersistenceConfig::Json { folder }) => {
+                        let folder = match folder.as_ref() {
+                            Some(f) => f.clone(),
+                            None => SessionPersistenceConfig::default_json_persistence_folder()?,
+                        };
+
+                        let s = Arc::new(
+                            JsonSessionPersistenceStore::new(folder, spawner)
+                                .await
+                                .context("error initializing JsonSessionPersistenceStore")?,
+                        );
+
+                        make_result!(s)
+                    }
+                    #[cfg(feature = "postgres")]
+                    Some(SessionPersistenceConfig::Postgres { connection_string }) => {
+                        use crate::session_persistence::postgres::PostgresSessionStorage;
+                        let p = Arc::new(PostgresSessionStorage::new(connection_string).await?);
+                        make_result!(p)
+                    }
+                    None => Ok((None, Arc::new(NonPersistentBitVFactory {}))),
+                }
+            }
+
+            const DEFAULT_BLOCKING_THREADS_IF_NOT_SET: usize = 8;
+            let spawner = BlockingSpawner::new(
+                opts.runtime_worker_threads
+                    .unwrap_or(DEFAULT_BLOCKING_THREADS_IF_NOT_SET),
+            );
+
+            let (persistence, bitv_factory) = persistence_factory(&opts, spawner.clone())
+                .await
+                .context("error initializing session persistence store")?;
+
+            let client_name_and_version = opts
+                .client_name_and_version
+                .unwrap_or_else(|| crate::client_name_and_version().to_owned());
+
+            let reqwest_client = {
+                let builder = if let Some(proxy_url) = proxy_url {
+                    let proxy = reqwest::Proxy::all(proxy_url)
+                        .context("error creating socks5 proxy for HTTP")?;
+                    reqwest::Client::builder().proxy(proxy)
+                } else {
+                    #[allow(unused_mut)]
+                    let mut b = reqwest::Client::builder();
+                    #[cfg(not(windows))]
+                    if let Some(bd) = opts.bind_device_name.as_ref() {
+                        b = b.interface(bd);
+                    }
+                    b
+                };
+
+                builder
+                    .user_agent(&client_name_and_version)
+                    .build()
+                    .context("error building HTTP(S) client")?
+            };
+
+            let stream_connector = Arc::new(
+                StreamConnector::new(StreamConnectorArgs {
+                    enable_tcp: opts.connect.as_ref().map(|c| c.enable_tcp).unwrap_or(true),
+                    socks_proxy_config: proxy_config,
+                    utp_socket: listen_result.as_ref().and_then(|l| l.utp_socket.clone()),
+                    bind_device: bind_device.clone(),
+                    ipv4_only: opts.ipv4_only,
+                })
+                .await
+                .context("error creating stream connector")?,
+            );
+
+            let blocklist = if let Some(blocklist_url) = opts.blocklist_url {
+                info!(url = blocklist_url, "loading p2p blocklist");
+                let bl = IpRanges::load_from_url(&reqwest_client, &blocklist_url)
+                    .await
+                    .with_context(|| format!("error reading blocklist from {blocklist_url}"))?;
+                info!(len = bl.len(), "loaded blocklist");
+                bl
+            } else {
+                IpRanges::default()
+            };
+
+            let allowlist = if let Some(allowlist_url) = opts.allowlist_url {
+                info!(url = allowlist_url, "loading p2p allowlist");
+                let al = IpRanges::load_from_url(&reqwest_client, &allowlist_url)
+                    .await
+                    .with_context(|| format!("error reading allowlist from {allowlist_url}"))?;
+                info!(len = al.len(), "loaded allowlist");
+                Some(al)
+            } else {
+                None
+            };
+
+            let udp_tracker_client = if isolated {
+                None
+            } else {
+                Some(
+                    UdpTrackerClient::new(token.clone(), bind_device.as_ref())
+                        .await
+                        .context("error creating UDP tracker client")?,
+                )
+            };
+
+            let lsd = {
+                if opts.disable_local_service_discovery {
+                    None
+                } else {
+                    LocalServiceDiscovery::new(LocalServiceDiscoveryOptions {
+                        cancel_token: token.clone(),
+                        bind_device: bind_device.as_ref(),
+                        ..Default::default()
+                    })
+                    .await
+                    .inspect_err(|e| warn!("error starting local service discovery: {e:#}"))
+                    .ok()
+                }
+            };
+
+            let session = Arc::new(Self {
+                persistence,
+                bitv_factory,
+                peer_id,
+                dht,
+                peer_opts,
+                spawner: spawner.clone(),
+                output_folder: default_output_folder,
+                next_id: AtomicUsize::new(0),
+                db: RwLock::new(Default::default()),
+                _cancellation_token_drop_guard: token.clone().drop_guard(),
+                cancellation_token: token,
+                announce_port: listen_result.as_ref().and_then(|l| l.announce_port),
+                listen_addr: listen_result.as_ref().map(|l| l.addr),
+                default_storage_factory: opts.default_storage_factory,
+                reqwest_client,
+                connector: stream_connector,
+                root_span: opts.root_span,
+                stats: Arc::new(SessionStats::new()),
+                concurrent_initialize_semaphore: Arc::new(tokio::sync::Semaphore::new(
+                    opts.concurrent_init_limit.unwrap_or(3),
+                )),
+                udp_tracker_client,
+                ratelimits: Limits::new(opts.ratelimits),
+                ipv4_only: opts.ipv4_only,
+                trackers: opts.trackers,
+                disable_trackers: opts.disable_trackers,
+                disable_web_seeds: opts.disable_web_seeds,
+                peer_limit: opts.peer_limit,
+                client_name_and_version,
+
+                #[cfg(feature = "disable-upload")]
+                _disable_upload: opts.disable_upload,
+                blocklist,
+                allowlist,
+                lsd,
+            });
+
+            if let Some(mut listen) = listen_result {
+                if let Some(tcp) = listen.tcp_socket.take() {
+                    let max_pending_incoming_handshake_checks =
+                        listen.max_pending_incoming_handshake_checks;
+                    session.spawn(
+                        debug_span!(parent: session.rs(), "tcp_listen", addr = ?listen.addr),
+                        "tcp_listen",
+                        {
+                            let this = session.clone();
+                            async move {
+                                this.task_listener(tcp, max_pending_incoming_handshake_checks)
+                                    .await
+                            }
+                        },
+                    );
+                }
+                if let Some(utp) = listen.utp_socket.take() {
+                    let max_pending_incoming_handshake_checks =
+                        listen.max_pending_incoming_handshake_checks;
+                    session.spawn(
+                        debug_span!(parent: session.rs(), "utp_listen", addr = ?listen.addr),
+                        "utp_listen",
+                        {
+                            let this = session.clone();
+                            async move {
+                                this.task_listener(utp, max_pending_incoming_handshake_checks)
+                                    .await
+                            }
+                        },
+                    );
+                }
+                if listen.enable_upnp_port_forwarding
+                    && let Some(announce_port) = listen.announce_port
+                {
+                    info!(port = announce_port, "starting UPnP port forwarder");
+                    let bind_device = bind_device.clone();
+                    session.spawn(
+                        debug_span!(parent: session.rs(), "upnp_forward", port = announce_port),
+                        "upnp_forward",
+                        Self::task_upnp_port_forwarder(announce_port, bind_device),
+                    );
+                }
+            }
+
+            if let Some(persistence) = session.persistence.as_ref() {
+                info!("will use {persistence:?} for session persistence");
+
+                let mut ps = persistence.stream_all().await?;
+                let mut added_all = false;
+                let mut futs = FuturesUnordered::new();
+
+                while !added_all || !futs.is_empty() {
+                    // NOTE: this closure exists purely to workaround rustfmt screwing up when inlining it.
+                    let add_torrent_span = |info_hash: &Id20| -> tracing::Span {
+                        debug_span!(parent: session.rs(), "add_torrent", info_hash=?info_hash)
+                    };
+                    tokio::select! {
+                        Some(res) = futs.next(), if !futs.is_empty() => {
+                            if let Err(e) = res {
+                                error!("error adding torrent to session: {e:#}");
+                            }
+                        }
+                        st = ps.next(), if !added_all => {
+                            match st {
+                                Some(st) => {
+                                    let (id, st) = st?;
+                                    let span = add_torrent_span(st.info_hash());
+                                    // A move the process didn't live to finish is undone
+                                    // before the torrent opens its files.
+                                    let undone = st.interrupted_move().map(|pairs| {
+                                        session.spawner.block_in_place(|| {
+                                            crate::storage::filesystem::relocate::undo_interrupted_move(&pairs)
+                                        })
+                                    });
+                                    let (add_torrent, mut opts) = st.into_add_torrent()?;
+                                    opts.preferred_id = Some(id);
+                                    let fut = session.add_torrent(add_torrent, Some(opts));
+                                    let s = &session;
+                                    let fut = async move {
+                                        let added = fut.await?;
+                                        if let (Some(undone), AddTorrentResponse::Added(_, handle)) = (undone, &added) {
+                                            s.after_interrupted_move(handle, undone).await;
+                                        }
+                                        Ok::<_, anyhow::Error>(added)
+                                    };
+                                    let fut = fut.instrument(span);
+                                    futs.push(fut);
+                                },
+                                None => added_all = true
+                            };
+                        }
+                    };
+                }
+            }
+
+            session.start_speed_estimator_updater();
+
+            Ok(session)
+        }
+        .boxed()
+    }
+
+    async fn check_incoming_connection(
+        self: Arc<Self>,
+        addr: SocketAddr,
+        kind: ConnectionKind,
+        mut reader: BoxAsyncReadVectored,
+        writer: BoxAsyncWrite,
+    ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
+        let rwtimeout = self
+            .peer_opts
+            .read_write_timeout
+            .unwrap_or_else(|| Duration::from_secs(10));
+
+        let incoming_ip = addr.ip();
+        if self.blocklist.has(incoming_ip) {
+            self.stats
+                .counters
+                .blocked_incoming
+                .fetch_add(1, Ordering::Relaxed);
+            bail!("Incoming ip {incoming_ip} is in blocklist");
+        }
+        if self.allowlist.as_ref().is_some_and(|l| !l.has(incoming_ip)) {
+            self.stats
+                .counters
+                .blocked_incoming
+                .fetch_add(1, Ordering::Relaxed);
+            bail!("Incoming ip {incoming_ip} is not in allowlist");
+        }
+
+        let mut read_buf = ReadBuf::new();
+        let h = read_buf
+            .read_handshake(&mut reader, rwtimeout)
+            .await
+            .context("error reading handshake")?;
+        trace!("received handshake from {addr}: {:?}", h);
+
+        if h.peer_id == self.peer_id {
+            bail!("seems like we are connecting to ourselves, ignoring");
+        }
+
+        let (id, torrent) = self
+            .db
+            .read()
+            .torrents
+            .iter()
+            .find(|(_, t)| t.shared().has_info_hash(h.info_hash))
+            .map(|(id, t)| (*id, t.clone()))
+            .with_context(|| format!("didn't find a matching torrent {:?}", h.info_hash))?;
+
+        let live = torrent
+            .live_wait_initializing(Duration::from_secs(5))
+            .await
+            .with_context(|| format!("torrent {id} is not live, ignoring connection"))?;
+
+        Ok((
+            live,
+            CheckedIncomingConnection {
+                addr,
+                reader,
+                writer,
+                kind,
+                handshake: h,
+                read_buf,
+            },
+        ))
+    }
+
+    async fn task_listener<A: Accept>(
+        self: Arc<Self>,
+        l: A,
+        max_pending_incoming_handshake_checks: usize,
+    ) -> anyhow::Result<()> {
+        let mut futs = FuturesUnordered::new();
+        let session = Arc::downgrade(&self);
+        drop(self);
+
+        loop {
+            tokio::select! {
+                r = l.accept(), if futs.len() < max_pending_incoming_handshake_checks => {
+                    match r {
+                        Ok((addr, (read, write))) => {
+                            trace!("accepted connection from {addr}");
+                            let session = session.upgrade().context("session is dead")?;
+                            let span = debug_span!(parent: session.rs(), "incoming", addr=%addr);
+                            futs.push(
+                                session.check_incoming_connection(addr, A::KIND, Box::new(read), Box::new(write))
+                                    .map_err(|e| {
+                                        debug!("error checking incoming connection: {e:#}");
+                                        e
+                                    })
+                                    .instrument(span)
+                            );
+                        }
+                        Err(e) => {
+                            warn!("error accepting: {e:#}");
+                            // Whatever is the reason, ensure we are not stuck trying to
+                            // accept indefinitely.
+                            tokio::time::sleep(Duration::from_secs(10)).await;
+                            continue
+                        }
+                    }
+                },
+                Some(Ok((live, checked))) = futs.next(), if !futs.is_empty() => {
+                    let (addr, kind) = (checked.addr, checked.kind);
+                    if let Err(e) = live.add_incoming_peer(checked) {
+                        warn!(?addr, ?kind, "error handing over incoming connection: {e:#}");
+                    }
+                },
+                else => continue,
+            }
+        }
+    }
+
+    async fn task_upnp_port_forwarder(
+        port: u16,
+        bind_device: Option<BindDevice>,
+    ) -> anyhow::Result<()> {
+        let pf = librqbit_upnp::UpnpPortForwarder::new(vec![port], None, bind_device)?;
+        pf.run_forever().await
+    }
+
+    pub fn get_dht(&self) -> Option<&Dht> {
+        self.dht.as_ref()
+    }
+
+    fn merge_peer_opts(&self, other: Option<PeerConnectionOptions>) -> PeerConnectionOptions {
+        let other = match other {
+            Some(o) => o,
+            None => self.peer_opts,
+        };
+        PeerConnectionOptions {
+            connect_timeout: other.connect_timeout.or(self.peer_opts.connect_timeout),
+            read_write_timeout: other
+                .read_write_timeout
+                .or(self.peer_opts.read_write_timeout),
+            keep_alive_interval: other
+                .keep_alive_interval
+                .or(self.peer_opts.keep_alive_interval),
+            max_request_window: other
+                .max_request_window
+                .or(self.peer_opts.max_request_window),
+        }
+    }
+
+    /// Spawn a task in the context of the session.
+    #[track_caller]
+    pub fn spawn(
+        &self,
+        span: tracing::Span,
+        name: impl Into<Cow<'static, str>>,
+        fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+    ) {
+        spawn_with_cancel(span, name, self.cancellation_token.clone(), fut);
+    }
+
+    pub(crate) fn rs(&self) -> Option<tracing::Id> {
+        self.root_span.as_ref().and_then(|s| s.id())
+    }
+
+    /// Stop the session and all managed tasks.
+    pub async fn stop(&self) {
+        let torrents = self
+            .db
+            .read()
+            .torrents
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for torrent in &torrents {
+            if let Err(e) = torrent.pause() {
+                debug!("error pausing torrent: {e:#}");
+            }
+        }
+        self.cancellation_token.cancel();
+
+        // A storage operation (move, rename, recheck) gives up when the session stops and
+        // undoes its work; wait for that, so that the files are where the store says they are.
+        let ops_done = futures::future::join_all(torrents.iter().map(|t| t.storage_op.lock()));
+        if tokio::time::timeout(Self::STOP_STORAGE_OPS_TIMEOUT, ops_done)
+            .await
+            .is_err()
+        {
+            warn!("storage operations are still running, stopping anyway");
+        }
+
+        // this sucks, but hopefully will be enough
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    /// How long [`Session::stop`] waits for running storage operations to give up.
+    const STOP_STORAGE_OPS_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// Run a callback given the currently managed torrents.
+    pub fn with_torrents<R>(
+        &self,
+        callback: impl Fn(&mut dyn Iterator<Item = (TorrentId, &ManagedTorrentHandle)>) -> R,
+    ) -> R {
+        callback(&mut self.db.read().torrents.iter().map(|(id, t)| (*id, t)))
+    }
+
+    /// Add a torrent to the session.
+    #[inline(never)]
+    pub fn add_torrent<'a>(
+        self: &'a Arc<Self>,
+        add: AddTorrent<'a>,
+        opts: Option<AddTorrentOptions>,
+    ) -> BoxFuture<'a, anyhow::Result<AddTorrentResponse>> {
+        async move {
+            let mut opts = opts.unwrap_or_default();
+            let add_res = match add {
+                AddTorrent::Url(magnet)
+                    if magnet.starts_with("magnet:") || is_bare_info_hash(&magnet) =>
+                {
+                    let magnet = Magnet::parse(&magnet)
+                        .context("provided path is not a valid magnet URL")?;
+                    // A `btmh`-only link (BEP 52) is a v2-only torrent: its swarm is known by
+                    // the truncated v2 hash.
+                    let info_hash_v2 = magnet.as_id32();
+                    let info_hash = magnet
+                        .as_id20()
+                        .or_else(|| info_hash_v2.map(|v2| v2.truncate_for_dht()))
+                        .context("magnet link has neither a btih nor a btmh info hash")?;
+                    if let Some(so) = magnet.get_select_only() {
+                        // Only overwrite opts.only_files if user didn't specify
+                        if opts.only_files.is_none() {
+                            opts.only_files = Some(so);
+                        }
+                    }
+
+                    InternalAddResult {
+                        info_hash,
+                        info_hash_v2,
+                        trackers: magnet
+                            .trackers
+                            .into_iter()
+                            .filter_map(|t| url::Url::parse(&t).ok())
+                            .collect(),
+                        metadata: None,
+                        name: magnet.name,
+                        web_seeds: magnet.web_seeds,
+                    }
+                }
+                other => {
+                    let torrent = match other {
+                        AddTorrent::Url(url)
+                            if url.starts_with("http://") || url.starts_with("https://") =>
+                        {
+                            torrent_from_url(&self.reqwest_client, &url).await?
+                        }
+                        AddTorrent::Url(url) => {
+                            bail!(
+                                "unsupported URL {:?}. Supporting magnet:, http:, and https",
+                                url
+                            )
+                        }
+                        AddTorrent::TorrentFileBytes(bytes) => {
+                            torrent_from_bytes(bytes).context("error decoding torrent")?
+                        }
+                    };
+
+                    let mut trackers = torrent
+                        .meta
+                        .iter_announce()
+                        .unique()
+                        .filter_map(|tracker| match std::str::from_utf8(tracker.as_ref()) {
+                            Ok(url) => Some(url.to_owned()),
+                            Err(_) => {
+                                warn!("cannot parse tracker url as utf-8, ignoring");
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    if let Some(custom_trackers) = opts.trackers.clone() {
+                        trackers.extend(custom_trackers);
+                    }
+
+                    InternalAddResult {
+                        info_hash: torrent.meta.info_hash,
+                        info_hash_v2: torrent.meta.info_hash_v2,
+                        metadata: Some(TorrentMetadata::new(
+                            // BEP 52: the piece layers missing from the file are asked of
+                            // peers, their pieces are not downloaded until then.
+                            torrent.meta.validate_with_known_piece_layers()?,
+                            torrent.torrent_bytes,
+                            torrent.meta.info.raw_bytes.0,
+                        )?),
+                        trackers: trackers
+                            .iter()
+                            .filter_map(|t| url::Url::parse(t).ok())
+                            .collect(),
+                        name: None,
+                        web_seeds: torrent.meta.url_list,
+                    }
+                }
+            };
+
+            self.add_torrent_internal(add_res, opts).await
+        }
+        .instrument(debug_span!(parent: self.rs(), "add_torrent"))
+        .boxed()
+    }
+
+    fn get_default_subfolder_for_torrent(
+        &self,
+        info: &ValidatedTorrentMetaV1Info<ByteBufOwned>,
+        magnet_name: Option<&str>,
+    ) -> anyhow::Result<Option<PathBuf>> {
+        let files = info
+            .iter_file_details()
+            .map(|fd| Ok((fd.filename.to_pathbuf(), fd.len)))
+            .collect::<anyhow::Result<Vec<(PathBuf, u64)>>>()?;
+        if files.len() < 2 {
+            return Ok(None);
+        }
+
+        fn check_valid(pb: &Path) -> anyhow::Result<()> {
+            if pb.components().any(|x| !matches!(x, Component::Normal(_))) {
+                bail!("path traversal in torrent name detected")
+            }
+            Ok(())
+        }
+
+        if let Some(name) = info.name()
+            && !name.is_empty()
+        {
+            let pb = PathBuf::from(name.as_ref());
+            check_valid(&pb)?;
+            return Ok(Some(pb));
+        };
+        if let Some(name) = magnet_name {
+            let pb = PathBuf::from(name);
+            check_valid(&pb)?;
+            return Ok(Some(pb));
+        }
+        // Let the subfolder name be the longest filename
+        let longest = files
+            .iter()
+            .max_by_key(|(_, l)| l)
+            .unwrap()
+            .0
+            .file_stem()
+            .context("can't determine longest filename")?;
+        Ok::<_, anyhow::Error>(Some(PathBuf::from(longest)))
+    }
+
+    async fn add_torrent_internal(
+        self: &Arc<Self>,
+        add_res: InternalAddResult,
+        mut opts: AddTorrentOptions,
+    ) -> anyhow::Result<AddTorrentResponse> {
+        let InternalAddResult {
+            info_hash,
+            info_hash_v2,
+            metadata,
+            trackers,
+            name,
+            web_seeds,
+        } = add_res;
+        let web_seeds =
+            merge_web_seed_urls(web_seeds, opts.web_seeds.as_deref(), opts.replace_web_seeds);
+
+        let private = metadata.as_ref().is_some_and(|m| m.info.info().private);
+        let announce = !opts.paused && !opts.list_only;
+
+        let make_peer_rx = || {
+            self.make_peer_rx(
+                info_hash,
+                alt_info_hash(info_hash, info_hash_v2),
+                trackers.clone(),
+                announce,
+                opts.force_tracker_interval,
+                opts.initial_peers.clone().unwrap_or_default(),
+                private,
+            )
+        };
+
+        let mut seen_peers = Vec::new();
+
+        // A `btmh`-only magnet link of a hybrid torrent: the torrent is known by its v1 hash
+        // once the info dictionary tells it, as when added from its `.torrent`, and the swarm
+        // of the truncated v2 hash, which was looked up so far, is its second one.
+        let mut learned_v1 = None;
+        let (metadata, info_hash_v2, peer_rx) = {
+            match metadata {
+                Some(metadata) => {
+                    let mut peer_rx = None;
+                    if announce {
+                        peer_rx = make_peer_rx();
+                    }
+                    (metadata, info_hash_v2, peer_rx)
+                }
+                None => {
+                    let peer_rx = make_peer_rx().context(
+                        "no known way to resolve peers (no DHT, no trackers, no initial_peers)",
+                    )?;
+                    let resolved_magnet = self
+                        .resolve_magnet(info_hash, info_hash_v2, peer_rx, &trackers, opts.peer_opts)
+                        .await?;
+
+                    // Add back seen_peers into the peer stream, as we consumed some peers
+                    // while resolving the magnet.
+                    seen_peers = resolved_magnet.seen_peers.clone();
+                    let mut peer_rx = merge_streams(
+                        resolved_magnet.peer_rx,
+                        futures::stream::iter(resolved_magnet.seen_peers),
+                    )
+                    .boxed();
+                    // A v1 magnet link may turn out to be a hybrid torrent: join its v2 swarm
+                    // too.
+                    let resolved_v2 = info_hash_v2.or(resolved_magnet.info_hash_v2);
+                    let is_private = resolved_magnet.metadata.info.info().private;
+                    // The other swarm of a hybrid torrent: the v2 one for a `btih` link, the
+                    // v1 one for a `btmh`-only link.
+                    let other_swarm = if resolved_magnet.info_hash != info_hash {
+                        Some(resolved_magnet.info_hash)
+                    } else if info_hash_v2.is_none() {
+                        alt_info_hash(info_hash, resolved_v2)
+                    } else {
+                        None
+                    };
+                    if let Some(other) = other_swarm {
+                        if let Some(other_rx) = self.swarm_peer_rx(
+                            other,
+                            self.announce_trackers(other, trackers.clone(), is_private),
+                            announce,
+                            opts.force_tracker_interval,
+                            is_private,
+                        ) {
+                            peer_rx = merge_streams(peer_rx, other_rx).boxed();
+                        }
+                        if other == resolved_magnet.info_hash {
+                            learned_v1 = Some(other);
+                        }
+                    }
+                    (resolved_magnet.metadata, resolved_v2, Some(peer_rx))
+                }
+            }
+        };
+        let info_hash = learned_v1.unwrap_or(info_hash);
+
+        trace!("Torrent metadata: {:#?}", &metadata.info.info());
+
+        let only_files = compute_only_files(
+            &metadata.info,
+            opts.only_files,
+            opts.only_files_regex,
+            opts.list_only,
+        )?;
+
+        let output_folder = match (opts.output_folder, opts.sub_folder) {
+            (None, None) => self.output_folder.join(
+                self.get_default_subfolder_for_torrent(&metadata.info, name.as_deref())?
+                    .unwrap_or_default(),
+            ),
+            (Some(o), None) => PathBuf::from(o),
+            (Some(_), Some(_)) => {
+                bail!("you can't provide both output_folder and sub_folder")
+            }
+            (None, Some(s)) => self.output_folder.join(s),
+        };
+
+        if opts.list_only {
+            return Ok(AddTorrentResponse::ListOnly(ListOnlyResponse {
+                info_hash,
+                info_hash_v2,
+                info: metadata.info,
+                only_files,
+                output_folder,
+                seen_peers,
+                torrent_bytes: metadata.torrent_bytes,
+            }));
+        }
+
+        let storage_factory = opts
+            .storage_factory
+            .take()
+            .or_else(|| self.default_storage_factory.as_ref().map(|f| f.clone_box()))
+            .unwrap_or_else(|| FilesystemStorageFactory::default().boxed());
+
+        let id = if let Some(id) = opts.preferred_id {
+            id
+        } else if let Some(p) = self.persistence.as_ref() {
+            p.next_id().await?
+        } else {
+            self.next_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        };
+
+        let _permit = self.spawner.semaphore().acquire_owned().await?;
+
+        let (managed_torrent, metadata) = {
+            let mut g = self.db.write();
+            // The same content may arrive under another of its hashes (a hybrid torrent added
+            // once from a v1 magnet link and once from a v2 one).
+            if let Some((id, handle)) = g.torrents.iter().find_map(|(eid, t)| {
+                if t.shared().is_same_torrent(info_hash, info_hash_v2) {
+                    Some((*eid, t.clone()))
+                } else {
+                    None
+                }
+            }) {
+                return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
+            }
+            if let Some(existing) = g.torrents.get(&id) {
+                bail!(
+                    "torrent id {id} is already used by a different torrent {:?}",
+                    existing.info_hash()
+                );
+            }
+
+            let span = debug_span!(parent: self.rs(), "torrent", id);
+            let peer_opts = self.merge_peer_opts(opts.peer_opts);
+            let metadata = Arc::new(metadata);
+            let minfo = Arc::new(ManagedTorrentShared {
+                id,
+                span,
+                info_hash,
+                info_hash_v2,
+                trackers: trackers.into_iter().collect(),
+                spawner: self.spawner.clone(),
+                peer_id: self.peer_id,
+                storage_factory,
+                options: ManagedTorrentOptions {
+                    force_tracker_interval: opts.force_tracker_interval,
+                    peer_connect_timeout: peer_opts.connect_timeout,
+                    peer_read_write_timeout: peer_opts.read_write_timeout,
+                    peer_max_request_window: peer_opts.max_request_window,
+                    allow_overwrite: opts.overwrite,
+                    ratelimits: opts.ratelimits,
+                    initial_peers: opts.initial_peers.clone().unwrap_or_default(),
+                    peer_limit: opts.peer_limit.or(self.peer_limit),
+                    #[cfg(feature = "disable-upload")]
+                    _disable_upload: self._disable_upload,
+                },
+                connector: self.connector.clone(),
+                session: Arc::downgrade(self),
+                magnet_name: name,
+                file_priority_order: parking_lot::RwLock::new(None),
+                client_name_and_version: self.client_name_and_version.clone(),
+                web_seeds: WebSeeds::new(web_seeds, opts.disable_web_seeds, self.disable_web_seeds),
+                location: RwLock::new(StorageLocation {
+                    output_folder,
+                    renamed_files: crate::torrent_state::validate_renames(
+                        &metadata,
+                        &opts.renamed_files,
+                    )
+                    .context("invalid renamed_files")?,
+                    move_in_progress: None,
+                }),
+            });
+
+            let initializing = Arc::new(
+                TorrentStateInitializing::new(
+                    minfo.clone(),
+                    metadata.clone(),
+                    only_files.clone(),
+                    self.spawner.block_in_place(|| {
+                        minfo.storage_factory.create_and_init(&minfo, &metadata)
+                    })?,
+                    false,
+                )
+                .with_skip_check(opts.skip_initial_check),
+            );
+            let handle = Arc::new(ManagedTorrent {
+                locked: RwLock::new(ManagedTorrentLocked {
+                    paused: opts.paused,
+                    state: ManagedTorrentState::Initializing(initializing),
+                    only_files,
+                    storage_on_loan: false,
+                }),
+                state_change_notify: Notify::new(),
+                shared: minfo,
+                metadata: ArcSwapOption::new(Some(metadata.clone())),
+                storage_op: Default::default(),
+                storage_op_cancel: self.cancellation_token.child_token(),
+            });
+
+            g.add_torrent(handle.clone(), id);
+            (handle, metadata)
+        };
+
+        if let Some(p) = self.persistence.as_ref()
+            && let Err(e) = p.store(id, &managed_torrent).await
+        {
+            self.db.write().torrents.remove(&id);
+            return Err(e);
+        }
+
+        let _e = managed_torrent.shared.span.clone().entered();
+
+        managed_torrent
+            .start(peer_rx, opts.paused)
+            .context("error starting torrent")?;
+
+        if let Some(name) = metadata.info.name() {
+            info!(?name, "added torrent");
+        }
+
+        Ok(AddTorrentResponse::Added(id, managed_torrent))
+    }
+
+    pub fn get(&self, id: TorrentIdOrHash) -> Option<ManagedTorrentHandle> {
+        match id {
+            TorrentIdOrHash::Id(id) => self.db.read().torrents.get(&id).cloned(),
+            TorrentIdOrHash::Hash(id) => self.db.read().torrents.iter().find_map(|(_, v)| {
+                if v.shared().has_info_hash(id) {
+                    Some(v.clone())
+                } else {
+                    None
+                }
+            }),
+        }
+    }
+
+    pub async fn delete(&self, id: TorrentIdOrHash, delete_files: bool) -> anyhow::Result<()> {
+        let id = match id {
+            TorrentIdOrHash::Id(id) => id,
+            TorrentIdOrHash::Hash(h) => self
+                .db
+                .read()
+                .torrents
+                .values()
+                .find_map(|v| {
+                    if v.shared().has_info_hash(h) {
+                        Some(v.id())
+                    } else {
+                        None
+                    }
+                })
+                .context("no such torrent in db")?,
+        };
+        let removed = self
+            .db
+            .write()
+            .torrents
+            .remove(&id)
+            .with_context(|| format!("torrent with id {id} did not exist"))?;
+
+        // The rest runs in a task of its own: once the torrent is out of the session, it must
+        // also be stopped and forgotten by the store even if the caller stops waiting.
+        let persistence = self.persistence.clone();
+        let session_output_folder = self.output_folder.clone();
+        let span = removed.shared.span.clone();
+        tokio::spawn(
+            async move {
+                // A storage operation in progress (move, rename, recheck) gives up and undoes
+                // its work; wait for that, so that the files are where the torrent says they
+                // are.
+                removed.storage_op_cancel.cancel();
+                let _storage_op = removed.storage_op.lock().await;
+
+                if let Err(e) = removed.pause() {
+                    debug!("error pausing torrent before deletion: {e:#}")
+                }
+
+                let metadata = removed.metadata.load_full().expect("TODO");
+
+                let storage = removed
+                    .with_state_mut(|s| match s.take() {
+                        ManagedTorrentState::Initializing(p) => p.files.take().ok(),
+                        ManagedTorrentState::Paused(p) => Some(p.files),
+                        ManagedTorrentState::Live(l) => l
+                            .pause()
+                            // inspect_err not available in 1.75
+                            .map_err(|e| {
+                                warn!(?id, "error pausing torrent: {e:#}");
+                                e
+                            })
+                            .ok()
+                            .map(|p| p.files),
+                        _ => None,
+                    })
+                    .map(Ok)
+                    .unwrap_or_else(|| {
+                        removed
+                            .shared
+                            .storage_factory
+                            .create(removed.shared(), &metadata)
+                    });
+
+                if let Some(p) = persistence.as_ref() {
+                    if let Err(e) = p.delete(id).await {
+                        error!(
+                            ?id,
+                            "error deleting torrent from persistence database: {e:#}"
+                        );
+                    } else {
+                        debug!(?id, "deleted torrent from persistence database")
+                    }
+                }
+
+                match (storage, delete_files) {
+                    (Err(e), true) => {
+                        return Err(e).context("torrent deleted, but could not delete files");
+                    }
+                    (Ok(storage), true) => {
+                        debug!("will delete files");
+                        remove_files_and_dirs(removed.shared(), &metadata, &storage);
+                        let output_folder = removed.output_folder();
+                        if output_folder != session_output_folder
+                            && let Err(e) = storage.remove_directory_if_empty(Path::new(""))
+                        {
+                            warn!(?id, "error removing {output_folder:?}: {e:#}")
+                        }
+                    }
+                    (_, false) => {
+                        debug!("not deleting files")
+                    }
+                };
+
+                info!(id, "deleted torrent");
+                Ok(())
+            }
+            .instrument(span),
+        )
+        .await
+        .context("the task deleting the torrent failed")?
+    }
+
+    pub fn make_peer_rx_managed_torrent(
+        self: &Arc<Self>,
+        t: &Arc<ManagedTorrent>,
+        announce: bool,
+    ) -> Option<PeerStream> {
+        let is_private = t.with_metadata(|m| m.info.info().private).unwrap_or(false);
+        self.make_peer_rx(
+            t.info_hash(),
+            t.shared().alt_info_hash(),
+            t.shared().trackers.iter().cloned().collect(),
+            announce,
+            t.shared().options.force_tracker_interval,
+            t.shared().options.initial_peers.clone(),
+            is_private,
+        )
+    }
+
+    // Get a peer stream from both DHT and trackers. A hybrid torrent lives in two swarms, so
+    // it is announced and looked up under both `info_hash` and `alt_info_hash` (its truncated
+    // v2 hash), and the peers of both feed the same stream.
+    #[allow(clippy::too_many_arguments)]
+    fn make_peer_rx(
+        self: &Arc<Self>,
+        info_hash: Id20,
+        alt_info_hash: Option<Id20>,
+        trackers: Vec<url::Url>,
+        announce: bool,
+        force_tracker_interval: Option<Duration>,
+        initial_peers: Vec<SocketAddr>,
+        is_private: bool,
+    ) -> Option<PeerStream> {
+        let trackers = self.announce_trackers(info_hash, trackers, is_private);
+
+        let alt_rx = alt_info_hash.and_then(|alt| {
+            self.swarm_peer_rx(
+                alt,
+                trackers.clone(),
+                announce,
+                force_tracker_interval,
+                is_private,
+            )
+        });
+        let main_rx = self.swarm_peer_rx(
+            info_hash,
+            trackers,
+            announce,
+            force_tracker_interval,
+            is_private,
+        );
+
+        let initial_peers_rx = if initial_peers.is_empty() {
+            None
+        } else {
+            Some(futures::stream::iter(initial_peers))
+        };
+        merge_two_optional_streams(
+            merge_two_optional_streams(main_rx, alt_rx),
+            initial_peers_rx,
+        )
+    }
+
+    // The trackers a torrent announces to: its own, then the session-wide ones.
+    fn announce_trackers(
+        &self,
+        info_hash: Id20,
+        mut trackers: Vec<url::Url>,
+        is_private: bool,
+    ) -> Vec<url::Url> {
+        if self.disable_trackers {
+            trackers.clear();
+        }
+
+        if self.udp_tracker_client.is_none() {
+            trackers.retain(|tracker| matches!(tracker.scheme(), "http" | "https"));
+        }
+
+        if is_private && trackers.len() > 1 {
+            warn!(
+                ?info_hash,
+                "private trackers are not fully implemented, so using only the first tracker"
+            );
+            trackers.truncate(1);
+        } else if !self.disable_trackers {
+            trackers.extend(self.trackers.iter().cloned());
+        }
+        trackers
+    }
+
+    // The peers of one swarm: DHT, trackers and local service discovery for `info_hash`.
+    fn swarm_peer_rx(
+        self: &Arc<Self>,
+        info_hash: Id20,
+        trackers: Vec<url::Url>,
+        announce: bool,
+        force_tracker_interval: Option<Duration>,
+        is_private: bool,
+    ) -> Option<PeerStream> {
+        let dht_rx = if is_private {
+            None
+        } else {
+            self.dht.as_ref().map(|dht| {
+                dht.get_peers(info_hash, if announce { self.announce_port } else { None })
+            })
+        };
+
+        let lsd_rx = if is_private {
+            None
+        } else {
+            self.lsd.as_ref().map(|lsd| {
+                lsd.announce(info_hash, if announce { self.announce_port } else { None })
+            })
+        };
+
+        let tracker_rx_stats = PeerRxTorrentInfo {
+            info_hash,
+            session: self.clone(),
+        };
+        let tracker_rx = TrackerComms::start(
+            info_hash,
+            self.peer_id,
+            trackers.into_iter().collect(),
+            Box::new(tracker_rx_stats),
+            force_tracker_interval,
+            self.announce_port().unwrap_or(4240),
+            self.reqwest_client.clone(),
+            self.udp_tracker_client.clone(),
+        );
+
+        merge_two_optional_streams(merge_two_optional_streams(dht_rx, tracker_rx), lsd_rx)
+    }
+
+    pub(crate) async fn try_update_persistence_metadata(&self, handle: &ManagedTorrentHandle) {
+        if let Err(e) = self.update_persistence_metadata(handle).await {
+            warn!(error=?e, "error updating metadata")
+        }
+    }
+
+    async fn update_persistence_metadata(
+        &self,
+        handle: &ManagedTorrentHandle,
+    ) -> anyhow::Result<()> {
+        match self.persistence.as_ref() {
+            Some(p) => p
+                .update_metadata(handle.id(), handle)
+                .await
+                .with_context(|| format!("error updating metadata in {p:?}")),
+            None => Ok(()),
+        }
+    }
+
+    // Ends the recovery of a move that a crash interrupted, once its torrent is added again:
+    // the store forgets the move. Files the undo couldn't put back are missing from where
+    // the torrent looks for them, so it is rechecked instead of trusting its bitfield.
+    async fn after_interrupted_move(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        undone: Result<(), String>,
+    ) {
+        self.try_update_persistence_metadata(handle).await;
+        match undone {
+            Ok(()) => info!(id = handle.id(), "undid an interrupted move of the files"),
+            Err(left) => {
+                error!(
+                    id = handle.id(),
+                    "couldn't fully undo an interrupted move of the files, rechecking: {left}"
+                );
+                if let Err(e) = self.force_recheck(handle).await {
+                    warn!(id = handle.id(), "error rechecking: {e:#}");
+                }
+            }
+        }
+    }
+
+    pub async fn pause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
+        // Wait for a storage operation to finish instead of changing the state under it.
+        let _storage_op = handle.lock_storage_op().await?;
+        handle.pause()?;
+        self.try_update_persistence_metadata(handle).await;
+        Ok(())
+    }
+
+    pub async fn unpause(self: &Arc<Self>, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
+        let _storage_op = handle.lock_storage_op().await?;
+        let peer_rx = self.make_peer_rx_managed_torrent(handle, true);
+        handle.start(peer_rx, false)?;
+        self.try_update_persistence_metadata(handle).await;
+        Ok(())
+    }
+
+    // Starts a torrent that a storage operation stopped (`restart`) the way the user left it:
+    // running if it was running, paused (after its check) if it was paused.
+    fn resume_after_storage_op(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        restart: bool,
+    ) -> anyhow::Result<()> {
+        // A deleted torrent stays stopped.
+        if !restart || handle.is_storage_op_cancelled() {
+            return Ok(());
+        }
+        let paused = handle.is_paused();
+        let peer_rx = if paused {
+            None
+        } else {
+            self.make_peer_rx_managed_torrent(handle, true)
+        };
+        handle.start(peer_rx, paused)
+    }
+
+    /// Forgets which pieces the torrent has (the fastresume bitfield included) and verifies
+    /// every piece of the selected files against the data in its storage, like the initial
+    /// check of a torrent added without fastresume data.
+    ///
+    /// Works in every state. During the check the torrent is initializing, with the progress
+    /// in its stats, and does no transfers; a pause during the check is honored the way it is
+    /// during the initial check. Afterwards the torrent returns to the state it was in: a
+    /// running torrent downloads what turned out missing or seeds, a paused one stays paused,
+    /// one in error leaves the error if the check succeeds. The upload and download counters
+    /// are kept.
+    ///
+    /// Returns once the check is underway; [`ManagedTorrent::wait_until_initialized`] waits
+    /// for its end. Waits for a storage operation already running on the torrent.
+    pub async fn force_recheck(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+    ) -> anyhow::Result<()> {
+        self.run_storage_op(
+            handle,
+            |s, h| async move { s.force_recheck_in_task(&h).await },
+        )
+        .await
+    }
+
+    // Runs a storage operation in a task of its own, so that it runs to its end (or undoes
+    // itself) even if the caller stops waiting for it: dropped half-way, an operation would
+    // leave the torrent stopped, or without its storage, or its files moved but not
+    // recorded.
+    async fn run_storage_op<R, Fut>(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        op: impl FnOnce(Arc<Self>, ManagedTorrentHandle) -> Fut,
+    ) -> anyhow::Result<R>
+    where
+        Fut: Future<Output = anyhow::Result<R>> + Send + 'static,
+        R: Send + 'static,
+    {
+        let span = handle.shared.span.clone();
+        tokio::spawn(op(self.clone(), handle.clone()).instrument(span))
+            .await
+            .context("the storage operation's task failed")?
+    }
+
+    // The body of `force_recheck`, see `run_storage_op`.
+    async fn force_recheck_in_task(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+    ) -> anyhow::Result<()> {
+        let _storage_op = handle.lock_storage_op().await?;
+        handle.quiesce().await?;
+        self.begin_recheck(handle).await?;
+        self.resume_after_storage_op(handle, true)
+    }
+
+    // Puts a quiesced torrent into a recheck (see `ManagedTorrent::begin_recheck`) and
+    // forgets its stored bitfield right away, rather than once the check gets its turn to
+    // run: a crash meanwhile must not leave a bitfield vouching for unverified data.
+    async fn begin_recheck(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
+        handle.begin_recheck()?;
+        if let Err(e) = self.bitv_factory.clear(handle.id().into()).await {
+            warn!(id = handle.id(), "error clearing the bitfield: {e:#}");
+        }
+        Ok(())
+    }
+
+    /// Moves the files of the torrent under `new_output_folder`, keeping their paths
+    /// relative to the output folder, and stores them there from then on. Only the files
+    /// that exist move (padding files never do, unselected files that were never created
+    /// don't); directories left empty at the old place are removed, nothing else is.
+    ///
+    /// Works in every state. The torrent stops its transfers (or its check) during the move
+    /// and returns to the state it was in afterwards, without hashing anything, unless
+    /// [`MoveStorageMode::KeepExisting`] adopted a file that was at the destination: then
+    /// the torrent is rechecked as by [`Self::force_recheck`]. A file is renamed when
+    /// possible and otherwise copied, flushed, checked and removed (across filesystems).
+    ///
+    /// If anything fails, what was moved is moved back and the torrent keeps working at the
+    /// old place; the error says what went wrong (and which files the undo couldn't put back,
+    /// if any). Moving to the current folder does nothing, however the new folder names it
+    /// (a link to it, `..`, a relative path, another case where the filesystem ignores
+    /// case): the torrent keeps its folder as it was. Waits for a storage operation
+    /// already running on the torrent; deleting the torrent or stopping the session during
+    /// the move undoes it.
+    ///
+    /// The storage must support it ([`crate::storage::TorrentStorage::move_storage`]).
+    pub async fn move_storage(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        new_output_folder: PathBuf,
+        mode: MoveStorageMode,
+    ) -> anyhow::Result<()> {
+        self.run_storage_op(handle, move |s, h| async move {
+            s.move_storage_in_task(&h, new_output_folder, mode).await
+        })
+        .await
+    }
+
+    // The body of `move_storage`, see `run_storage_op`.
+    async fn move_storage_in_task(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        new_output_folder: PathBuf,
+        mode: MoveStorageMode,
+    ) -> anyhow::Result<()> {
+        if new_output_folder.as_os_str().is_empty() {
+            bail!("the new output folder is empty");
+        }
+        let metadata = handle
+            .metadata
+            .load_full()
+            .context("torrent is not resolved")?;
+        let _storage_op = handle.lock_storage_op().await?;
+        let old_folder = handle.output_folder();
+        // Another name of the current folder moves nothing, and the folder keeps the name it
+        // had: the other one may depend on a link or a directory that goes away later, or on
+        // the current directory of the process.
+        if new_output_folder == old_folder
+            || handle.shared.spawner.block_in_place(|| {
+                crate::storage::filesystem::relocate::resolve_path(&new_output_folder)
+                    == crate::storage::filesystem::relocate::resolve_path(&old_folder)
+            })
+        {
+            return Ok(());
+        }
+        let files = metadata
+            .file_infos
+            .iter()
+            .enumerate()
+            .map(|(idx, fi)| {
+                if fi.attrs.padding {
+                    None
+                } else {
+                    handle.shared.file_relative_path(&metadata, idx)
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let quiesced = handle.quiesce().await?;
+        let loan = match handle.borrow_storage() {
+            Ok(loan) => loan,
+            Err(e) => return Err(self.restart_after_failed_op(handle, quiesced, e)),
+        };
+        let moved = self
+            .move_borrowed_storage(handle, &loan, &new_output_folder, &files, mode)
+            .await;
+        handle.give_back_storage(loan);
+        let outcome = match moved {
+            Ok(outcome) => outcome,
+            Err(e) => return Err(self.restart_after_failed_op(handle, quiesced, e)),
+        };
+
+        if !outcome.adopted_files.is_empty() && !handle.is_errored() {
+            debug!(adopted = ?outcome.adopted_files, "files adopted at the destination, rechecking");
+            if let Err(e) = self.begin_recheck(handle).await {
+                return Err(self.restart_after_failed_op(handle, quiesced, e));
+            }
+            return self.resume_after_storage_op(handle, true);
+        }
+        self.resume_after_storage_op(handle, quiesced.needs_restart())
+    }
+
+    // Restarts a torrent after a storage operation failed with `error`, adding to the error
+    // if the restart fails too.
+    fn restart_after_failed_op(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        quiesced: Quiesced,
+        error: anyhow::Error,
+    ) -> anyhow::Error {
+        match self.resume_after_storage_op(handle, quiesced.needs_restart()) {
+            Ok(()) => error,
+            Err(re) => error.context(format!("and restarting the torrent failed: {re:#}")),
+        }
+    }
+
+    // The part of `move_storage` that works on the borrowed storage, keeping the session
+    // store in step so that a crash at any point leaves the files where the store says
+    // they are, or a move that the next start undoes:
+    // 1. the store learns which files may move and where to, before the first one does;
+    // 2. the storage moves them, keeping what it replaced or left behind;
+    // 3. the store learns the new folder (if it can't, the move is undone);
+    // 4. the storage removes what it kept.
+    async fn move_borrowed_storage(
+        &self,
+        handle: &ManagedTorrentHandle,
+        loan: &StorageLoan,
+        new_output_folder: &Path,
+        files: &[Option<PathBuf>],
+        mode: MoveStorageMode,
+    ) -> anyhow::Result<MoveStorageOutcome> {
+        let old_folder = handle.output_folder();
+        // Only files that exist can be put back. Listing one that doesn't would make the
+        // undo take whatever has its name at the destination.
+        let existing = handle.shared.spawner.block_in_place(|| {
+            files
+                .iter()
+                .flatten()
+                .filter(|rel| std::fs::symlink_metadata(old_folder.join(rel)).is_ok())
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        handle.shared.location.write().move_in_progress = Some(MoveInProgress {
+            to: new_output_folder.to_owned(),
+            files: existing,
+        });
+        let cancel = handle.storage_op_cancel.clone();
+        let moved = match self
+            .update_persistence_metadata(handle)
+            .await
+            .context("error recording the move in the session store")
+        {
+            Ok(()) => {
+                handle
+                    .run_on_storage(loan, |storage| {
+                        storage.move_storage(&MoveStorageRequest {
+                            new_output_folder,
+                            files,
+                            mode,
+                            cancel: &cancel,
+                        })
+                    })
+                    .await
+            }
+            Err(e) => Err(e),
+        };
+        let outcome = match moved {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                handle.shared.location.write().move_in_progress = None;
+                self.try_update_persistence_metadata(handle).await;
+                return Err(e);
+            }
+        };
+
+        {
+            let mut location = handle.shared.location.write();
+            location.move_in_progress = None;
+            location.output_folder = new_output_folder.to_owned();
+        }
+        if let Err(e) = self.update_persistence_metadata(handle).await {
+            // The store still says the old folder, so that's where the files must be.
+            handle.shared.location.write().output_folder = old_folder;
+            let e = e.context("error recording the new output folder in the session store");
+            let undone = handle
+                .run_on_storage(loan, |storage| storage.finish_move_storage(false))
+                .await;
+            self.try_update_persistence_metadata(handle).await;
+            return Err(match undone {
+                Ok(()) => e,
+                Err(ue) => e.context(format!("and undoing the move failed: {ue:#}")),
+            });
+        }
+        // The move is final whatever happens here: what's left behind is only clutter.
+        if let Err(e) = handle
+            .run_on_storage(loan, |storage| storage.finish_move_storage(true))
+            .await
+        {
+            warn!(
+                id = handle.id(),
+                "moved the files, but cleaning up after the move failed: {e:#}"
+            );
+        }
+        Ok(outcome)
+    }
+
+    /// Gives file `file_index` of the torrent another path, relative to the output folder,
+    /// and moves it there if it exists (creating directories; directories left empty are
+    /// removed). [`ManagedTorrent::file_path`] gives the path a file has now; the metadata
+    /// keeps the published one.
+    ///
+    /// The path must be relative, without `..`, and must not collide, ignoring case, with
+    /// the path of another file of the torrent or a directory holding one. Padding files
+    /// can't be renamed. Works in every state; the torrent stops its transfers during the
+    /// rename and returns to its state afterwards. The new path is persisted with the
+    /// torrent; an embedder without session persistence gives it back with
+    /// [`AddTorrentOptions::renamed_files`]. Waits for a storage operation already running
+    /// on the torrent.
+    ///
+    /// The storage must support it ([`crate::storage::TorrentStorage::rename_file`]).
+    pub async fn rename_file(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        file_index: usize,
+        new_relative_path: PathBuf,
+    ) -> anyhow::Result<()> {
+        self.run_storage_op(handle, move |s, h| async move {
+            s.rename_file_in_task(&h, file_index, new_relative_path)
+                .await
+        })
+        .await
+    }
+
+    // The body of `rename_file`, see `run_storage_op`.
+    async fn rename_file_in_task(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        file_index: usize,
+        new_relative_path: PathBuf,
+    ) -> anyhow::Result<()> {
+        let metadata = handle
+            .metadata
+            .load_full()
+            .context("torrent is not resolved")?;
+        let _storage_op = handle.lock_storage_op().await?;
+        let mut renamed = handle.shared.renamed_files();
+        renamed.insert(file_index, new_relative_path.clone());
+        let renamed = crate::torrent_state::validate_renames(&metadata, &renamed)?;
+        let from = handle
+            .shared
+            .file_relative_path(&metadata, file_index)
+            .context("no such file")?;
+        if from == new_relative_path {
+            return Ok(());
+        }
+
+        let quiesced = handle.quiesce().await?;
+        let loan = match handle.borrow_storage() {
+            Ok(loan) => loan,
+            Err(e) => return Err(self.restart_after_failed_op(handle, quiesced, e)),
+        };
+        let result = self
+            .rename_borrowed_storage(
+                handle,
+                &loan,
+                file_index,
+                &from,
+                &new_relative_path,
+                renamed,
+            )
+            .await;
+        handle.give_back_storage(loan);
+        match result {
+            Ok(()) => self.resume_after_storage_op(handle, quiesced.needs_restart()),
+            Err(e) => Err(self.restart_after_failed_op(handle, quiesced, e)),
+        }
+    }
+
+    // The part of `rename_file` that works on the borrowed storage. The file is renamed
+    // first and the store learns the new path afterwards; if it can't, the file gets its
+    // old name back, so that the store and the disk agree.
+    async fn rename_borrowed_storage(
+        &self,
+        handle: &ManagedTorrentHandle,
+        loan: &StorageLoan,
+        file_index: usize,
+        from: &Path,
+        to: &Path,
+        renamed: BTreeMap<usize, PathBuf>,
+    ) -> anyhow::Result<()> {
+        handle
+            .run_on_storage(loan, |storage| storage.rename_file(file_index, from, to))
+            .await?;
+        let previous =
+            std::mem::replace(&mut handle.shared.location.write().renamed_files, renamed);
+        if let Err(e) = self.update_persistence_metadata(handle).await {
+            handle.shared.location.write().renamed_files = previous;
+            let e = e.context("error recording the new path in the session store");
+            let undone = handle
+                .run_on_storage(loan, |storage| storage.rename_file(file_index, to, from))
+                .await;
+            return Err(match undone {
+                Ok(()) => e,
+                Err(ue) => e.context(format!(
+                    "and renaming {to:?} back to {from:?} failed: {ue:#}"
+                )),
+            });
+        }
+        Ok(())
+    }
+
+    pub async fn update_only_files(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        only_files: &HashSet<usize>,
+    ) -> anyhow::Result<()> {
+        handle.update_only_files(only_files)?;
+        self.try_update_persistence_metadata(handle).await;
+        Ok(())
+    }
+
+    /// Set per-file priorities. Zero excludes a file and higher values are scheduled first.
+    /// The caller must persist the priorities if it needs them across session restarts.
+    pub async fn update_file_priorities(
+        &self,
+        handle: &ManagedTorrentHandle,
+        priorities: &[u8],
+    ) -> anyhow::Result<()> {
+        handle.update_file_priorities(priorities)?;
+        self.try_update_persistence_metadata(handle).await;
+        Ok(())
+    }
+
+    pub fn listen_addr(&self) -> Option<SocketAddr> {
+        self.listen_addr
+    }
+
+    pub fn announce_port(&self) -> Option<u16> {
+        self.announce_port
+    }
+
+    /// Reads the info dictionary of a magnet link from peers. It must hash to the link's
+    /// `btih` hash, its `btmh` one (BEP 52), or both: `info_hash` is the truncated v2 hash
+    /// of a `btmh`-only link, which says nothing about the SHA-1 hash.
+    async fn resolve_magnet(
+        self: &Arc<Self>,
+        info_hash: Id20,
+        info_hash_v2: Option<Id32>,
+        peer_rx: PeerStream,
+        trackers: &[url::Url],
+        peer_opts: Option<PeerConnectionOptions>,
+    ) -> anyhow::Result<ResolveMagnetResult> {
+        let v1 =
+            (info_hash_v2.map(|v2| v2.truncate_for_dht()) != Some(info_hash)).then_some(info_hash);
+        let hashes =
+            MetadataHashes::new(v1, info_hash_v2).context("a magnet link without info hash")?;
+        match read_metainfo_from_peer_receiver(
+            self.peer_id,
+            hashes,
+            Default::default(),
+            peer_rx,
+            Some(self.merge_peer_opts(peer_opts)),
+            self.connector.clone(),
+            self.client_name_and_version.clone(),
+        )
+        .await
+        {
+            ReadMetainfoResult::Found {
+                info,
+                info_bytes,
+                rx,
+                seen,
+            } => {
+                trace!(?info, "received result from DHT");
+                let (info_hash, info_hash_v2) = compute_info_hashes(&info, info_bytes.as_ref());
+                let info = info.validate()?;
+                Ok(ResolveMagnetResult {
+                    metadata: TorrentMetadata::new(
+                        info,
+                        torrent_file_from_info_bytes(info_bytes.as_ref(), trackers)?,
+                        info_bytes.0,
+                    )?,
+                    info_hash,
+                    info_hash_v2,
+                    peer_rx: rx,
+                    seen_peers: {
+                        let seen = seen.into_iter().collect_vec();
+                        for peer in &seen {
+                            trace!(?peer, "seen")
+                        }
+                        seen
+                    },
+                })
+            }
+            ReadMetainfoResult::ChannelClosed { .. } => {
+                bail!("input address stream exhausted, no way to discover torrent metainfo")
+            }
+        }
+    }
+
+    pub async fn create_and_serve_torrent(
+        self: &Arc<Self>,
+        path: &Path,
+        opts: CreateTorrentOptions<'_>,
+    ) -> Result<(CreateTorrentResult, ManagedTorrentHandle), ApiError> {
+        if !path.exists() {
+            return Err(ApiError::from((
+                StatusCode::BAD_REQUEST,
+                "path doesn't exist",
+            )));
+        }
+
+        let torrent = create_torrent(path, opts, &self.spawner)
+            .await
+            .with_status(StatusCode::BAD_REQUEST)?;
+
+        let bytes = torrent.as_bytes()?;
+
+        let handle = self
+            .add_torrent(
+                AddTorrent::TorrentFileBytes(bytes.clone()),
+                Some(AddTorrentOptions {
+                    paused: false,
+                    overwrite: true,
+                    output_folder: Some(
+                        torrent
+                            .output_folder
+                            .to_str()
+                            .context("invalid utf-8")?
+                            .to_owned(),
+                    ),
+                    ..Default::default()
+                }),
+            )
+            .await?
+            .into_handle()
+            .context("error adding to session")?;
+
+        Ok((torrent, handle))
+    }
+}
+
+pub(crate) struct ResolveMagnetResult {
+    pub metadata: TorrentMetadata,
+    /// The info hash the torrent is known by: the SHA-1 one, or the truncated v2 hash of a
+    /// v2-only torrent.
+    pub info_hash: Id20,
+    /// BEP 52: the SHA-256 info hash, if the metadata is that of a v2 or hybrid torrent.
+    pub info_hash_v2: Option<Id32>,
+    pub peer_rx: PeerStream,
+    pub seen_peers: Vec<SocketAddr>,
+}
+
+// Removes the files of a torrent at the paths they are stored under now (renames included),
+// then the directories that became empty.
+fn remove_files_and_dirs(
+    shared: &ManagedTorrentShared,
+    metadata: &TorrentMetadata,
+    files: &dyn TorrentStorage,
+) {
+    let mut all_dirs = HashSet::new();
+    for (id, fi) in metadata.file_infos.iter().enumerate() {
+        if fi.attrs.padding {
+            continue;
+        }
+        let Some(path) = shared.file_relative_path(metadata, id) else {
+            continue;
+        };
+        if let Err(e) = files.remove_file(id, &path) {
+            warn!(?path, error=?e, "could not delete file");
+        } else {
+            debug!(?path, "deleted the file")
+        }
+        let mut fname = path.as_path();
+        while let Some(parent) = fname.parent() {
+            if parent != Path::new("") {
+                all_dirs.insert(parent.to_owned());
+            }
+            fname = parent;
+        }
+    }
+
+    let all_dirs = {
+        let mut v = all_dirs.into_iter().collect::<Vec<_>>();
+        v.sort_unstable_by_key(|p| std::cmp::Reverse(p.as_os_str().len()));
+        v
+    };
+    for dir in all_dirs {
+        if let Err(e) = files.remove_directory_if_empty(&dir) {
+            warn!("error removing {dir:?}: {e:#}");
+        } else {
+            debug!("removed {dir:?}")
+        }
+    }
+}
+
+// Ad adapter for converting stats into the format that tracker_comms accepts.
+struct PeerRxTorrentInfo {
+    info_hash: Id20,
+    session: Arc<Session>,
+}
+
+impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
+    fn get(&self) -> tracker_comms::TrackerCommsStats {
+        let mt = self.session.with_torrents(|torrents| {
+            for (_, mt) in torrents {
+                if mt.shared().has_info_hash(self.info_hash) {
+                    return Some(mt.clone());
+                }
+            }
+            None
+        });
+        let mt = match mt {
+            Some(mt) => mt,
+            None => {
+                trace!(info_hash=?self.info_hash, "can't find torrent in the session, using default stats");
+                return Default::default();
+            }
+        };
+        let stats = mt.stats();
+
+        use crate::torrent_state::stats::TorrentStatsState as TS;
+        use tracker_comms::TrackerCommsStatsState as S;
+
+        tracker_comms::TrackerCommsStats {
+            downloaded_bytes: stats.progress_bytes,
+            total_bytes: stats.total_bytes,
+            uploaded_bytes: stats.uploaded_bytes,
+            torrent_state: match stats.state {
+                TS::Initializing { .. } => S::Initializing,
+                TS::Live => S::Live,
+                TS::Paused => S::Paused,
+                TS::Error => S::None,
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use buffers::ByteBuf;
+    use itertools::Itertools;
+    use librqbit_core::torrent_metainfo::{TorrentMetaV1, torrent_from_bytes};
+
+    use super::{is_bare_info_hash, torrent_file_from_info_bytes};
+
+    #[tokio::test]
+    async fn isolated_session_disables_direct_transports() {
+        use std::time::Duration;
+
+        use futures::StreamExt;
+        use tokio::net::{TcpListener, UdpSocket};
+        use tokio::time::timeout;
+
+        use crate::{ConnectionOptions, Session, SessionOptions};
+
+        let udp = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let tracker = format!("udp://{}/announce", udp.local_addr().unwrap())
+            .parse()
+            .unwrap();
+        let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_address = proxy.local_addr().unwrap();
+        let proxy_task = tokio::spawn(async move {
+            let (stream, _) = proxy.accept().await.unwrap();
+            // Model a proxy that stops as the client opens a connection.
+            drop(stream);
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let session = Session::new_with_opts(
+            directory.path().to_owned(),
+            SessionOptions {
+                connect: Some(ConnectionOptions {
+                    proxy_url: Some(format!("socks5h://{proxy_address}")),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(session.get_dht().is_none());
+        assert!(session.listen_addr().is_none());
+        assert!(session.lsd.is_none());
+        assert!(session.udp_tracker_client.is_none());
+        assert!(
+            session
+                .make_peer_rx(
+                    librqbit_core::hash_id::Id20::new([1; 20]),
+                    None,
+                    vec![tracker],
+                    true,
+                    None,
+                    Vec::new(),
+                    false,
+                )
+                .is_none()
+        );
+
+        // With the SOCKS endpoint down, trying an explicit peer must still never connect directly.
+        let peer = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_address = peer.local_addr().unwrap();
+        let mut peers = session
+            .make_peer_rx(
+                librqbit_core::hash_id::Id20::new([1; 20]),
+                None,
+                Vec::new(),
+                true,
+                None,
+                vec![peer_address],
+                false,
+            )
+            .unwrap();
+        assert_eq!(peers.next().await, Some(peer_address));
+        let connection = timeout(
+            Duration::from_secs(2),
+            session.connector.connect(peer_address),
+        )
+        .await
+        .expect("connection attempt timed out");
+        assert!(connection.is_err());
+        proxy_task.await.unwrap();
+        assert!(
+            timeout(Duration::from_millis(100), peer.accept())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn isolated_session_sends_tracker_dns_to_the_proxy() {
+        use std::time::Duration;
+
+        use futures::StreamExt;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+        use tokio::time::timeout;
+
+        use crate::{ConnectionOptions, Session, SessionOptions};
+
+        let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_address = proxy.local_addr().unwrap();
+        let proxy_request = async {
+            let (mut stream, _) = proxy.accept().await.unwrap();
+            let mut greeting = [0; 3];
+            stream.read_exact(&mut greeting).await.unwrap();
+            assert_eq!(greeting, [5, 1, 0]);
+            stream.write_all(&[5, 0]).await.unwrap();
+            let mut request = [0; 5];
+            stream.read_exact(&mut request).await.unwrap();
+            assert_eq!(&request[..4], &[5, 1, 0, 3]);
+            let mut name = vec![0; usize::from(request[4])];
+            stream.read_exact(&mut name).await.unwrap();
+            assert_eq!(name, b"tracker.invalid");
+            let port = stream.read_u16().await.unwrap();
+            assert_eq!(port, 80);
+        };
+
+        let directory = tempfile::tempdir().unwrap();
+        let session = Session::new_with_opts(
+            directory.path().to_owned(),
+            SessionOptions {
+                connect: Some(ConnectionOptions {
+                    proxy_url: Some(format!("socks5h://{proxy_address}")),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let mut trackers = session
+            .make_peer_rx(
+                librqbit_core::hash_id::Id20::new([1; 20]),
+                None,
+                vec!["http://tracker.invalid/announce".parse().unwrap()],
+                true,
+                None,
+                Vec::new(),
+                false,
+            )
+            .unwrap();
+        timeout(Duration::from_secs(5), async {
+            tokio::select! {
+                _ = proxy_request => {},
+                _ = trackers.next() => panic!("tracker never used the SOCKS proxy"),
+            }
+        })
+        .await
+        .expect("tracker did not connect through the SOCKS proxy");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn file_priorities_order_downloads_and_exclude_zero() {
+        use crate::spawn_utils::BlockingSpawner;
+        use crate::tests::test_util::create_default_random_dir_with_torrents;
+        use crate::{AddTorrent, AddTorrentOptions, Session, SessionOptions, create_torrent};
+
+        let source = create_default_random_dir_with_torrents(4, 32768, Some("file-priorities"));
+        let destination = tempfile::tempdir().unwrap();
+        let torrent = create_torrent(source.path(), Default::default(), &BlockingSpawner::new(1))
+            .await
+            .unwrap()
+            .as_bytes()
+            .unwrap();
+        let session = Session::new_with_opts(
+            destination.path().to_owned(),
+            SessionOptions {
+                dht: None,
+                listen: None,
+                disable_trackers: true,
+                disable_local_service_discovery: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let handle = session
+            .add_torrent(
+                AddTorrent::from_bytes(torrent),
+                Some(AddTorrentOptions {
+                    paused: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap()
+            .into_handle()
+            .unwrap();
+        handle.wait_until_initialized().await.unwrap();
+        session
+            .update_file_priorities(&handle, &[1, 0, 4, 7])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            handle.shared().file_priority_order.read().as_deref(),
+            Some(&[3, 2, 0][..])
+        );
+        let mut selection = handle.only_files().unwrap();
+        selection.sort_unstable();
+        assert_eq!(selection, [0, 2, 3]);
+        assert!(
+            session
+                .update_file_priorities(&handle, &[8, 0, 4, 7])
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            handle.shared().file_priority_order.read().as_deref(),
+            Some(&[3, 2, 0][..])
+        );
+    }
+
+    #[test]
+    fn test_is_bare_info_hash() {
+        assert!(is_bare_info_hash(
+            "08ada5a7a6183aae1e09d831df6748d566095a10"
+        ));
+        assert!(is_bare_info_hash(
+            "08ADA5A7A6183AAE1E09D831DF6748D566095A10"
+        ));
+        // 40 characters, but a URL.
+        assert!(!is_bare_info_hash(
+            "https://nyaa.si/download/2164312.torrent"
+        ));
+        assert!(!is_bare_info_hash(
+            "08ada5a7a6183aae1e09d831df6748d566095a1"
+        ));
+    }
+
+    #[test]
+    fn test_torrent_file_from_info_and_bytes() {
+        fn get_trackers(info: &TorrentMetaV1<ByteBuf>) -> Vec<url::Url> {
+            info.iter_announce()
+                .filter_map(|t| std::str::from_utf8(t.as_ref()).ok().map(|t| t.to_owned()))
+                .filter_map(|t| t.parse().ok())
+                .collect_vec()
+        }
+
+        let orig_full_torrent =
+            include_bytes!("../resources/ubuntu-21.04-desktop-amd64.iso.torrent");
+        let parsed = torrent_from_bytes(&orig_full_torrent[..]).unwrap();
+        let parsed_trackers = get_trackers(&parsed);
+
+        let generated_torrent =
+            torrent_file_from_info_bytes(parsed.info.raw_bytes.as_ref(), &parsed_trackers).unwrap();
+        let generated_parsed = torrent_from_bytes(generated_torrent.as_ref()).unwrap();
+        assert_eq!(parsed.info_hash, generated_parsed.info_hash);
+        assert_eq!(parsed.info, generated_parsed.info);
+        assert_eq!(parsed_trackers, get_trackers(&generated_parsed));
+    }
+}

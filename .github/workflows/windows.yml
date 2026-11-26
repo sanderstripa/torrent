@@ -205,6 +205,23 @@ jobs:
           if ($LASTEXITCODE) { throw "librqbit patch failed to apply" }
           cargo test --manifest-path .rqbit/Cargo.toml --locked -p librqbit --no-default-features --features rust-tls --lib
           if ($LASTEXITCODE) { throw "librqbit session tests failed" }
+  rust-rqbit-client-windows:
+    if: github.ref == 'refs/heads/rust-edition'
+    permissions:
+      contents: read
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test and build the Windows client against librqbit
+        run: |
+          cargo test --locked --target x86_64-pc-windows-msvc --features rqbit,vpn --manifest-path rust-edition/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo build --locked --target x86_64-pc-windows-msvc --features rqbit,vpn --manifest-path rust-edition/Cargo.toml --bin torrent-re-windows
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Exercise the client window with librqbit
+        shell: pwsh
+        run: |
+          ./rust-edition/tests/windows-ui.ps1 -Executable "$PWD/rust-edition/target/x86_64-pc-windows-msvc/debug/torrent-re-windows.exe"
   rust-libtorrent-integration:
     if: github.ref == 'refs/heads/rust-edition'
     permissions:

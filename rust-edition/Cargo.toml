@@ -10,10 +10,15 @@ crate-type = ["staticlib", "rlib"]
 panic = "abort"
 
 [features]
-libtorrent = []
+windows-app = []
+libtorrent = ["windows-app"]
+rqbit = ["windows-app", "dep:librqbit", "dep:tokio", "dep:serde", "dep:serde_json"]
 vpn = ["dep:base64", "dep:hex", "dep:percent-encoding", "dep:serde_json", "dep:sha2", "dep:tempfile", "dep:url"]
 
 [dependencies]
+librqbit = { path = "librqbit/vendor/crates/librqbit", default-features = false, features = ["rust-tls"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "time"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
 base64 = { version = "0.22", optional = true }
 hex = { version = "0.4", optional = true }
 percent-encoding = { version = "2", optional = true }
@@ -21,6 +26,9 @@ serde_json = { version = "1", optional = true }
 sha2 = { version = "0.10", optional = true }
 tempfile = { version = "3", optional = true }
 url = { version = "2", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
@@ -48,7 +56,7 @@ windows-sys = { version = "0.61", features = [
 [[bin]]
 name = "torrent-re-windows"
 path = "src/main.rs"
-required-features = ["libtorrent"]
+required-features = ["windows-app"]
 
 [[bin]]
 name = "TorrentVpnHost"
