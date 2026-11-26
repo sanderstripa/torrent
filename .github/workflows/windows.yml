@@ -177,9 +177,9 @@ jobs:
         run: |
           cargo fmt --manifest-path rust-edition/Cargo.toml -- --check
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo test --locked --manifest-path rust-edition/Cargo.toml
+          cargo test --locked --target x86_64-pc-windows-msvc --manifest-path rust-edition/Cargo.toml
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo check --locked --features libtorrent --manifest-path rust-edition/Cargo.toml
+          cargo check --locked --target x86_64-pc-windows-msvc --features libtorrent --manifest-path rust-edition/Cargo.toml
   rust-libtorrent-integration:
     if: github.ref == 'refs/heads/rust-edition'
     permissions:
