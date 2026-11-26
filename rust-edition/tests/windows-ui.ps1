@@ -74,6 +74,16 @@ try {
     Command $main 110
     $settings = Wait-Visible 'Настройки'
     Write-Host 'Settings sheet appeared'
+    $trace = Join-Path $folder.FullName 're-ui-trace.txt'
+    $animationComplete = $false
+    for ($attempt = 0; $attempt -lt 50; $attempt++) {
+        if ((Get-Content -LiteralPath $trace -ErrorAction SilentlyContinue) -contains 'settings animation completed') {
+            $animationComplete = $true
+            break
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    if (!$animationComplete) { throw 'Settings animation did not complete' }
     Command $settings 126
     for ($attempt = 0; $attempt -lt 50 -and (Get-Content $prefs)[1] -ne '1 1 0'; $attempt++) {
         Start-Sleep -Milliseconds 100

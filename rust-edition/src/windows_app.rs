@@ -479,6 +479,9 @@ impl Dialog {
             {
                 ShowWindow(self.window, SW_SHOW);
             }
+            if self.sheet {
+                trace_ui("settings animation completed");
+            }
             let mut message = MSG::default();
             let mut deferred = Vec::new();
             while IsWindow(self.window) != 0 {
