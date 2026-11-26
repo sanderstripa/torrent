@@ -1,4 +1,4 @@
-//! File formats read and written by Torrent 1.4.0.
+//! Profile file formats used by the Windows client.
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -9,6 +9,7 @@ pub struct Preferences {
     pub select_files: bool,
     pub theme: Theme,
     pub english: bool,
+    pub close_to_tray: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +26,7 @@ impl Preferences {
             select_files: false,
             theme: Theme::Light,
             english: false,
+            close_to_tray: true,
         };
         match fs::read(root.join("settings.txt")) {
             Ok(bytes) if !bytes.is_empty() => {
@@ -42,6 +44,7 @@ impl Preferences {
                     _ => Theme::Light,
                 };
                 defaults.english = options.next().unwrap_or_default() > 0;
+                defaults.close_to_tray = options.next().unwrap_or(1) > 0;
             }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -62,10 +65,11 @@ impl Preferences {
                 )
             })?;
         let text = format!(
-            "{folder}\n{} {} {}",
+            "{folder}\n{} {} {} {}",
             u8::from(self.select_files),
             self.theme as u8,
-            u8::from(self.english)
+            u8::from(self.english),
+            u8::from(self.close_to_tray),
         );
         atomic_write(
             &root.join("settings.txt"),
@@ -176,9 +180,14 @@ mod tests {
             let prefs = Preferences::load(&dir, fallback.clone())?;
             assert_eq!(prefs.folder, PathBuf::from("D:\\Торренты\\Фильмы"));
             assert_eq!(prefs.theme, Theme::System);
-            assert!(prefs.english && prefs.select_files);
+            assert!(prefs.english && prefs.select_files && prefs.close_to_tray);
             prefs.save(&dir)?;
-            assert_eq!(fs::read_to_string(dir.join("settings.txt"))?, sample);
+            assert_eq!(
+                fs::read_to_string(dir.join("settings.txt"))?,
+                format!("{sample} 1")
+            );
+            fs::write(dir.join("settings.txt"), format!("{sample} 0 0"))?;
+            assert!(!Preferences::load(&dir, fallback.clone())?.close_to_tray);
 
             fs::write(dir.join("settings.txt"), "\n99 -1 x")?;
             let prefs = Preferences::load(&dir, fallback)?;

@@ -28,11 +28,13 @@ use windows_sys::Win32::UI::Controls::Dialogs::{
 };
 use windows_sys::Win32::UI::Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    EnableWindow, SetActiveWindow, VK_DELETE, VK_ESCAPE, VK_RETURN,
+    EnableWindow, IsWindowEnabled, SetActiveWindow, VK_DELETE, VK_ESCAPE, VK_RETURN,
 };
 use windows_sys::Win32::UI::Shell::{
     DragAcceptFiles, DragFinish, DragQueryFileW, FOLDERID_Downloads, SHBrowseForFolderW,
-    SHGetKnownFolderPath, SHGetPathFromIDListW, ShellExecuteW, BIF_RETURNONLYFSDIRS, BROWSEINFOW,
+    SHGetKnownFolderPath, SHGetPathFromIDListW, ShellExecuteW, Shell_NotifyIconW,
+    BIF_RETURNONLYFSDIRS, BROWSEINFOW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
+    NOTIFYICONDATAW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -65,12 +67,16 @@ const THEME_LIGHT: usize = 125;
 const THEME_DARK: usize = 126;
 const CHANGE_LANGUAGE: usize = 127;
 const CHANGE_ADD: usize = 128;
+const TOGGLE_TRAY: usize = 129;
 const CONTEXT: u32 = WM_APP + 2;
 const LAYOUT: u32 = WM_APP + 3;
 const REQUEST_CLOSE: u32 = WM_APP + 4;
 const APPLY_THEME: u32 = WM_APP + 5;
 const SHELL_SOURCES: u32 = WM_APP + 6;
 const WINDOW_MOVED: u32 = WM_APP + 7;
+const TRAY_EVENT: u32 = WM_APP + 10;
+const REOPEN: u32 = WM_APP + 11;
+const EXIT: u32 = WM_APP + 12;
 const CLASS: windows_sys::core::PCWSTR = windows_sys::w!("TorrentRustDevelopment");
 thread_local! {
     static CARD_ROWS: std::cell::RefCell<Vec<crate::windows_paint::TransferCard>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -257,7 +263,9 @@ unsafe extern "system" fn dispatch(
             1
         }
         WM_COMMAND
-            if (wparam >> 16 == 0 && (ADD_MAGNET..=THEME_DARK).contains(&(wparam & 0xffff)))
+            if (wparam >> 16 == 0
+                && ((ADD_MAGNET..=THEME_DARK).contains(&(wparam & 0xffff))
+                    || (wparam & 0xffff) == TOGGLE_TRAY))
                 || (wparam >> 16 == CBN_SELCHANGE as usize
                     && [CHANGE_LANGUAGE, CHANGE_ADD].contains(&(wparam & 0xffff))) =>
         {
@@ -492,7 +500,7 @@ impl Dialog {
                         break;
                     }
                     _ if message.hwnd == self.owner
-                        && [REQUEST_CLOSE, SHELL_SOURCES, WM_DROPFILES]
+                        && [REQUEST_CLOSE, REOPEN, EXIT, SHELL_SOURCES, WM_DROPFILES]
                             .contains(&message.message) =>
                     {
                         deferred.push((message.message, message.wParam, message.lParam));
@@ -660,7 +668,10 @@ fn settings(
         (422, 227, 270, 120),
         CHANGE_ADD,
     )?;
-    fields.push(label("", 302, 620)?);
+    let tray_label = label("", 277, 370)?;
+    let tray = dialog.control("BUTTON", "", WS_TABSTOP, (580, 277, 112, 32), TOGGLE_TRAY)?;
+    fields.push(label("", 318, 620)?);
+
     label("Torrent 1.4.0 Rust Edition Preview 2", 348, 620)?;
     label("Sander Stripa", 382, 620)?;
     let updates = dialog.control("BUTTON", "", WS_TABSTOP, (28, 433, 145, 32), ABOUT_UPDATE)?;
@@ -705,6 +716,21 @@ fn settings(
             };
             SetWindowTextW(button, wide(title).as_ptr());
         }
+        SetWindowTextW(
+            tray_label,
+            wide(tr(
+                en,
+                "Скрывать в трей при закрытии",
+                "Hide to tray on close",
+            ))
+            .as_ptr(),
+        );
+        let tray_state = if prefs.close_to_tray {
+            tr(en, "Включено", "On")
+        } else {
+            tr(en, "Выключено", "Off")
+        };
+        SetWindowTextW(tray, wide(tray_state).as_ptr());
         SetWindowTextW(choose, wide(tr(en, "Выбрать…", "Browse…")).as_ptr());
         SetWindowTextW(updates, wide(tr(en, "Обновление", "Updates")).as_ptr());
         SetWindowTextW(folder, wide(prefs.folder.as_os_str()).as_ptr());
@@ -727,6 +753,7 @@ fn settings(
             THEME_SYSTEM => updated.theme = Theme::System,
             THEME_LIGHT => updated.theme = Theme::Light,
             THEME_DARK => updated.theme = Theme::Dark,
+            TOGGLE_TRAY => updated.close_to_tray = !prefs.close_to_tray,
             CHANGE_LANGUAGE => {
                 updated.english = unsafe { SendMessageW(language, CB_GETCURSEL, 0, 0) } == 1
             }
@@ -1560,9 +1587,64 @@ fn forward_sources() {
             );
         }
     }
+    unsafe { PostMessageW(existing, REOPEN, 0, 0) };
+}
+
+fn tray_data(window: HWND) -> NOTIFYICONDATAW {
+    let mut data: NOTIFYICONDATAW = unsafe { zeroed() };
+    data.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+    data.hWnd = window;
+    data.uID = 1;
+    data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    data.uCallbackMessage = TRAY_EVENT;
+    data.hIcon = unsafe { SendMessageW(window, WM_GETICON, ICON_SMALL as usize, 0) as HICON };
+    let tooltip = wide("Torrent");
+    data.szTip[..tooltip.len()].copy_from_slice(&tooltip);
+    data
+}
+
+fn reveal(window: HWND, hidden: &mut bool) {
     unsafe {
-        ShowWindow(existing, SW_RESTORE);
-        SetForegroundWindow(existing);
+        ShowWindow(
+            window,
+            if IsIconic(window) != 0 {
+                SW_RESTORE
+            } else {
+                SW_SHOW
+            },
+        );
+        let popup = GetLastActivePopup(window);
+        let foreground = if IsWindowEnabled(window) == 0
+            && IsWindowVisible(popup) != 0
+            && IsWindowEnabled(popup) != 0
+        {
+            popup
+        } else {
+            window
+        };
+        if SetForegroundWindow(foreground) == 0 {
+            SetWindowPos(
+                foreground,
+                HWND_TOP,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+            let flash = FLASHWINFO {
+                cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
+                hwnd: window,
+                dwFlags: FLASHW_TRAY,
+                uCount: 3,
+                dwTimeout: 0,
+            };
+            FlashWindowEx(&flash);
+        }
+        if *hidden {
+            Shell_NotifyIconW(NIM_DELETE, &tray_data(window));
+            *hidden = false;
+        }
     }
 }
 
@@ -1640,6 +1722,7 @@ pub fn run() -> Result<(), String> {
             return Err(std::io::Error::last_os_error().to_string());
         }
         let title = wide("Torrent Rust Edition");
+        let taskbar_created = RegisterWindowMessageW(windows_sys::w!("TaskbarCreated"));
         let window = CreateWindowExW(
             0,
             class,
@@ -1697,6 +1780,7 @@ pub fn run() -> Result<(), String> {
             trace_ui("main window shown");
         }
         let mut message = MSG::default();
+        let mut hidden_to_tray = false;
         loop {
             match GetMessageW(&mut message, null_mut(), 0, 0) {
                 -1 => return Err(std::io::Error::last_os_error().to_string()),
@@ -1715,7 +1799,69 @@ pub fn run() -> Result<(), String> {
                 _ if message.hwnd == window && message.message == CONTEXT => {
                     context_menu(window, &controls, message.lParam)
                 }
-                _ if message.hwnd == window && message.message == REQUEST_CLOSE => {
+                _ if message.hwnd == window && message.message == REOPEN => {
+                    reveal(window, &mut hidden_to_tray)
+                }
+                _ if message.hwnd == window && message.message == TRAY_EVENT => {
+                    match message.lParam as u32 {
+                        WM_LBUTTONDBLCLK => reveal(window, &mut hidden_to_tray),
+                        WM_RBUTTONUP => {
+                            let mut point = std::mem::zeroed();
+                            if GetCursorPos(&mut point) != 0 {
+                                SetForegroundWindow(window);
+                                match menu(
+                                    window,
+                                    point.x,
+                                    point.y,
+                                    &[
+                                        (1, tr(prefs.english, "Открыть Torrent", "Open Torrent")),
+                                        (2, tr(prefs.english, "Выход", "Exit")),
+                                    ],
+                                ) {
+                                    Some(1) => reveal(window, &mut hidden_to_tray),
+                                    Some(2) => {
+                                        PostMessageW(window, EXIT, 0, 0);
+                                    }
+                                    _ => {}
+                                }
+                                PostMessageW(window, WM_NULL, 0, 0);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ if message.hwnd == window
+                    && taskbar_created != 0
+                    && message.message == taskbar_created
+                    && hidden_to_tray =>
+                {
+                    if Shell_NotifyIconW(NIM_ADD, &tray_data(window)) == 0 {
+                        reveal(window, &mut hidden_to_tray);
+                    }
+                }
+                _ if message.hwnd == window
+                    && message.message == REQUEST_CLOSE
+                    && prefs.close_to_tray
+                    && !smoke =>
+                {
+                    if !hidden_to_tray {
+                        if Shell_NotifyIconW(NIM_ADD, &tray_data(window)) != 0 {
+                            let _ = save_position(window, &profile);
+                            hidden_to_tray = true;
+                            ShowWindow(window, SW_HIDE);
+                        } else {
+                            show_error(tr(
+                                prefs.english,
+                                "Не удалось создать значок в трее.",
+                                "Could not create the notification area icon.",
+                            ));
+                        }
+                    }
+                }
+                _ if message.hwnd == window && [REQUEST_CLOSE, EXIT].contains(&message.message) => {
+                    if hidden_to_tray {
+                        Shell_NotifyIconW(NIM_DELETE, &tray_data(window));
+                    }
                     if !smoke {
                         if let Err(error) = save_position(window, &profile) {
                             show_error(&error.to_string());
@@ -1729,10 +1875,12 @@ pub fn run() -> Result<(), String> {
                     DispatchMessageW(&message);
                 }
                 _ if message.hwnd == window && message.message == WM_TIMER => {
-                    if let Err(error) =
-                        prompt_for_files(window, &mut transfers, &mut prompted, prefs.english)
-                    {
-                        show_error(&error);
+                    if !hidden_to_tray {
+                        if let Err(error) =
+                            prompt_for_files(window, &mut transfers, &mut prompted, prefs.english)
+                        {
+                            show_error(&error);
+                        }
                     }
                     if last_save.elapsed().as_secs() >= 30 && !transfers.ordered().is_empty() {
                         last_save = std::time::Instant::now();
@@ -1743,6 +1891,7 @@ pub fn run() -> Result<(), String> {
                     controls.refresh(&transfers)
                 }
                 _ if message.hwnd == window && message.message == SHELL_SOURCES => {
+                    reveal(window, &mut hidden_to_tray);
                     let sources =
                         SHELL_INBOX.with(|inbox| std::mem::take(&mut *inbox.borrow_mut()));
                     for source in sources {
