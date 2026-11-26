@@ -177,9 +177,16 @@ jobs:
         run: |
           cargo fmt --manifest-path rust-edition/Cargo.toml -- --check
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo test --locked --target x86_64-pc-windows-msvc --manifest-path rust-edition/Cargo.toml
+          cargo test --locked --target x86_64-pc-windows-msvc --features vpn --manifest-path rust-edition/Cargo.toml
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo check --locked --target x86_64-pc-windows-msvc --features libtorrent --manifest-path rust-edition/Cargo.toml
+      - name: Exercise the pinned VPN cores through the Rust helper
+        shell: pwsh
+        run: |
+          $env:TORRENT_VPN_FIXTURE_BIN = Join-Path $env:RUNNER_TEMP 'torrent-re-vpn'
+          ./rust-edition/vpn/prepare.ps1 -Destination $env:TORRENT_VPN_FIXTURE_BIN
+          cargo test --locked --target x86_64-pc-windows-msvc --features vpn --manifest-path rust-edition/Cargo.toml --test vpn-cores -- --ignored
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
   rust-librqbit-windows:
     if: github.ref == 'refs/heads/rust-edition'
     runs-on: windows-2022

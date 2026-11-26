@@ -11,6 +11,16 @@ panic = "abort"
 
 [features]
 libtorrent = []
+vpn = ["dep:base64", "dep:hex", "dep:percent-encoding", "dep:serde_json", "dep:sha2", "dep:tempfile", "dep:url"]
+
+[dependencies]
+base64 = { version = "0.22", optional = true }
+hex = { version = "0.4", optional = true }
+percent-encoding = { version = "2", optional = true }
+serde_json = { version = "1", optional = true }
+sha2 = { version = "0.10", optional = true }
+tempfile = { version = "3", optional = true }
+url = { version = "2", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
@@ -21,6 +31,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Registry",
     "Win32_System_LibraryLoader",
     "Win32_System_Threading",
+    "Win32_System_JobObjects",
     "Win32_System_SystemServices",
     "Win32_Security",
     "Win32_UI_WindowsAndMessaging",
@@ -38,3 +49,8 @@ windows-sys = { version = "0.61", features = [
 name = "torrent-re-windows"
 path = "src/main.rs"
 required-features = ["libtorrent"]
+
+[[bin]]
+name = "TorrentVpnHost"
+path = "src/vpn/main.rs"
+required-features = ["vpn"]
