@@ -180,6 +180,24 @@ jobs:
           cargo test --locked --target x86_64-pc-windows-msvc --manifest-path rust-edition/Cargo.toml
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo check --locked --target x86_64-pc-windows-msvc --features libtorrent --manifest-path rust-edition/Cargo.toml
+  rust-librqbit-windows:
+    if: github.ref == 'refs/heads/rust-edition'
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ikatson/rqbit
+          ref: 4309d38769ef93f6ee4f01a1ab147009a197fa8f
+          path: .rqbit
+          persist-credentials: false
+      - name: Apply and verify Torrent's librqbit patch
+        shell: pwsh
+        run: |
+          git -C .rqbit apply "$PWD/rust-edition/librqbit/torrent.patch"
+          if ($LASTEXITCODE) { throw "librqbit patch failed to apply" }
+          cargo test --manifest-path .rqbit/Cargo.toml --locked -p librqbit --no-default-features --features rust-tls session::tests
+          if ($LASTEXITCODE) { throw "librqbit session tests failed" }
   rust-libtorrent-integration:
     if: github.ref == 'refs/heads/rust-edition'
     permissions:
