@@ -1,6 +1,6 @@
 # Патч librqbit для Torrent Rust Edition
 
-База — [librqbit 9.1.0](https://github.com/ikatson/rqbit/tree/4309d38769ef93f6ee4f01a1ab147009a197fa8f). Патч меняет библиотеку движка. Прототип приложения в этой ветке пока не использует его.
+База — [закреплённая ревизия PR №748](https://github.com/ikatson/rqbit/tree/d525e433f2ccde9d837e68eddd190be4275a2fa7) с поддержкой BitTorrent v2 и гибридных торрентов. Патч меняет библиотеку движка. Прототип приложения в этой ветке пока не использует его.
 
 Сессия с прокси принимает локальный адрес SOCKS5h, отправляет через него запросы HTTP(S) и соединения с пирами, отключает UDP-трекеры, DHT, локальное обнаружение и входящие подключения. Проверка в комплекте поднимает локальные TCP и UDP сокеты и проверяет, что недоступный SOCKS-прокси не приводит к прямому соединению с пиром.
 
@@ -9,9 +9,11 @@ API приоритетов исключает файлы с нулевым пр�
 Для проверки на чистой копии исходников:
 
 ```sh
-git clone --branch v9.1.0 https://github.com/ikatson/rqbit.git
+git clone https://github.com/ikatson/rqbit.git
+git -C rqbit fetch origin d525e433f2ccde9d837e68eddd190be4275a2fa7
+git -C rqbit switch --detach d525e433f2ccde9d837e68eddd190be4275a2fa7
 git -C rqbit apply /absolute/path/to/rust-edition/librqbit/torrent.patch
-cargo test --manifest-path rqbit/Cargo.toml --locked -p librqbit --no-default-features --features rust-tls session::tests
+cargo test --manifest-path rqbit/Cargo.toml --locked -p librqbit --no-default-features --features rust-tls --lib
 ```
 
-Остаётся проверить изоляцию в собранном клиенте на Windows с Xray и Sudoku, включая переключение с прямого режима и остановку VPN во время загрузки. Движок по-прежнему требует v1-хеш для magnet-ссылок. Для совместимости с v2-only нужно реализовать BEP 52 в движке.
+Остаётся проверить изоляцию в собранном клиенте на Windows с Xray и Sudoku, включая переключение с прямого режима и остановку VPN во время загрузки.

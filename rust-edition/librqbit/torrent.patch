@@ -1,17 +1,17 @@
 diff --git a/crates/librqbit/src/session.rs b/crates/librqbit/src/session.rs
-index 5e02415..2e0fe81 100644
+index 1d63605..34c8eca 100644
 --- a/crates/librqbit/src/session.rs
 +++ b/crates/librqbit/src/session.rs
-@@ -118,7 +118,7 @@ pub struct Session {
+@@ -123,7 +123,7 @@ pub struct Session {
      dht: Option<Dht>,
      pub(crate) connector: Arc<StreamConnector>,
-     reqwest_client: reqwest::Client,
+     pub(crate) reqwest_client: reqwest::Client,
 -    udp_tracker_client: UdpTrackerClient,
 +    udp_tracker_client: Option<UdpTrackerClient>,
      disable_trackers: bool,
+     disable_web_seeds: bool,
  
-     // Lifecycle management
-@@ -587,6 +587,29 @@ impl Session {
+@@ -636,6 +636,29 @@ impl Session {
                  warn!("uploading disabled");
              }
  
@@ -41,7 +41,7 @@ index 5e02415..2e0fe81 100644
              let bind_device = match opts.bind_device_name.as_ref() {
                  Some(name) => Some(
                      BindDevice::new_from_name(name)
-@@ -697,15 +720,6 @@ impl Session {
+@@ -746,15 +769,6 @@ impl Session {
                  .await
                  .context("error initializing session persistence store")?;
  
@@ -57,7 +57,7 @@ index 5e02415..2e0fe81 100644
              let client_name_and_version = opts
                  .client_name_and_version
                  .unwrap_or_else(|| crate::client_name_and_version().to_owned());
-@@ -765,9 +779,15 @@ impl Session {
+@@ -814,9 +828,15 @@ impl Session {
                  None
              };
  
@@ -76,15 +76,15 @@ index 5e02415..2e0fe81 100644
  
              let lsd = {
                  if opts.disable_local_service_discovery {
-@@ -1375,6 +1395,7 @@ impl Session {
+@@ -1509,6 +1529,7 @@ impl Session {
                  connector: self.connector.clone(),
                  session: Arc::downgrade(self),
                  magnet_name: name,
 +                file_priority_order: parking_lot::RwLock::new(None),
                  client_name_and_version: self.client_name_and_version.clone(),
-             });
- 
-@@ -1568,6 +1589,10 @@ impl Session {
+                 web_seeds: WebSeeds::new(web_seeds, opts.disable_web_seeds, self.disable_web_seeds),
+                 location: RwLock::new(StorageLocation {
+@@ -1762,6 +1783,10 @@ impl Session {
              trackers.clear();
          }
  
@@ -95,7 +95,7 @@ index 5e02415..2e0fe81 100644
          if is_private && trackers.len() > 1 {
              warn!(
                  ?info_hash,
-@@ -1638,6 +1663,18 @@ impl Session {
+@@ -2275,6 +2300,18 @@ impl Session {
          Ok(())
      }
  
@@ -114,7 +114,7 @@ index 5e02415..2e0fe81 100644
      pub fn listen_addr(&self) -> Option<SocketAddr> {
          self.listen_addr
      }
-@@ -1826,6 +1863,211 @@ mod tests {
+@@ -2488,6 +2525,214 @@ mod tests {
  
      use super::{is_bare_info_hash, torrent_file_from_info_bytes};
  
@@ -161,6 +161,7 @@ index 5e02415..2e0fe81 100644
 +            session
 +                .make_peer_rx(
 +                    librqbit_core::hash_id::Id20::new([1; 20]),
++                    None,
 +                    vec![tracker],
 +                    true,
 +                    None,
@@ -176,6 +177,7 @@ index 5e02415..2e0fe81 100644
 +        let mut peers = session
 +            .make_peer_rx(
 +                librqbit_core::hash_id::Id20::new([1; 20]),
++                None,
 +                Vec::new(),
 +                true,
 +                None,
@@ -244,6 +246,7 @@ index 5e02415..2e0fe81 100644
 +        let mut trackers = session
 +            .make_peer_rx(
 +                librqbit_core::hash_id::Id20::new([1; 20]),
++                None,
 +                vec!["http://tracker.invalid/announce".parse().unwrap()],
 +                true,
 +                None,
@@ -343,13 +346,40 @@ index bdc7188..6e4c6de 100644
      /// socks5h:// resolves hostnames via the proxy; socks5:// resolves them locally.
      pub fn parse(url: &str) -> anyhow::Result<Self> {
          let url = ::url::Url::parse(url).context("invalid proxy URL")?;
+diff --git a/crates/librqbit/src/tests/e2e_v2.rs b/crates/librqbit/src/tests/e2e_v2.rs
+index 65c1f9d..9164658 100644
+--- a/crates/librqbit/src/tests/e2e_v2.rs
++++ b/crates/librqbit/src/tests/e2e_v2.rs
+@@ -519,7 +519,21 @@ async fn test_e2e_v2_corrupted_block_is_redownloaded() -> anyhow::Result<()> {
+                         data[0] ^= 1;
+                         corrupted = Some(index);
+                     }
+-                    peer.piece(index, begin, &data).await?;
++                    if let Err(error) = peer.piece(index, begin, &data).await {
++                        // Requests may already be queued when the client rejects the bad
++                        // piece and closes the connection.
++                        if error.downcast_ref::<std::io::Error>().is_some_and(|error| {
++                            matches!(
++                                error.kind(),
++                                std::io::ErrorKind::BrokenPipe
++                                    | std::io::ErrorKind::ConnectionReset
++                                    | std::io::ErrorKind::ConnectionAborted
++                            )
++                        }) {
++                            break;
++                        }
++                        return Err(error);
++                    }
+                 }
+                 Recv::Msg(_) => {}
+                 Recv::Closed => break,
 diff --git a/crates/librqbit/src/torrent_state/live/mod.rs b/crates/librqbit/src/torrent_state/live/mod.rs
-index 804ef26..adbd215 100644
+index 9d18798..839f143 100644
 --- a/crates/librqbit/src/torrent_state/live/mod.rs
 +++ b/crates/librqbit/src/torrent_state/live/mod.rs
-@@ -243,8 +243,8 @@ impl TorrentStateLive {
+@@ -248,8 +248,8 @@ impl TorrentStateLive {
          let have_bytes = paused.chunk_tracker.get_hns().have_bytes;
-         let lengths = *paused.chunk_tracker.get_lengths();
+         let lengths = paused.chunk_tracker.get_lengths().clone();
  
 -        // TODO: make it configurable
 -        let file_priorities = {
@@ -358,7 +388,7 @@ index 804ef26..adbd215 100644
              let mut pri = (0..paused.metadata.file_infos.len()).collect::<Vec<usize>>();
              // sort by filename, cause many torrents have random sort order.
              pri.sort_unstable_by_key(|id| {
-@@ -255,7 +255,7 @@ impl TorrentStateLive {
+@@ -260,7 +260,7 @@ impl TorrentStateLive {
                      .map(|fi| fi.relative_filename.as_path())
              });
              pri
@@ -367,7 +397,7 @@ index 804ef26..adbd215 100644
  
          let (have_broadcast_tx, _) = tokio::sync::broadcast::channel(128);
  
-@@ -809,11 +809,25 @@ impl TorrentStateLive {
+@@ -844,11 +844,25 @@ impl TorrentStateLive {
          Err(res)
      }
  
@@ -399,10 +429,10 @@ index 804ef26..adbd215 100644
          // while it asks whether the torrent is finished (on_peer_died), so touching the
          // table under the state lock is the reverse order, and the two deadlock.
 diff --git a/crates/librqbit/src/torrent_state/mod.rs b/crates/librqbit/src/torrent_state/mod.rs
-index db47001..875b86a 100644
+index b5164be..e63e391 100644
 --- a/crates/librqbit/src/torrent_state/mod.rs
 +++ b/crates/librqbit/src/torrent_state/mod.rs
-@@ -46,8 +46,8 @@ use crate::spawn_utils::BlockingSpawner;
+@@ -50,8 +50,8 @@ use crate::spawn_utils::BlockingSpawner;
  use crate::storage::BoxStorageFactory;
  use crate::stream_connect::StreamConnector;
  use crate::torrent_state::stats::LiveStats;
@@ -412,15 +442,15 @@ index db47001..875b86a 100644
  
  use initializing::TorrentStateInitializing;
  
-@@ -193,6 +193,7 @@ pub struct ManagedTorrentShared {
+@@ -209,6 +209,7 @@ pub struct ManagedTorrentShared {
  
      // "dn" from magnet link
      pub(crate) magnet_name: Option<String>,
 +    pub(crate) file_priority_order: RwLock<Option<FilePriorities>>,
  
      pub(crate) client_name_and_version: String,
- }
-@@ -616,6 +617,37 @@ impl ManagedTorrent {
+ 
+@@ -802,6 +803,37 @@ impl ManagedTorrent {
      // Returns true if needed to unpause torrent.
      // This is just implementation detail - it's easier to pause/unpause than to tinker with internals.
      pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
@@ -458,7 +488,7 @@ index db47001..875b86a 100644
          let metadata = self.metadata.load();
          let metadata = metadata.as_ref().context("torrent is not resolved")?;
          let file_count = metadata.file_infos.len();
-@@ -638,10 +670,11 @@ impl ManagedTorrent {
+@@ -824,10 +856,11 @@ impl ManagedTorrent {
                  p.update_only_files(only_files)?;
              }
              ManagedTorrentState::Live(l) => {

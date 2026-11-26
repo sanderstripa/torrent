@@ -195,7 +195,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ikatson/rqbit
-          ref: 4309d38769ef93f6ee4f01a1ab147009a197fa8f
+          ref: d525e433f2ccde9d837e68eddd190be4275a2fa7
           path: .rqbit
           persist-credentials: false
       - name: Apply and verify Torrent's librqbit patch
@@ -203,7 +203,7 @@ jobs:
         run: |
           git -C .rqbit apply "$PWD/rust-edition/librqbit/torrent.patch"
           if ($LASTEXITCODE) { throw "librqbit patch failed to apply" }
-          cargo test --manifest-path .rqbit/Cargo.toml --locked -p librqbit --no-default-features --features rust-tls session::tests
+          cargo test --manifest-path .rqbit/Cargo.toml --locked -p librqbit --no-default-features --features rust-tls --lib
           if ($LASTEXITCODE) { throw "librqbit session tests failed" }
   rust-libtorrent-integration:
     if: github.ref == 'refs/heads/rust-edition'
