@@ -91,9 +91,28 @@ try {
     if ((Get-Content $prefs)[1] -ne '1 1 0 0') {
         throw 'Changing the theme did not save the preference while settings were open'
     }
+    Command $settings 129
+    for ($attempt = 0; $attempt -lt 50 -and (Get-Content $prefs)[1] -ne '1 1 0 1'; $attempt++) {
+        Start-Sleep -Milliseconds 100
+    }
+    if ((Get-Content $prefs)[1] -ne '1 1 0 1') {
+        throw 'Changing notification area behavior did not save the preference'
+    }
     Command $settings 111
     Start-Sleep -Milliseconds 400
     [RustTorrentUI]::PostMessage($main, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+    for ($attempt = 0; $attempt -lt 50 -and [RustTorrentUI]::IsWindowVisible($main); $attempt++) {
+        Start-Sleep -Milliseconds 100
+    }
+    $process.Refresh()
+    if ($process.HasExited -or [RustTorrentUI]::IsWindowVisible($main)) {
+        throw 'Closing with notification area enabled did not hide the running client'
+    }
+    [RustTorrentUI]::PostMessage($main, 0x800B, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+    if ((Wait-Visible 'Torrent Rust Edition') -ne $main) {
+        throw 'Reopening from the notification area did not restore the same window'
+    }
+    [RustTorrentUI]::PostMessage($main, 0x800C, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     if (!$process.WaitForExit(30000)) { throw 'Torrent did not close cleanly' }
     if ($process.ExitCode) { throw "Torrent exited with $($process.ExitCode)" }
     $sidecars = @(Get-ChildItem (Join-Path $profile.FullName 'session') -Filter '*.state')

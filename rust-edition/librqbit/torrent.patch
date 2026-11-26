@@ -1,5 +1,5 @@
 diff --git a/crates/librqbit/src/session.rs b/crates/librqbit/src/session.rs
-index 5e02415..0a8ac46 100644
+index 5e02415..2e0fe81 100644
 --- a/crates/librqbit/src/session.rs
 +++ b/crates/librqbit/src/session.rs
 @@ -118,7 +118,7 @@ pub struct Session {
@@ -114,7 +114,7 @@ index 5e02415..0a8ac46 100644
      pub fn listen_addr(&self) -> Option<SocketAddr> {
          self.listen_addr
      }
-@@ -1826,6 +1863,149 @@ mod tests {
+@@ -1826,6 +1863,211 @@ mod tests {
  
      use super::{is_bare_info_hash, torrent_file_from_info_bytes};
  
@@ -197,6 +197,68 @@ index 5e02415..0a8ac46 100644
 +                .await
 +                .is_err()
 +        );
++    }
++
++    #[tokio::test]
++    async fn isolated_session_sends_tracker_dns_to_the_proxy() {
++        use std::time::Duration;
++
++        use futures::StreamExt;
++        use tokio::io::{AsyncReadExt, AsyncWriteExt};
++        use tokio::net::TcpListener;
++        use tokio::time::timeout;
++
++        use crate::{ConnectionOptions, Session, SessionOptions};
++
++        let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let proxy_address = proxy.local_addr().unwrap();
++        let proxy_request = async {
++            let (mut stream, _) = proxy.accept().await.unwrap();
++            let mut greeting = [0; 3];
++            stream.read_exact(&mut greeting).await.unwrap();
++            assert_eq!(greeting, [5, 1, 0]);
++            stream.write_all(&[5, 0]).await.unwrap();
++            let mut request = [0; 5];
++            stream.read_exact(&mut request).await.unwrap();
++            assert_eq!(&request[..4], &[5, 1, 0, 3]);
++            let mut name = vec![0; usize::from(request[4])];
++            stream.read_exact(&mut name).await.unwrap();
++            assert_eq!(name, b"tracker.invalid");
++            let port = stream.read_u16().await.unwrap();
++            assert_eq!(port, 80);
++        };
++
++        let directory = tempfile::tempdir().unwrap();
++        let session = Session::new_with_opts(
++            directory.path().to_owned(),
++            SessionOptions {
++                connect: Some(ConnectionOptions {
++                    proxy_url: Some(format!("socks5h://{proxy_address}")),
++                    ..Default::default()
++                }),
++                ..Default::default()
++            },
++        )
++        .await
++        .unwrap();
++        let mut trackers = session
++            .make_peer_rx(
++                librqbit_core::hash_id::Id20::new([1; 20]),
++                vec!["http://tracker.invalid/announce".parse().unwrap()],
++                true,
++                None,
++                Vec::new(),
++                false,
++            )
++            .unwrap();
++        timeout(Duration::from_secs(5), async {
++            tokio::select! {
++                _ = proxy_request => {},
++                _ = trackers.next() => panic!("tracker never used the SOCKS proxy"),
++            }
++        })
++        .await
++        .expect("tracker did not connect through the SOCKS proxy");
 +    }
 +
 +    #[tokio::test(flavor = "multi_thread")]
