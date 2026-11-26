@@ -53,7 +53,7 @@ $folder = New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP ([guid]::NewG
 $profile = New-Item -ItemType Directory (Join-Path $folder.FullName 're-ui-test-data')
 $download = New-Item -ItemType Directory (Join-Path $folder.FullName 'Downloads')
 $prefs = Join-Path $profile.FullName 'settings.txt'
-[IO.File]::WriteAllText($prefs, "$($download.FullName)`n1 0 0 0", [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText($prefs, "$($download.FullName)`n1 0 0 0 0", [Text.UTF8Encoding]::new($false))
 $fixture = Join-Path $folder.FullName 'fixture.torrent'
 $metadata = [Text.Encoding]::ASCII.GetBytes('d4:infod6:lengthi4e4:name7:fixture12:piece lengthi16384e6:pieces20:')
 $digest = [Security.Cryptography.SHA1]::HashData([Text.Encoding]::ASCII.GetBytes('aaaa'))
@@ -85,17 +85,17 @@ try {
     }
     if (!$animationComplete) { throw 'Settings animation did not complete' }
     Command $settings 126
-    for ($attempt = 0; $attempt -lt 50 -and (Get-Content $prefs)[1] -ne '1 1 0 0'; $attempt++) {
+    for ($attempt = 0; $attempt -lt 50 -and (Get-Content $prefs)[1] -ne '1 1 0 0 0'; $attempt++) {
         Start-Sleep -Milliseconds 100
     }
-    if ((Get-Content $prefs)[1] -ne '1 1 0 0') {
+    if ((Get-Content $prefs)[1] -ne '1 1 0 0 0') {
         throw 'Changing the theme did not save the preference while settings were open'
     }
     Command $settings 129
-    for ($attempt = 0; $attempt -lt 50 -and (Get-Content $prefs)[1] -ne '1 1 0 1'; $attempt++) {
+    for ($attempt = 0; $attempt -lt 50 -and (Get-Content $prefs)[1] -ne '1 1 0 1 0'; $attempt++) {
         Start-Sleep -Milliseconds 100
     }
-    if ((Get-Content $prefs)[1] -ne '1 1 0 1') {
+    if ((Get-Content $prefs)[1] -ne '1 1 0 1 0') {
         throw 'Changing notification area behavior did not save the preference'
     }
     Command $settings 111

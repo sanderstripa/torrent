@@ -68,6 +68,7 @@ const THEME_DARK: usize = 126;
 const CHANGE_LANGUAGE: usize = 127;
 const CHANGE_ADD: usize = 128;
 const TOGGLE_TRAY: usize = 129;
+const VPN_COMMAND: usize = 130;
 const CONTEXT: u32 = WM_APP + 2;
 const LAYOUT: u32 = WM_APP + 3;
 const REQUEST_CLOSE: u32 = WM_APP + 4;
@@ -265,7 +266,9 @@ unsafe extern "system" fn dispatch(
         WM_COMMAND
             if (wparam >> 16 == 0
                 && ((ADD_MAGNET..=THEME_DARK).contains(&(wparam & 0xffff))
-                    || (wparam & 0xffff) == TOGGLE_TRAY))
+                    || (wparam & 0xffff) == TOGGLE_TRAY
+                    || cfg!(all(feature = "rqbit", feature = "vpn"))
+                        && (wparam & 0xffff) == VPN_COMMAND))
                 || (wparam >> 16 == CBN_SELCHANGE as usize
                     && [CHANGE_LANGUAGE, CHANGE_ADD].contains(&(wparam & 0xffff))) =>
         {
@@ -983,6 +986,8 @@ impl Controls {
                 id,
             )?;
         }
+        #[cfg(all(feature = "rqbit", feature = "vpn"))]
+        child("BUTTON", "VPN", WS_TABSTOP, (0, 16, 54, 32), VPN_COMMAND)?;
         let list = child(
             "LISTBOX",
             "",
@@ -1065,6 +1070,11 @@ impl Controls {
             let button = unsafe { GetDlgItem(self.window, id as i32) };
             let x = available.right - 46 - index as i32 * 40;
             unsafe { MoveWindow(button, x, 16, 32, 32, 1) };
+        }
+        #[cfg(all(feature = "rqbit", feature = "vpn"))]
+        unsafe {
+            let button = GetDlgItem(self.window, VPN_COMMAND as i32);
+            MoveWindow(button, available.right - 232, 16, 54, 32, 1);
         }
         unsafe {
             MoveWindow(
@@ -1219,6 +1229,75 @@ fn magnet_input(owner: HWND, en: bool) -> Result<Option<String>, String> {
         _ => false,
     });
     Ok(source)
+}
+
+#[cfg(all(feature = "rqbit", feature = "vpn"))]
+fn vpn_command(
+    owner: HWND,
+    vpn: &mut crate::windows_vpn::Vpn,
+    queue: &Transfers<'_>,
+    prefs: &mut Preferences,
+    profile: &std::path::Path,
+) -> Result<(), String> {
+    let en = prefs.english;
+    let dialog = Dialog::create(owner, "VPN", 570, 150)?;
+    let edit = dialog.control(
+        "EDIT",
+        &vpn.key()?,
+        WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL as u32 | ES_PASSWORD as u32,
+        (20, 18, 520, 28),
+        0,
+    )?;
+    dialog.control(
+        "BUTTON",
+        tr(en, "Подключить", "Connect"),
+        WS_TABSTOP,
+        (20, 65, 110, 30),
+        ACCEPT,
+    )?;
+    dialog.control(
+        "BUTTON",
+        tr(en, "Отключить", "Disconnect"),
+        WS_TABSTOP,
+        (140, 65, 110, 30),
+        VPN_COMMAND,
+    )?;
+    dialog.control(
+        "BUTTON",
+        tr(en, "Отмена", "Cancel"),
+        WS_TABSTOP,
+        (260, 65, 110, 30),
+        CANCEL,
+    )?;
+    let mut result = Ok(());
+    dialog.run(|id| match id {
+        CANCEL => true,
+        ACCEPT => {
+            let key = edit_text(edit);
+            prefs.vpn_enabled = true;
+            let connection = vpn.connect(queue, key.trim());
+            let preference = std::fs::create_dir_all(profile)
+                .and_then(|()| prefs.save(profile))
+                .map_err(|error| error.to_string());
+            let key = vpn.save_key(key.trim());
+            result = preference.and(key).and(connection);
+            true
+        }
+        VPN_COMMAND => {
+            // Persist the explicit opt-out before enabling direct traffic.
+            prefs.vpn_enabled = false;
+            result = match prefs.save(profile) {
+                Ok(()) => vpn.disconnect(queue),
+                Err(error) => {
+                    prefs.vpn_enabled = true;
+                    Err(error.to_string())
+                }
+            };
+            true
+        }
+        _ => false,
+    });
+    result
 }
 
 fn menu(owner: HWND, x: i32, y: i32, entries: &[(usize, &str)]) -> Option<usize> {
@@ -1689,6 +1768,16 @@ pub fn run() -> Result<(), String> {
             let stable = local.join("Torrent");
             let settings = stable.join("settings.txt");
             let position = stable.join("window-position.txt");
+            #[cfg(all(feature = "rqbit", feature = "vpn"))]
+            {
+                let key = stable.join("VPN").join("connection-key.dat");
+                if key.is_file() {
+                    std::fs::create_dir_all(profile.join("VPN"))
+                        .map_err(|error| error.to_string())?;
+                    std::fs::copy(key, profile.join("VPN").join("connection-key.dat"))
+                        .map_err(|error| error.to_string())?;
+                }
+            }
             if settings.is_file() || position.is_file() {
                 std::fs::create_dir_all(&profile).map_err(|error| error.to_string())?;
                 for item in [settings, position] {
@@ -1704,10 +1793,22 @@ pub fn run() -> Result<(), String> {
     let default_folder = downloads_folder().unwrap_or_else(|| profile.join("Downloads"));
     let mut prefs =
         Preferences::load(&profile, default_folder).map_err(|error| error.to_string())?;
-    let session = Session::open(PREVIEW_POLICY, smoke || interaction)?;
+    let session = Session::open(
+        PREVIEW_POLICY,
+        smoke || interaction || cfg!(feature = "rqbit") && prefs.vpn_enabled,
+    )?;
     let (mut transfers, warnings) = Transfers::open(&session, &profile.join("session"))?;
     if !warnings.is_empty() && !smoke {
         show_error(&warnings.join("\n"));
+    }
+    #[cfg(all(feature = "rqbit", feature = "vpn"))]
+    let mut vpn = crate::windows_vpn::Vpn::new(&profile);
+    #[cfg(all(feature = "rqbit", feature = "vpn"))]
+    if !smoke && !interaction && prefs.vpn_enabled {
+        match vpn.key().and_then(|key| vpn.connect(&transfers, &key)) {
+            Ok(()) => {}
+            Err(error) => show_error(&error),
+        }
     }
     unsafe {
         let instance = GetModuleHandleW(null());
@@ -1880,6 +1981,12 @@ pub fn run() -> Result<(), String> {
                     DispatchMessageW(&message);
                 }
                 _ if message.hwnd == window && message.message == WM_TIMER => {
+                    #[cfg(all(feature = "rqbit", feature = "vpn"))]
+                    if let Err(error) = vpn.tick(&transfers) {
+                        if !hidden_to_tray {
+                            show_error(&error);
+                        }
+                    }
                     if !hidden_to_tray {
                         if let Err(error) =
                             prompt_for_files(window, &mut transfers, &mut prompted, prefs.english)
@@ -1983,6 +2090,10 @@ pub fn run() -> Result<(), String> {
                             Ok(())
                         }),
                         SETTINGS => settings(window, &mut prefs, &profile, &controls),
+                        #[cfg(all(feature = "rqbit", feature = "vpn"))]
+                        VPN_COMMAND => {
+                            vpn_command(window, &mut vpn, &transfers, &mut prefs, &profile)
+                        }
                         _ => Ok(()),
                     };
                     match result {

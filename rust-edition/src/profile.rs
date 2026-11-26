@@ -10,6 +10,7 @@ pub struct Preferences {
     pub theme: Theme,
     pub english: bool,
     pub close_to_tray: bool,
+    pub vpn_enabled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +28,7 @@ impl Preferences {
             theme: Theme::Light,
             english: false,
             close_to_tray: true,
+            vpn_enabled: false,
         };
         match fs::read(root.join("settings.txt")) {
             Ok(bytes) if !bytes.is_empty() => {
@@ -45,6 +47,7 @@ impl Preferences {
                 };
                 defaults.english = options.next().unwrap_or_default() > 0;
                 defaults.close_to_tray = options.next().unwrap_or(1) > 0;
+                defaults.vpn_enabled = options.next().unwrap_or_default() > 0;
             }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -65,11 +68,12 @@ impl Preferences {
                 )
             })?;
         let text = format!(
-            "{folder}\n{} {} {} {}",
+            "{folder}\n{} {} {} {} {}",
             u8::from(self.select_files),
             self.theme as u8,
             u8::from(self.english),
             u8::from(self.close_to_tray),
+            u8::from(self.vpn_enabled),
         );
         atomic_write(
             &root.join("settings.txt"),
@@ -184,7 +188,7 @@ mod tests {
             prefs.save(&dir)?;
             assert_eq!(
                 fs::read_to_string(dir.join("settings.txt"))?,
-                format!("{sample} 1")
+                format!("{sample} 1 0")
             );
             fs::write(dir.join("settings.txt"), format!("{sample} 0 0"))?;
             assert!(!Preferences::load(&dir, fallback.clone())?.close_to_tray);

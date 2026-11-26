@@ -4,6 +4,8 @@
 mod windows_app;
 #[cfg(windows)]
 mod windows_paint;
+#[cfg(all(windows, feature = "rqbit", feature = "vpn"))]
+mod windows_vpn;
 
 #[cfg(windows)]
 fn main() {

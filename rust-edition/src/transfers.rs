@@ -120,6 +120,15 @@ impl<'session> Transfers<'session> {
         self.save_order()
     }
 
+    #[cfg(feature = "rqbit")]
+    pub fn change_network(&self, network: crate::engine::Network) -> Result<(), String> {
+        // Capture metadata so magnet entries can be restored without discovery.
+        for entry in &self.entries {
+            entry.handle.detach();
+        }
+        self.session.change_network(network)
+    }
+
     fn save_order(&self) -> Result<(), String> {
         let keys: Vec<_> = self
             .entries
