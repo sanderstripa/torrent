@@ -1,0 +1,472 @@
+diff --git a/crates/librqbit/src/session.rs b/crates/librqbit/src/session.rs
+index 5e02415..6fbdba7 100644
+--- a/crates/librqbit/src/session.rs
++++ b/crates/librqbit/src/session.rs
+@@ -118,7 +118,7 @@ pub struct Session {
+     dht: Option<Dht>,
+     pub(crate) connector: Arc<StreamConnector>,
+     reqwest_client: reqwest::Client,
+-    udp_tracker_client: UdpTrackerClient,
++    udp_tracker_client: Option<UdpTrackerClient>,
+     disable_trackers: bool,
+ 
+     // Lifecycle management
+@@ -587,6 +587,29 @@ impl Session {
+                 warn!("uploading disabled");
+             }
+ 
++            let proxy_url = opts.connect.as_ref().and_then(|c| c.proxy_url.as_ref());
++            let proxy_config = proxy_url
++                .map(|url| {
++                    anyhow::ensure!(
++                        url.starts_with("socks5h://"),
++                        "isolated sessions require socks5h"
++                    );
++                    let config = SocksProxyConfig::parse(url)?;
++                    anyhow::ensure!(
++                        config.is_loopback(),
++                        "isolated sessions require a loopback proxy"
++                    );
++                    Ok::<_, anyhow::Error>(config)
++                })
++                .transpose()?;
++            let isolated = proxy_config.is_some();
++
++            if isolated {
++                opts.listen = None;
++                opts.dht = None;
++                opts.disable_local_service_discovery = true;
++            }
++
+             let bind_device = match opts.bind_device_name.as_ref() {
+                 Some(name) => Some(
+                     BindDevice::new_from_name(name)
+@@ -697,15 +720,6 @@ impl Session {
+                 .await
+                 .context("error initializing session persistence store")?;
+ 
+-            let proxy_url = opts.connect.as_ref().and_then(|s| s.proxy_url.as_ref());
+-            let proxy_config = match proxy_url {
+-                Some(pu) => Some(
+-                    SocksProxyConfig::parse(pu)
+-                        .with_context(|| format!("error parsing proxy url {pu}"))?,
+-                ),
+-                None => None,
+-            };
+-
+             let client_name_and_version = opts
+                 .client_name_and_version
+                 .unwrap_or_else(|| crate::client_name_and_version().to_owned());
+@@ -765,9 +779,15 @@ impl Session {
+                 None
+             };
+ 
+-            let udp_tracker_client = UdpTrackerClient::new(token.clone(), bind_device.as_ref())
+-                .await
+-                .context("error creating UDP tracker client")?;
++            let udp_tracker_client = if isolated {
++                None
++            } else {
++                Some(
++                    UdpTrackerClient::new(token.clone(), bind_device.as_ref())
++                        .await
++                        .context("error creating UDP tracker client")?,
++                )
++            };
+ 
+             let lsd = {
+                 if opts.disable_local_service_discovery {
+@@ -1375,6 +1395,7 @@ impl Session {
+                 connector: self.connector.clone(),
+                 session: Arc::downgrade(self),
+                 magnet_name: name,
++                file_priority_order: parking_lot::RwLock::new(None),
+                 client_name_and_version: self.client_name_and_version.clone(),
+             });
+ 
+@@ -1568,6 +1589,10 @@ impl Session {
+             trackers.clear();
+         }
+ 
++        if self.udp_tracker_client.is_none() {
++            trackers.retain(|tracker| matches!(tracker.scheme(), "http" | "https"));
++        }
++
+         if is_private && trackers.len() > 1 {
+             warn!(
+                 ?info_hash,
+@@ -1638,6 +1663,18 @@ impl Session {
+         Ok(())
+     }
+ 
++    /// Set per-file priorities. Zero excludes a file and higher values are scheduled first.
++    /// The caller must persist the priorities if it needs them across session restarts.
++    pub async fn update_file_priorities(
++        &self,
++        handle: &ManagedTorrentHandle,
++        priorities: &[u8],
++    ) -> anyhow::Result<()> {
++        handle.update_file_priorities(priorities)?;
++        self.try_update_persistence_metadata(handle).await;
++        Ok(())
++    }
++
+     pub fn listen_addr(&self) -> Option<SocketAddr> {
+         self.listen_addr
+     }
+@@ -1826,6 +1863,143 @@ mod tests {
+ 
+     use super::{is_bare_info_hash, torrent_file_from_info_bytes};
+ 
++    #[tokio::test]
++    async fn isolated_session_disables_direct_transports() {
++        use std::time::Duration;
++
++        use futures::StreamExt;
++        use tokio::net::{TcpSocket, UdpSocket};
++        use tokio::time::timeout;
++
++        use crate::{ConnectionOptions, Session, SessionOptions};
++
++        let udp = UdpSocket::bind("127.0.0.1:0").await.unwrap();
++        let tracker = format!("udp://{}/announce", udp.local_addr().unwrap())
++            .parse()
++            .unwrap();
++        let proxy = TcpSocket::new_v4().unwrap();
++        proxy.bind("127.0.0.1:0".parse().unwrap()).unwrap();
++        let directory = tempfile::tempdir().unwrap();
++        let session = Session::new_with_opts(
++            directory.path().to_owned(),
++            SessionOptions {
++                connect: Some(ConnectionOptions {
++                    proxy_url: Some(format!("socks5h://{}", proxy.local_addr().unwrap())),
++                    ..Default::default()
++                }),
++                ..Default::default()
++            },
++        )
++        .await
++        .unwrap();
++
++        assert!(session.get_dht().is_none());
++        assert!(session.listen_addr().is_none());
++        assert!(session.lsd.is_none());
++        assert!(session.udp_tracker_client.is_none());
++        assert!(
++            session
++                .make_peer_rx(
++                    librqbit_core::hash_id::Id20::new([1; 20]),
++                    vec![tracker],
++                    true,
++                    None,
++                    Vec::new(),
++                    false,
++                )
++                .is_none()
++        );
++
++        // With the SOCKS endpoint down, trying an explicit peer must still never connect directly.
++        let peer = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let peer_address = peer.local_addr().unwrap();
++        let mut peers = session
++            .make_peer_rx(
++                librqbit_core::hash_id::Id20::new([1; 20]),
++                Vec::new(),
++                true,
++                None,
++                vec![peer_address],
++                false,
++            )
++            .unwrap();
++        assert_eq!(peers.next().await, Some(peer_address));
++        let connection = timeout(
++            Duration::from_secs(2),
++            session.connector.connect(peer_address),
++        )
++        .await
++        .expect("connection attempt timed out");
++        assert!(connection.is_err());
++        assert!(
++            timeout(Duration::from_millis(100), peer.accept())
++                .await
++                .is_err()
++        );
++    }
++
++    #[tokio::test(flavor = "multi_thread")]
++    async fn file_priorities_order_downloads_and_exclude_zero() {
++        use crate::spawn_utils::BlockingSpawner;
++        use crate::tests::test_util::create_default_random_dir_with_torrents;
++        use crate::{AddTorrent, AddTorrentOptions, Session, SessionOptions, create_torrent};
++
++        let source = create_default_random_dir_with_torrents(4, 32768, Some("file-priorities"));
++        let destination = tempfile::tempdir().unwrap();
++        let torrent = create_torrent(source.path(), Default::default(), &BlockingSpawner::new(1))
++            .await
++            .unwrap()
++            .as_bytes()
++            .unwrap();
++        let session = Session::new_with_opts(
++            destination.path().to_owned(),
++            SessionOptions {
++                dht: None,
++                listen: None,
++                disable_trackers: true,
++                disable_local_service_discovery: true,
++                ..Default::default()
++            },
++        )
++        .await
++        .unwrap();
++        let handle = session
++            .add_torrent(
++                AddTorrent::from_bytes(torrent),
++                Some(AddTorrentOptions {
++                    paused: true,
++                    ..Default::default()
++                }),
++            )
++            .await
++            .unwrap()
++            .into_handle()
++            .unwrap();
++        handle.wait_until_initialized().await.unwrap();
++        session
++            .update_file_priorities(&handle, &[1, 0, 4, 7])
++            .await
++            .unwrap();
++
++        assert_eq!(
++            handle.shared().file_priority_order.read().as_deref(),
++            Some(&[3, 2, 0][..])
++        );
++        let mut selection = handle.only_files().unwrap();
++        selection.sort_unstable();
++        assert_eq!(selection, [0, 2, 3]);
++        assert!(
++            session
++                .update_file_priorities(&handle, &[8, 0, 4, 7])
++                .await
++                .is_err()
++        );
++        assert_eq!(
++            handle.shared().file_priority_order.read().as_deref(),
++            Some(&[3, 2, 0][..])
++        );
++    }
++
+     #[test]
+     fn test_is_bare_info_hash() {
+         assert!(is_bare_info_hash(
+diff --git a/crates/librqbit/src/stream_connect.rs b/crates/librqbit/src/stream_connect.rs
+index bdc7188..6e4c6de 100644
+--- a/crates/librqbit/src/stream_connect.rs
++++ b/crates/librqbit/src/stream_connect.rs
+@@ -68,6 +68,12 @@ pub(crate) struct StreamConnectorArgs {
+ }
+ 
+ impl SocksProxyConfig {
++    pub(crate) fn is_loopback(&self) -> bool {
++        self.host
++            .parse::<std::net::IpAddr>()
++            .is_ok_and(|address| address.is_loopback())
++    }
++
+     /// socks5h:// resolves hostnames via the proxy; socks5:// resolves them locally.
+     pub fn parse(url: &str) -> anyhow::Result<Self> {
+         let url = ::url::Url::parse(url).context("invalid proxy URL")?;
+diff --git a/crates/librqbit/src/torrent_state/live/mod.rs b/crates/librqbit/src/torrent_state/live/mod.rs
+index 804ef26..adbd215 100644
+--- a/crates/librqbit/src/torrent_state/live/mod.rs
++++ b/crates/librqbit/src/torrent_state/live/mod.rs
+@@ -243,8 +243,8 @@ impl TorrentStateLive {
+         let have_bytes = paused.chunk_tracker.get_hns().have_bytes;
+         let lengths = *paused.chunk_tracker.get_lengths();
+ 
+-        // TODO: make it configurable
+-        let file_priorities = {
++        let saved_order = paused.shared.file_priority_order.read().clone();
++        let file_priorities = saved_order.unwrap_or_else(|| {
+             let mut pri = (0..paused.metadata.file_infos.len()).collect::<Vec<usize>>();
+             // sort by filename, cause many torrents have random sort order.
+             pri.sort_unstable_by_key(|id| {
+@@ -255,7 +255,7 @@ impl TorrentStateLive {
+                     .map(|fi| fi.relative_filename.as_path())
+             });
+             pri
+-        };
++        });
+ 
+         let (have_broadcast_tx, _) = tokio::sync::broadcast::channel(128);
+ 
+@@ -809,11 +809,25 @@ impl TorrentStateLive {
+         Err(res)
+     }
+ 
+-    pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
+-        let hns = self
+-            .lock_write("update_only_files")
+-            .get_pieces_mut()?
+-            .update_only_files(&self.metadata.file_infos, only_files)?;
++    pub(crate) fn update_only_files(
++        &self,
++        only_files: &HashSet<usize>,
++        order: Option<&FilePriorities>,
++    ) -> anyhow::Result<()> {
++        let hns = {
++            let mut state = self.lock_write("update_only_files");
++            let hns = state
++                .get_pieces_mut()?
++                .update_only_files(&self.metadata.file_infos, only_files)?;
++            state.file_priorities = order.cloned().unwrap_or_else(|| {
++                let mut order: FilePriorities = (0..self.metadata.file_infos.len()).collect();
++                order.sort_unstable_by_key(|&index| {
++                    self.metadata.file_infos[index].relative_filename.as_path()
++                });
++                order
++            });
++            hns
++        };
+         // With the state lock released. A dying peer holds its shard of the peer table
+         // while it asks whether the torrent is finished (on_peer_died), so touching the
+         // table under the state lock is the reverse order, and the two deadlock.
+diff --git a/crates/librqbit/src/torrent_state/mod.rs b/crates/librqbit/src/torrent_state/mod.rs
+index db47001..875b86a 100644
+--- a/crates/librqbit/src/torrent_state/mod.rs
++++ b/crates/librqbit/src/torrent_state/mod.rs
+@@ -46,8 +46,8 @@ use crate::spawn_utils::BlockingSpawner;
+ use crate::storage::BoxStorageFactory;
+ use crate::stream_connect::StreamConnector;
+ use crate::torrent_state::stats::LiveStats;
+-use crate::type_aliases::FileInfos;
+ use crate::type_aliases::PeerStream;
++use crate::type_aliases::{FileInfos, FilePriorities};
+ 
+ use initializing::TorrentStateInitializing;
+ 
+@@ -193,6 +193,7 @@ pub struct ManagedTorrentShared {
+ 
+     // "dn" from magnet link
+     pub(crate) magnet_name: Option<String>,
++    pub(crate) file_priority_order: RwLock<Option<FilePriorities>>,
+ 
+     pub(crate) client_name_and_version: String,
+ }
+@@ -616,6 +617,37 @@ impl ManagedTorrent {
+     // Returns true if needed to unpause torrent.
+     // This is just implementation detail - it's easier to pause/unpause than to tinker with internals.
+     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
++        self.update_file_selection(only_files, None)
++    }
++
++    pub(crate) fn update_file_priorities(&self, priorities: &[u8]) -> anyhow::Result<()> {
++        let metadata = self.metadata.load();
++        let metadata = metadata.as_ref().context("torrent is not resolved")?;
++        anyhow::ensure!(
++            priorities.len() == metadata.file_infos.len() && priorities.iter().all(|&p| p <= 7),
++            "expected one priority in 0..=7 for each file"
++        );
++        let mut order: FilePriorities = priorities
++            .iter()
++            .enumerate()
++            .filter_map(|(index, &priority)| (priority != 0).then_some(index))
++            .collect();
++        order.sort_unstable_by_key(|&index| {
++            (
++                std::cmp::Reverse(priorities[index]),
++                metadata.file_infos[index].relative_filename.as_path(),
++                index,
++            )
++        });
++        let only_files = order.iter().copied().collect();
++        self.update_file_selection(&only_files, Some(order))
++    }
++
++    fn update_file_selection(
++        &self,
++        only_files: &HashSet<usize>,
++        order: Option<FilePriorities>,
++    ) -> anyhow::Result<()> {
+         let metadata = self.metadata.load();
+         let metadata = metadata.as_ref().context("torrent is not resolved")?;
+         let file_count = metadata.file_infos.len();
+@@ -638,10 +670,11 @@ impl ManagedTorrent {
+                 p.update_only_files(only_files)?;
+             }
+             ManagedTorrentState::Live(l) => {
+-                l.update_only_files(only_files)?;
++                l.update_only_files(only_files, order.as_ref())?;
+             }
+         };
+ 
++        *self.shared.file_priority_order.write() = order;
+         g.only_files = Some(only_files.iter().copied().collect());
+         Ok(())
+     }
+diff --git a/crates/tracker_comms/src/tracker_comms.rs b/crates/tracker_comms/src/tracker_comms.rs
+index 7614b1d..54850c8 100644
+--- a/crates/tracker_comms/src/tracker_comms.rs
++++ b/crates/tracker_comms/src/tracker_comms.rs
+@@ -83,14 +83,14 @@ impl TorrentStatsProvider for () {
+ type Sender = tokio::sync::mpsc::Sender<SocketAddr>;
+ 
+ enum SupportedTracker {
+-    Udp(Url),
++    Udp(Url, UdpTrackerClient),
+     Http(Url),
+ }
+ 
+ impl std::fmt::Debug for SupportedTracker {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         match self {
+-            SupportedTracker::Udp(u) => std::fmt::Display::fmt(u, f),
++            SupportedTracker::Udp(u, _) => std::fmt::Display::fmt(u, f),
+             SupportedTracker::Http(u) => std::fmt::Display::fmt(u, f),
+         }
+     }
+@@ -148,13 +148,15 @@ impl TrackerComms {
+         force_interval: Option<Duration>,
+         announce_port: u16,
+         reqwest_client: reqwest::Client,
+-        udp_client: UdpTrackerClient,
++        udp_client: Option<UdpTrackerClient>,
+     ) -> Option<BoxStream<'static, SocketAddr>> {
+         let trackers = trackers
+             .into_iter()
+             .filter_map(|t| match t.scheme() {
+                 "http" | "https" => Some(SupportedTracker::Http(t)),
+-                "udp" => Some(SupportedTracker::Udp(t)),
++                "udp" => udp_client
++                    .clone()
++                    .map(|client| SupportedTracker::Udp(t, client)),
+                 _ => {
+                     debug!("unsupported tracker URL: {}", t);
+                     None
+@@ -184,7 +186,7 @@ impl TrackerComms {
+             });
+             let mut futures = FuturesUnordered::new();
+             for tracker in trackers {
+-                futures.push(comms.add_tracker(tracker, &udp_client))
++                futures.push(comms.add_tracker(tracker))
+             }
+             while !(futures.is_empty()) {
+                 tokio::select! {
+@@ -208,16 +210,15 @@ impl TrackerComms {
+     fn add_tracker(
+         &self,
+         url: SupportedTracker,
+-        client: &UdpTrackerClient,
+     ) -> Either<
+         impl std::future::Future<Output = anyhow::Result<()>> + '_ + Send,
+         impl std::future::Future<Output = anyhow::Result<()>> + '_ + Send,
+     > {
+         let info_hash = self.info_hash;
+         match url {
+-            SupportedTracker::Udp(url) => {
++            SupportedTracker::Udp(url, client) => {
+                 let span = debug_span!(parent: None, "udp_tracker", tracker = %url, info_hash = ?info_hash);
+-                self.task_single_tracker_monitor_udp(url, client.clone())
++                self.task_single_tracker_monitor_udp(url, client)
+                     .instrument(span)
+                     .right_future()
+             }
