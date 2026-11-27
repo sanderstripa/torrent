@@ -543,6 +543,7 @@ unsafe extern "system" fn window_proc(
                 1,
             );
             ShowWindow(edit, SW_SHOW);
+            InvalidateRect(edit, null(), 1);
         } else if IsWindowVisible(edit) != 0 {
             ShowWindow(edit, SW_HIDE);
             SetFocus(window);
