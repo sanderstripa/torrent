@@ -354,12 +354,14 @@ pub unsafe fn caption_button(draw: &DRAWITEMSTRUCT, text: &str, dark: bool) {
     }
 }
 
+#[cfg(not(feature = "rqbit"))]
 struct Offscreen {
     dc: HDC,
     bitmap: HBITMAP,
     original: HGDIOBJ,
 }
 
+#[cfg(not(feature = "rqbit"))]
 impl Offscreen {
     unsafe fn new(reference: HDC, width: i32, height: i32) -> Option<Self> {
         let dc = unsafe { CreateCompatibleDC(reference) };
@@ -387,6 +389,7 @@ impl Offscreen {
     }
 }
 
+#[cfg(not(feature = "rqbit"))]
 impl Drop for Offscreen {
     fn drop(&mut self) {
         unsafe {
@@ -397,17 +400,20 @@ impl Drop for Offscreen {
     }
 }
 
+#[cfg(not(feature = "rqbit"))]
 pub struct SettingsBackdrop {
     preview: Offscreen,
     width: i32,
     height: i32,
 }
 
+#[cfg(not(feature = "rqbit"))]
 impl SettingsBackdrop {
     pub fn capture(
         owner: windows_sys::Win32::Foundation::HWND,
         width: i32,
         height: i32,
+        _dark: bool,
     ) -> Option<Self> {
         if width <= 0 || height <= 0 {
             return None;
@@ -458,7 +464,7 @@ impl SettingsBackdrop {
         })
     }
 
-    pub unsafe fn paint(&self, destination: HDC, rect: RECT) {
+    pub unsafe fn paint(&self, destination: HDC, rect: RECT, _panel: Option<RECT>) {
         unsafe {
             let preserve = SaveDC(destination);
             SetStretchBltMode(destination, HALFTONE);
@@ -476,6 +482,182 @@ impl SettingsBackdrop {
                 SRCCOPY,
             );
             RestoreDC(destination, preserve);
+        }
+    }
+}
+
+#[cfg(feature = "rqbit")]
+pub struct SettingsBackdrop {
+    pixels: Vec<u8>,
+    width: usize,
+    height: usize,
+    dark: bool,
+}
+
+#[cfg(feature = "rqbit")]
+impl SettingsBackdrop {
+    pub fn capture(
+        window: windows_sys::Win32::Foundation::HWND,
+        width: i32,
+        height: i32,
+        dark: bool,
+    ) -> Option<Self> {
+        let width_pixels = usize::try_from(width).ok()?.max(1);
+        let height_pixels = usize::try_from(height).ok()?.max(1);
+        let length = width_pixels.checked_mul(height_pixels)?.checked_mul(4)?;
+        let mut info = BITMAPINFO::default();
+        info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        info.bmiHeader.biWidth = width;
+        info.bmiHeader.biHeight = -height;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        let mut data = null_mut();
+        let mut pixels = unsafe {
+            let _ = windows_sys::Win32::Graphics::Dwm::DwmFlush();
+            let dc = GetDC(window);
+            if dc.is_null() {
+                return None;
+            }
+            let memory = CreateCompatibleDC(dc);
+            if memory.is_null() {
+                ReleaseDC(window, dc);
+                return None;
+            }
+            let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut data, null_mut(), 0);
+            if bitmap.is_null() || data.is_null() {
+                if !bitmap.is_null() {
+                    DeleteObject(bitmap);
+                }
+                DeleteDC(memory);
+                ReleaseDC(window, dc);
+                return None;
+            }
+            let original = SelectObject(memory, bitmap);
+            let copied = BitBlt(memory, 0, 0, width, height, dc, 0, 0, SRCCOPY) != 0;
+            let pixels =
+                copied.then(|| std::slice::from_raw_parts(data.cast::<u8>(), length).to_vec());
+            SelectObject(memory, original);
+            DeleteObject(bitmap);
+            DeleteDC(memory);
+            ReleaseDC(window, dc);
+            pixels?
+        };
+        let mut scratch = vec![0; length];
+        const RADIUS: usize = 7;
+        for _ in 0..3 {
+            for vertical in [false, true] {
+                let (lines, size) = if vertical {
+                    (width_pixels, height_pixels)
+                } else {
+                    (height_pixels, width_pixels)
+                };
+                for line in 0..lines {
+                    for channel in 0..3 {
+                        let index = |position: usize| {
+                            let (x, y) = if vertical {
+                                (line, position)
+                            } else {
+                                (position, line)
+                            };
+                            (y * width_pixels + x) * 4 + channel
+                        };
+                        let mut sum = u32::from(pixels[index(0)]) * (RADIUS as u32 + 1);
+                        for i in 1..=RADIUS {
+                            sum += u32::from(pixels[index(i.min(size - 1))]);
+                        }
+                        for position in 0..size {
+                            scratch[index(position)] = (sum / (RADIUS as u32 * 2 + 1)) as u8;
+                            sum -= u32::from(pixels[index(position.saturating_sub(RADIUS))]);
+                            sum += u32::from(pixels[index((position + RADIUS + 1).min(size - 1))]);
+                        }
+                    }
+                }
+                std::mem::swap(&mut pixels, &mut scratch);
+            }
+        }
+        let (original, tint, overlay) = if dark {
+            (0.55, 13.0, 0.45)
+        } else {
+            (0.48, 248.0, 0.52)
+        };
+        for pixel in pixels.chunks_exact_mut(4) {
+            for channel in pixel.iter_mut().take(3) {
+                *channel = (f32::from(*channel) * original + tint * overlay) as u8;
+            }
+            pixel[3] = 255;
+        }
+        Some(Self {
+            pixels,
+            width: width_pixels,
+            height: height_pixels,
+            dark,
+        })
+    }
+
+    pub unsafe fn paint(&self, destination: HDC, bounds: RECT, panel: Option<RECT>) {
+        use crate::windows_canvas::{open_target, rect, rgb, Canvas};
+        use windows::Win32::Graphics::Direct2D::Common::{
+            D2D1_ALPHA_MODE_IGNORE, D2D1_PIXEL_FORMAT, D2D_SIZE_U,
+        };
+        use windows::Win32::Graphics::Direct2D::{
+            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, D2D1_BITMAP_PROPERTIES,
+        };
+        use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
+        let Ok((_, target)) = open_target(destination, bounds) else {
+            return;
+        };
+        unsafe {
+            let Ok(bitmap) = target.CreateBitmap(
+                D2D_SIZE_U {
+                    width: self.width as u32,
+                    height: self.height as u32,
+                },
+                Some(self.pixels.as_ptr().cast()),
+                self.width as u32 * 4,
+                &D2D1_BITMAP_PROPERTIES {
+                    pixelFormat: D2D1_PIXEL_FORMAT {
+                        format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                        alphaMode: D2D1_ALPHA_MODE_IGNORE,
+                    },
+                    dpiX: 96.0,
+                    dpiY: 96.0,
+                },
+            ) else {
+                return;
+            };
+            target.BeginDraw();
+            target.DrawBitmap(
+                &bitmap,
+                Some(&rect(0.0, 0.0, bounds.right as f32, bounds.bottom as f32)),
+                1.0,
+                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                None,
+            );
+            if let (Some(panel), Ok(brush)) = (panel, target.CreateSolidColorBrush(&rgb(0), None)) {
+                let canvas = Canvas {
+                    target: &target,
+                    brush,
+                };
+                canvas
+                    .brush
+                    .SetOpacity(if self.dark { 0.012 } else { 0.009 });
+                for layer in (1..=24).rev() {
+                    let layer = layer as f32;
+                    canvas.rounded(
+                        rect(
+                            panel.left as f32 - layer * 0.7,
+                            panel.top as f32 + 8.0,
+                            panel.right as f32 + layer * 0.7,
+                            panel.bottom as f32 + 6.0 + layer,
+                        ),
+                        14.0,
+                        0,
+                        None,
+                    );
+                }
+            }
+            let _ = target.EndDraw(None, None);
         }
     }
 }

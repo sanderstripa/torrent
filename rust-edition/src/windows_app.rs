@@ -189,7 +189,22 @@ unsafe extern "system" fn dispatch(
                     .cast::<crate::windows_paint::SettingsBackdrop>()
                     .as_ref()
                 {
-                    snapshot.paint(wparam as _, area);
+                    let sheet = GetPropW(window, windows_sys::w!("TorrentSettingsBackdrop"));
+                    let mut sheet_rect = RECT::default();
+                    let mut backdrop_rect = RECT::default();
+                    let panel = if GetWindowRect(sheet, &mut sheet_rect) != 0
+                        && GetWindowRect(window, &mut backdrop_rect) != 0
+                    {
+                        Some(RECT {
+                            left: sheet_rect.left - backdrop_rect.left,
+                            top: sheet_rect.top - backdrop_rect.top,
+                            right: sheet_rect.right - backdrop_rect.left,
+                            bottom: sheet_rect.bottom - backdrop_rect.top,
+                        })
+                    } else {
+                        None
+                    };
+                    snapshot.paint(wparam as _, area, panel);
                 } else {
                     windows_sys::Win32::Graphics::Gdi::FillRect(
                         wparam as _,
@@ -380,7 +395,7 @@ struct Dialog {
     window: HWND,
     sheet: bool,
     backdrop: HWND,
-    _snapshot: Option<Box<crate::windows_paint::SettingsBackdrop>>,
+    snapshot: std::cell::RefCell<Option<Box<crate::windows_paint::SettingsBackdrop>>>,
 }
 
 impl Dialog {
@@ -440,6 +455,7 @@ impl Dialog {
                 owner,
                 owner_rect.right - owner_rect.left,
                 owner_rect.bottom - owner_rect.top,
+                window_dark(owner),
             )
             .map(Box::new)
         } else {
@@ -489,8 +505,53 @@ impl Dialog {
             window,
             sheet,
             backdrop,
-            _snapshot: snapshot,
+            snapshot: std::cell::RefCell::new(snapshot),
         })
+    }
+
+    #[cfg(all(feature = "rqbit", feature = "vpn"))]
+    fn refresh_backdrop(&self, dark: bool) {
+        use windows_sys::Win32::Graphics::Gdi::{
+            RedrawWindow, RDW_ALLCHILDREN, RDW_INVALIDATE, RDW_UPDATENOW,
+        };
+        let mut bounds = RECT::default();
+        unsafe {
+            if self.backdrop.is_null() || GetClientRect(self.owner, &mut bounds) == 0 {
+                return;
+            }
+            ShowWindow(self.window, SW_HIDE);
+            ShowWindow(self.backdrop, SW_HIDE);
+            RedrawWindow(
+                self.owner,
+                null(),
+                null_mut(),
+                RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW,
+            );
+            if let Some(image) = crate::windows_paint::SettingsBackdrop::capture(
+                self.owner,
+                bounds.right,
+                bounds.bottom,
+                dark,
+            )
+            .map(Box::new)
+            {
+                let pointer = (&*image as *const crate::windows_paint::SettingsBackdrop)
+                    .cast_mut()
+                    .cast();
+                if SetPropW(
+                    self.backdrop,
+                    windows_sys::w!("TorrentSettingsSnapshot"),
+                    pointer,
+                ) != 0
+                {
+                    self.snapshot.replace(Some(image));
+                    SetLayeredWindowAttributes(self.backdrop, 0, 255, LWA_ALPHA);
+                }
+            }
+            ShowWindow(self.backdrop, SW_SHOWNOACTIVATE);
+            ShowWindow(self.window, SW_SHOW);
+            windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus(self.window);
+        }
     }
 
     fn buttons(&self, y: i32, english: bool) -> Result<(), String> {
@@ -1605,6 +1666,9 @@ fn settings_144(
                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
                     );
                 }
+                unsafe {
+                    windows_sys::Win32::Graphics::Gdi::InvalidateRect(dialog.backdrop, null(), 1);
+                }
                 persist = false;
             }
             page::SYSTEM => prefs.theme = Theme::System,
@@ -1737,15 +1801,28 @@ fn settings_144(
         if let Err(error) = result {
             show_error(&error);
         }
+        let dark = if persist {
+            apply_title_theme(owner, prefs.theme)
+        } else {
+            window_dark(owner)
+        };
+        let refresh = {
+            let state = view.borrow();
+            state.dark != dark || state.preferences.english != prefs.english
+        };
+        if refresh {
+            controls.dark.set(dark);
+            controls.set_language(prefs.english);
+            controls.refresh(queue);
+            dialog.refresh_backdrop(dark);
+        }
         let mut state = view.borrow_mut();
         state.preferences = prefs.clone();
-        state.dark = apply_title_theme(owner, prefs.theme);
+        state.dark = dark;
         state.connected = vpn.state(prefs.vpn_enabled) == 2;
         if persist {
             state.save_failed = save_failed;
         }
-        controls.dark.set(state.dark);
-        controls.set_language(prefs.english);
         paint_vpn_title(owner, vpn, prefs.vpn_enabled);
         unsafe {
             SetWindowTextW(dialog.window, wide(state.window_title()).as_ptr());
