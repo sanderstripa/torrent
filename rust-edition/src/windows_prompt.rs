@@ -3,6 +3,10 @@ use crate::windows_canvas::{
     dpi_scale, open_target_at_dpi, rect, rgb, use_fonts, window_dpi, Canvas,
 };
 use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
+use windows::Win32::Graphics::Direct2D::D2D1_DRAW_TEXT_OPTIONS_CLIP;
+use windows::Win32::Graphics::DirectWrite::{
+    DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL,
+};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetFocus;
@@ -55,10 +59,25 @@ pub unsafe fn dispatch(window: HWND, message: u32, key: WPARAM, data: LPARAM) ->
         WM_ERASEBKGND | WM_NCACTIVATE => Some(1),
         WM_NCPAINT => Some(0),
         WM_NCCALCSIZE if key != 0 => Some(0),
+        WM_NCHITTEST => {
+            let scale = dpi_scale(window);
+            let mut point = windows_sys::Win32::Foundation::POINT {
+                x: data as i16 as i32,
+                y: (data >> 16) as i16 as i32,
+            };
+            unsafe { ScreenToClient(window, &mut point) };
+            Some(if (point.y as f32) < 52.0 * scale
+                && (point.x as f32) < (WIDTH - 50) as f32 * scale
+            {
+                HTCAPTION
+            } else {
+                HTCLIENT
+            } as LRESULT)
+        }
         WM_CTLCOLOREDIT => {
             let dc = key as HDC;
             unsafe {
-                SetTextColor(dc, if state.dark { 0xeeeeee } else { 0x282624 });
+                SetTextColor(dc, if state.dark { 0xf1f2f2 } else { 0x1c1917 });
                 SetBkColor(dc, if state.dark { 0x101010 } else { 0xfafafa });
             }
             Some(state.brush as LRESULT)
@@ -141,21 +160,25 @@ fn draw(window: HWND, dc: HDC, bounds: RECT, state: &Prompt<'_>) -> windows::cor
                 0xc95050,
                 false,
             )?;
-            canvas.label(
-                fonts,
-                state.help,
-                rect(56.0, 67.0, width - 24.0, 145.0),
-                13,
-                false,
-                fg,
-                false,
-            )?;
+            let format = fonts.fresh_format(13.0, DWRITE_FONT_WEIGHT_NORMAL)?;
+            let content: Vec<_> = state.help.encode_utf16().collect();
+            unsafe {
+                canvas.brush.SetColor(&rgb(fg));
+                target.DrawText(
+                    &content,
+                    &format,
+                    &rect(56.0, 67.0, width - 24.0, 145.0),
+                    &canvas.brush,
+                    D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+            }
         } else {
             canvas.label(
                 fonts,
                 state.help,
                 rect(24.0, 62.0, width - 24.0, 94.0),
-                13,
+                12,
                 false,
                 muted,
                 false,
@@ -163,9 +186,9 @@ fn draw(window: HWND, dc: HDC, bounds: RECT, state: &Prompt<'_>) -> windows::cor
             let edit = rect(24.0, 102.0, width - 24.0, 138.0);
             canvas.rounded(edit, 8.0, card, Some(line));
             if unsafe { GetFocus() == GetDlgItem(window, EDIT as i32) } {
-                canvas.outline(edit, 8.0, muted, 1.0);
+                canvas.outline(edit, 8.0, muted, 2.0);
             }
-            canvas.rounded(button(CANCEL), 8.0, bg, Some(line));
+            canvas.rounded(button(CANCEL), 8.0, card, Some(line));
             canvas.centered(
                 fonts,
                 if state.english {
