@@ -74,6 +74,7 @@ struct Setup {
     launch: bool,
     progress: u8,
     worker: Option<Receiver<Worker>>,
+    error: Option<String>,
     edit: HWND,
     edit_font: Option<EditFont>,
     fonts: Fonts,
@@ -106,7 +107,10 @@ impl Setup {
 
     fn interactive(&self, x: f32, y: f32) -> bool {
         let inside = |region| hit(region, x, y);
-        if inside(CAPTION_CLOSE) || inside(CAPTION_MINIMIZE) {
+        if inside(CAPTION_CLOSE)
+            || inside(CAPTION_MINIMIZE)
+            || (self.error.is_some() && inside(retry_button()))
+        {
             return true;
         }
         match self.page {
@@ -137,14 +141,24 @@ impl Setup {
                 .map_err(|error| error.to_string());
             let _ = send.send(Worker::Done(result));
         });
+        self.error = None;
         self.worker = Some(receive);
         self.page = Page::Installing;
         self.progress = 0;
     }
-    fn finish(&self) {
+    fn finish(&self) -> io::Result<()> {
         if self.page == Page::Finish && self.launch {
-            let _ = std::process::Command::new(self.directory.join("Torrent-RE.exe")).spawn();
+            std::process::Command::new(self.directory.join("Torrent-RE.exe")).spawn()?;
         }
+        Ok(())
+    }
+
+    fn install_error(&mut self, detail: String) {
+        let message = self.text(
+            "Не удалось завершить действие. Ваши настройки сохраняются.",
+            "Could not complete the operation. Your settings are preserved.",
+        );
+        self.error = Some(format!("{message} {detail}"));
     }
 }
 
@@ -177,6 +191,7 @@ fn show_window(directory: PathBuf) -> io::Result<()> {
         launch: true,
         progress: 0,
         worker: None,
+        error: None,
         edit: null_mut(),
         edit_font: None,
         fonts,
@@ -311,7 +326,6 @@ unsafe extern "system" fn window_proc(
     let mut close = false;
     let mut launch = false;
     let mut browse = false;
-    let mut error = None;
     match message {
         WM_ERASEBKGND | WM_NCACTIVATE => return 1,
         WM_NCCALCSIZE if key != 0 => return 0,
@@ -394,6 +408,16 @@ unsafe extern "system" fn window_proc(
                     ShowWindow(window, SW_MINIMIZE);
                 }
                 return 0;
+            } else if state.error.is_some() && hit(retry_button(), x, y) {
+                match state.page {
+                    Page::Welcome => state.start(),
+                    Page::Settings => browse = true,
+                    Page::Finish => {
+                        close = true;
+                        launch = true;
+                    }
+                    Page::Installing => {}
+                }
             } else if hit(state.primary(), x, y) {
                 match state.page {
                     Page::Welcome | Page::Settings => state.start(),
@@ -405,12 +429,14 @@ unsafe extern "system" fn window_proc(
                 }
             } else if state.page == Page::Welcome && hit(WELCOME_SETTINGS, x, y) {
                 state.page = Page::Settings;
+                state.error = None;
             } else if state.page == Page::Finish && hit(state.launch_row(), x, y) {
                 state.launch = !state.launch;
             } else if state.page == Page::Settings {
                 let g = geometry::settings(state.english);
                 if hit(g.back, x, y) {
                     state.page = Page::Welcome;
+                    state.error = None;
                 } else if hit(g.ru, x, y) {
                     state.english = false;
                 } else if hit(g.en, x, y) {
@@ -429,7 +455,10 @@ unsafe extern "system" fn window_proc(
             }
         }
         WM_KEYDOWN => match key as u16 {
-            VK_ESCAPE if state.page == Page::Settings => state.page = Page::Welcome,
+            VK_ESCAPE if state.page == Page::Settings => {
+                state.page = Page::Welcome;
+                state.error = None;
+            }
             VK_ESCAPE => close = state.page != Page::Installing,
             VK_RETURN if matches!(state.page, Page::Welcome | Page::Settings) => state.start(),
             VK_RETURN if state.page == Page::Finish => {
@@ -453,12 +482,12 @@ unsafe extern "system" fn window_proc(
                             state.page = Page::Finish;
                             state.progress = 100;
                             if let Err(detail) = persist_appearance(state.english, state.dark) {
-                                error = Some(detail.to_string());
+                                state.install_error(detail.to_string());
                             }
                         }
                         Err(detail) => {
                             state.page = Page::Welcome;
-                            error = Some(detail);
+                            state.install_error(detail);
                         }
                     }
                 }
@@ -474,10 +503,14 @@ unsafe extern "system" fn window_proc(
         }
         _ => return unsafe { DefWindowProcW(window, message, key, extra) },
     }
+    if close && launch && state.finish().is_err() {
+        state.error = Some(state.text(
+            "Torrent установлен, но запуск не удался. Повторите или выключите тумблер запуска и нажмите «Готово».",
+            "Torrent is installed, but could not be launched. Retry, or turn off launch and click Done.",
+        ).to_owned());
+        close = false;
+    }
     if close {
-        if launch {
-            state.finish();
-        }
         drop(state);
         unsafe {
             DestroyWindow(window);
@@ -490,6 +523,7 @@ unsafe extern "system" fn window_proc(
     drop(state);
 
     if browse {
+        setup.borrow_mut().error = None;
         if let Some(folder) = choose_folder(window) {
             unsafe {
                 SetWindowTextW(edit, wide(folder.as_os_str()).as_ptr());
@@ -512,9 +546,6 @@ unsafe extern "system" fn window_proc(
             SetFocus(window);
         }
         InvalidateRect(window, null(), 0);
-    }
-    if let Some(error) = error {
-        crate::installer_windows::message(&error, true);
     }
     0
 }
@@ -572,6 +603,10 @@ fn choose_folder(owner: HWND) -> Option<PathBuf> {
         .position(|&value| value == 0)
         .unwrap_or(raw.len());
     (ok != 0).then(|| PathBuf::from(OsString::from_wide(&raw[..end])))
+}
+
+fn retry_button() -> D2D_RECT_F {
+    rect(45.0, 455.0, 139.0, 476.0)
 }
 
 fn hit(r: D2D_RECT_F, x: f32, y: f32) -> bool {
@@ -994,6 +1029,15 @@ fn draw(
                 )?;
                 primary(tr("Принять и установить", "Accept and install"), g.accept)?;
             }
+        }
+        if let Some(error) = &setup.error {
+            unsafe {
+                canvas.brush.SetColor(&rgb(bg));
+                target.FillRectangle(&rect(45.0, 422.0, w - 45.0, 485.0), &canvas.brush);
+            }
+            canvas.line(45.0, 422.5, w - 45.0, 422.5, border, 1.0);
+            text(error, rect(45.0, 431.0, w - 45.0, 453.0), 11.0, fg)?;
+            text(tr("Повторить", "Retry"), retry_button(), 13.0, muted)?;
         }
         Ok(())
     })();
