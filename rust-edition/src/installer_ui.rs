@@ -543,9 +543,22 @@ fn ribbon(
         let size = bitmap.GetSize();
         let scale = ((region.right - region.left) / size.width)
             .min((region.bottom - region.top) / size.height);
-        let (width, height) = (size.width * scale, size.height * scale);
-        let left = (region.left + region.right - width) / 2.0;
-        let top = (region.top + region.bottom - height) / 2.0;
+        // CONNECT normalizes the visible artwork inside the transparent raster.
+        let artwork_width = 1459.0 - 119.0;
+        let artwork_center = (789.0, 514.0);
+        let normalization = 1341.0 / artwork_width;
+        let delta_x =
+            (787.5 - size.width / 2.0 - (artwork_center.0 - size.width / 2.0) * normalization)
+                * scale;
+        let delta_y =
+            (517.0 - size.height / 2.0 - (artwork_center.1 - size.height / 2.0) * normalization)
+                * scale;
+        let (width, height) = (
+            size.width * scale * normalization,
+            size.height * scale * normalization,
+        );
+        let left = (region.left + region.right - width) / 2.0 + delta_x;
+        let top = (region.top + region.bottom - height) / 2.0 + delta_y;
         canvas.target.DrawBitmap(
             &bitmap,
             Some(&rect(left, top, left + width, top + height)),
