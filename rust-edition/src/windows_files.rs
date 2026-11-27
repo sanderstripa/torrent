@@ -7,7 +7,8 @@ use windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_PER_PRIMITIVE;
 use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, ReleaseCapture, SetCapture, VK_DOWN, VK_RETURN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+    GetFocus, GetKeyState, ReleaseCapture, SetCapture, VK_DOWN, VK_RETURN, VK_SHIFT, VK_SPACE,
+    VK_TAB, VK_UP,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -420,7 +421,8 @@ unsafe fn paint(window: HWND, view: &FileView) {
     unsafe {
         GetClientRect(window, &mut bounds);
     }
-    let _ = draw(dc, bounds, window_dpi(window), view);
+    let focused = unsafe { GetFocus() == window };
+    let _ = draw(dc, bounds, window_dpi(window), view, focused);
     unsafe {
         EndPaint(window, &data);
     }
@@ -431,6 +433,7 @@ fn draw(
     bounds: RECT,
     dpi: f32,
     view: &FileView,
+    focused: bool,
 ) -> windows::core::Result<()> {
     let (_, target) = open_target_at_dpi(dc, bounds, dpi)?;
     let (bg, fg, muted, card, line, selected, track, heading) = if view.dark {
@@ -635,12 +638,12 @@ fn draw(
             (CANCEL, tr("Отмена", "Cancel"), false),
         ] {
             let r = view.button(id);
-            if view.keyboard && view.focus == id {
-                canvas.rounded(
+            if focused && view.focus == id {
+                canvas.outline(
                     rect(r.left - 3.0, r.top - 3.0, r.right + 3.0, r.bottom + 3.0),
                     8.0,
-                    bg,
-                    Some(muted),
+                    muted,
+                    2.0,
                 );
             }
             let fill = if view.hover == Some(id) && !primary {

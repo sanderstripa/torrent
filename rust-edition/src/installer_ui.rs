@@ -68,7 +68,7 @@ impl Setup {
     }
     fn primary(&self) -> D2D_RECT_F {
         match self.page {
-            Page::Welcome => rect(44.0, 287.0, 272.0, 336.0),
+            Page::Welcome => rect(45.0, 288.0, 273.0, 337.0),
             Page::Settings => geometry::settings(self.english).accept,
             _ => rect(306.0, 312.25, 534.0, 361.25),
         }
@@ -328,7 +328,7 @@ unsafe extern "system" fn window_proc(
                     }
                     _ => {}
                 }
-            } else if state.page == Page::Welcome && hit(rect(44.0, 350.0, 330.0, 382.0), x, y) {
+            } else if state.page == Page::Welcome && hit(rect(45.0, 351.0, 330.0, 383.0), x, y) {
                 state.page = Page::Settings;
             } else if state.page == Page::Finish && (376.25..414.25).contains(&y) {
                 state.launch = !state.launch;
@@ -746,12 +746,12 @@ fn draw(
             border,
             1.0,
         );
-        canvas.line(44.0, 490.0, w - 44.0, 490.0, border, 1.0);
+        canvas.line(45.0, 490.5, w - 45.0, 490.5, border, 1.0);
         label(
             &canvas,
             font,
             "by CONNECT.",
-            rect(44.0, 500.0, 270.0, 532.0),
+            rect(45.0, 499.0, 270.0, 531.0),
             10.0,
             muted,
             DWRITE_TEXT_ALIGNMENT_LEADING,
@@ -762,7 +762,7 @@ fn draw(
             &canvas,
             font,
             tr("Версия 1.4.4 RE", "Version 1.4.4 RE"),
-            rect(w - 220.0, 500.0, w - 44.0, 532.0),
+            rect(w - 220.0, 499.0, w - 45.0, 531.0),
             10.0,
             muted,
             DWRITE_TEXT_ALIGNMENT_TRAILING,
@@ -778,7 +778,7 @@ fn draw(
                     &canvas,
                     font,
                     tr("УСТАНОВКА", "INSTALLATION"),
-                    rect(44.0, 165.0, 380.0, 193.0),
+                    rect(45.0, 167.0, 380.0, 195.0),
                     12.0,
                     fg,
                     DWRITE_TEXT_ALIGNMENT_LEADING,
@@ -789,7 +789,7 @@ fn draw(
                     &canvas,
                     font,
                     "Torrent",
-                    rect(44.0, 202.0, 410.0, 258.0),
+                    rect(45.0, 203.0, 410.0, 259.0),
                     42.0,
                     fg,
                     DWRITE_TEXT_ALIGNMENT_LEADING,
@@ -799,7 +799,7 @@ fn draw(
                 primary(tr("Установить", "Install"), setup.primary())?;
                 text(
                     tr("Настройки установки", "Installation settings"),
-                    rect(44.0, 350.0, 330.0, 382.0),
+                    rect(45.0, 351.0, 330.0, 383.0),
                     13.0,
                     muted,
                 )?;
