@@ -226,10 +226,11 @@ Invoke-WebRequest -Uri 'https://github.com/sanderstripa/torrent/releases/downloa
 if ((Get-FileHash -LiteralPath $referenceSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ne '9a8f7aba2084b181814229688487840f334299a944333ec04ace8f3eb0f89b8d') {
     throw 'Reference 1.4.4 installer SHA-256 differs from the published asset'
 }
-foreach ($installerCapture in @(
+$installers = @(
     @{ Executable = $referenceSetup; Title = 'Torrent'; Kind = 'reference' },
     @{ Executable = $setup; Title = 'Torrent Setup'; Kind = 'rust' }
-)) {
+)
+foreach ($installerCapture in $installers) {
     $capture = Start-Process -FilePath $installerCapture.Executable -WorkingDirectory $work.FullName -PassThru
     try {
         $window = Wait-Window $capture $installerCapture.Title
@@ -261,6 +262,50 @@ foreach ($installerCapture in @(
         if ((Get-FileHash $darkWelcome).Hash -eq (Get-FileHash $darkSettings).Hash) {
             throw "The $kind installer did not return to the welcome page"
         }
+        if (![TorrentVisual]::ClickSetup($window, 781, 36) -or !$capture.WaitForExit(10000)) {
+            throw "The $kind installer did not close after capturing its themes"
+        }
+    } finally {
+        if (!$capture.HasExited) { $capture.Kill(); $capture.WaitForExit() }
+        $capture.Dispose()
+    }
+}
+function Measure-Setup([string]$Theme, [string]$View) {
+    $oldSetup = [Drawing.Bitmap]::new((Join-Path $out "setup-$theme-reference-$view.png"))
+    $newSetup = [Drawing.Bitmap]::new((Join-Path $out "setup-$theme-rust-$view.png"))
+    try {
+        $width = [Math]::Min($oldSetup.Width, $newSetup.Width)
+        $height = [Math]::Min($oldSetup.Height, $newSetup.Height)
+        $region = [Drawing.Rectangle]::new(0, 0, $width, $height)
+        $difference = [TorrentVisual]::Compare((Read-Pixels $oldSetup $region), (Read-Pixels $newSetup $region), $width)
+        [pscustomobject]@{
+            Theme = $theme
+            View = "setup-$view"
+            Reference = "$($oldSetup.Width)x$($oldSetup.Height)"
+            Rust = "$($newSetup.Width)x$($newSetup.Height)"
+            Compared = $width * $height
+            Changed = $difference[0]
+            Bounds = if ($difference[0] -gt 0) { "$($difference[2]),$($difference[3])–$($difference[4]),$($difference[5])" } else { '' }
+            MeanChannelError = [Math]::Round($difference[1] / (3.0 * $width * $height), 3)
+        }
+    } finally {
+        $oldSetup.Dispose()
+        $newSetup.Dispose()
+    }
+}
+foreach ($theme in @('light', 'dark')) {
+    foreach ($view in @('welcome', 'settings')) {
+        $results += Measure-Setup $theme $view
+    }
+}
+$results | ConvertTo-Json | Set-Content (Join-Path $out 'pixel-comparison.json') -Encoding utf8
+
+foreach ($installerCapture in $installers) {
+    $capture = Start-Process -FilePath $installerCapture.Executable -WorkingDirectory $work.FullName -PassThru
+    try {
+        $kind = $installerCapture.Kind
+        $window = Wait-Window $capture $installerCapture.Title
+        Start-Sleep -Milliseconds 1200
         if (![TorrentVisual]::ClickSetup($window, 105, 366)) {
             throw 'Could not prepare the isolated installer destination'
         }
@@ -320,32 +365,7 @@ foreach ($installerCapture in @(
         $capture.Dispose()
     }
 }
-foreach ($theme in @('light', 'dark')) {
-    $views = if ($theme -eq 'light') { @('welcome', 'settings', 'finish') } else { @('welcome', 'settings') }
-    foreach ($view in $views) {
-        $oldSetup = [Drawing.Bitmap]::new((Join-Path $out "setup-$theme-reference-$view.png"))
-        $newSetup = [Drawing.Bitmap]::new((Join-Path $out "setup-$theme-rust-$view.png"))
-        try {
-            $width = [Math]::Min($oldSetup.Width, $newSetup.Width)
-            $height = [Math]::Min($oldSetup.Height, $newSetup.Height)
-            $region = [Drawing.Rectangle]::new(0, 0, $width, $height)
-            $difference = [TorrentVisual]::Compare((Read-Pixels $oldSetup $region), (Read-Pixels $newSetup $region), $width)
-            $results += [pscustomobject]@{
-                Theme = $theme
-                View = "setup-$view"
-                Reference = "$($oldSetup.Width)x$($oldSetup.Height)"
-                Rust = "$($newSetup.Width)x$($newSetup.Height)"
-                Compared = $width * $height
-                Changed = $difference[0]
-                Bounds = if ($difference[0] -gt 0) { "$($difference[2]),$($difference[3])–$($difference[4]),$($difference[5])" } else { '' }
-                MeanChannelError = [Math]::Round($difference[1] / (3.0 * $width * $height), 3)
-            }
-        } finally {
-            $oldSetup.Dispose()
-            $newSetup.Dispose()
-        }
-    }
-}
+$results += Measure-Setup 'light' 'finish'
 $results | ConvertTo-Json | Set-Content (Join-Path $out 'pixel-comparison.json') -Encoding utf8
 $results | Format-Table -AutoSize
 $applicationDifferences = @($results | Where-Object {
