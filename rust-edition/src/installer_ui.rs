@@ -17,7 +17,10 @@ use windows::Win32::Graphics::Direct2D::{
 use windows::Win32::Graphics::DirectWrite::*;
 use windows_numerics::Vector2;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT};
+use windows_sys::Win32::Graphics::Gdi::{
+    BeginPaint, EndPaint, GetStockObject, InvalidateRect, SetBkColor, SetDCBrushColor,
+    SetTextColor, DC_BRUSH, HDC, PAINTSTRUCT,
+};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE, VK_RETURN, VK_SPACE};
@@ -284,6 +287,20 @@ unsafe extern "system" fn window_proc(
             }
             return 0;
         }
+        WM_CTLCOLOREDIT => {
+            let dc = key as HDC;
+            let (text, field) = if state.dark {
+                (0xe9e7e6, 0x2d2928)
+            } else {
+                (0x282624, 0xf5f4f3)
+            };
+            return unsafe {
+                SetTextColor(dc, text);
+                SetBkColor(dc, field);
+                SetDCBrushColor(dc, field);
+                GetStockObject(DC_BRUSH) as LRESULT
+            };
+        }
         WM_COMMAND if key & 0xffff == PATH_ID && key >> 16 == EN_CHANGE as usize => {
             let count = unsafe { GetWindowTextLengthW(state.edit) }.max(0);
             let mut value = vec![0u16; count as usize + 1];
@@ -483,7 +500,8 @@ fn wide(value: &std::ffi::OsStr) -> Vec<u16> {
 fn load_ribbon() -> windows::core::Result<windows::Win32::Graphics::Imaging::IWICFormatConverter> {
     use windows::Win32::Graphics::Imaging::*;
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
-    static RIBBON: &[u8] = include_bytes!("../../installer/assets/ribbon.png");
+    // Raster asset shipped by the CONNECT installer pinned by 1.4.4 (589669b4).
+    static RIBBON: &[u8] = include_bytes!("../installer/assets/connect-mobius.png");
     unsafe {
         let imaging: IWICImagingFactory =
             CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
@@ -607,11 +625,11 @@ fn draw(
     let (_, target) = open_target_at_dpi(dc, bounds, dpi)?;
     let (bg, fg, muted, border, button, inverse, field) = if setup.dark {
         (
-            0x202122, 0xedede9, 0xa3a6a5, 0x414344, 0xe3e4df, 0x202122, 0x292b2c,
+            0x08090b, 0xe6e7e9, 0x9a9da3, 0x35363b, 0xe3e4df, 0x08090b, 0x28292d,
         )
     } else {
         (
-            0xf2f0eb, 0x202624, 0x687071, 0xd9d8d2, 0x242a28, 0xffffff, 0xebe9e4,
+            0xfcfcfd, 0x242628, 0x73767b, 0xe6e7e9, 0x0671ff, 0xffffff, 0xf3f4f5,
         )
     };
     let brush = unsafe { target.CreateSolidColorBrush(&rgb(fg), None)? };
@@ -687,13 +705,24 @@ fn draw(
         };
         let choice = |value, r, chosen| {
             if chosen {
-                canvas.rounded(r, 5.0, field, Some(muted));
+                canvas.rounded(r, 5.0, button, Some(button));
             }
-            centered(value, r, 11.0, fg)
+            centered(value, r, 11.0, if chosen { inverse } else { fg })
         };
-        canvas.line(w - 105.0, 36.0, w - 95.0, 36.0, muted, 1.0);
-        canvas.line(w - 62.0, 32.0, w - 54.0, 40.0, muted, 1.0);
-        canvas.line(w - 54.0, 32.0, w - 62.0, 40.0, muted, 1.0);
+        let caption_line = |x, y, a, b| {
+            canvas.line(x, y, a, b, fg, 1.25);
+            canvas.circle(x, y, 0.625, fg, true);
+            canvas.circle(a, b, 0.625, fg, true);
+        };
+        caption_line(w - 105.0, 36.0, w - 95.0, 36.0);
+        caption_line(w - 63.0, 32.0, w - 55.0, 40.0);
+        caption_line(w - 55.0, 32.0, w - 63.0, 40.0);
+        canvas.outline(
+            rect(0.5, 0.5, w - 0.5, HEIGHT as f32 - 0.5),
+            0.0,
+            border,
+            1.0,
+        );
         canvas.line(44.0, 490.0, w - 44.0, 490.0, border, 1.0);
         label(
             &canvas,
@@ -759,7 +788,7 @@ fn draw(
                 canvas.rounded(rect(44.0, 435.0, w - 44.0, 439.0), 2.0, border, None);
                 if setup.progress > 0 {
                     let end = 44.0 + (w - 88.0) * f32::from(setup.progress) / 100.0;
-                    canvas.rounded(rect(44.0, 435.0, end, 439.0), 2.0, fg, None);
+                    canvas.rounded(rect(44.0, 435.0, end, 439.0), 2.0, button, None);
                 }
                 centered(
                     tr("Установка…", "Installing…"),
