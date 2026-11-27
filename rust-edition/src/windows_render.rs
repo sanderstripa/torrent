@@ -3,7 +3,7 @@ use crate::windows_canvas::{open_target_at_dpi, window_dpi};
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::DirectWrite::*;
-use windows_numerics::Vector2;
+use windows_numerics::{Matrix3x2, Vector2};
 
 #[derive(Clone, Copy)]
 pub enum Icon {
@@ -19,6 +19,7 @@ pub fn draw(
     dark: bool,
     active: bool,
     icon: Icon,
+    viewport_width: f32,
 ) -> windows::core::Result<()> {
     let width = (area.right - area.left).max(1) as f32;
     let height = (area.bottom - area.top).max(1) as f32;
@@ -94,9 +95,23 @@ pub fn draw(
             Icon::Vpn(_) => (|| {
                 let path = factory.CreatePathGeometry()?;
                 let sink = path.Open()?;
-                sink.BeginFigure(point(-3.5, -4.0), D2D1_FIGURE_BEGIN_HOLLOW);
+                // Keep the arc in the same client coordinates as the main title bar.
+                let center = Vector2 {
+                    X: viewport_width - 150.0 * scale,
+                    Y: 32.0 * scale,
+                };
+                sink.BeginFigure(
+                    Vector2 {
+                        X: center.X - 3.5 * scale,
+                        Y: center.Y - 4.0 * scale,
+                    },
+                    D2D1_FIGURE_BEGIN_HOLLOW,
+                );
                 sink.AddArc(&D2D1_ARC_SEGMENT {
-                    point: point(-3.5, 4.0),
+                    point: Vector2 {
+                        X: center.X - 3.5 * scale,
+                        Y: center.Y + 4.0 * scale,
+                    },
                     size: D2D_SIZE_F {
                         width: 5.5 * scale,
                         height: 5.5 * scale,
@@ -107,7 +122,16 @@ pub fn draw(
                 });
                 sink.EndFigure(D2D1_FIGURE_END_OPEN);
                 sink.Close()?;
+                let transform = |x, y| Matrix3x2 {
+                    M11: 1.0,
+                    M22: 1.0,
+                    M31: x,
+                    M32: y,
+                    ..Default::default()
+                };
+                target.SetTransform(&transform(width / 2.0 - center.X, height / 2.0 - center.Y));
                 target.DrawGeometry(&path, &brush, 1.25 * scale, None);
+                target.SetTransform(&transform(0.0, 0.0));
                 line(-6.0, 0.0, -1.0, 0.0);
                 target.FillEllipse(
                     &D2D1_ELLIPSE {

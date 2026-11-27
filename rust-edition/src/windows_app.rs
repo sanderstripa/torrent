@@ -251,8 +251,17 @@ unsafe extern "system" fn dispatch(
                 _ => Icon::Close,
             };
             let active = draw.itemState & (0x0001 | 0x0040) != 0;
-            if crate::windows_render::draw(draw.hDC, draw.rcItem, window_dark(window), active, icon)
-                .is_err()
+            let mut viewport = RECT::default();
+            unsafe { GetClientRect(window, &mut viewport) };
+            if crate::windows_render::draw(
+                draw.hDC,
+                draw.rcItem,
+                window_dark(window),
+                active,
+                icon,
+                viewport.right as f32,
+            )
+            .is_err()
             {
                 unsafe {
                     crate::windows_paint::control_background(draw.hDC, window_dark(window));
