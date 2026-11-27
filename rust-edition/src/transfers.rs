@@ -21,7 +21,11 @@ impl<'session> Transfers<'session> {
         let mut entries = Vec::new();
         let mut warnings = Vec::new();
         for saved in profile::load_resume_entries(root).map_err(|error| error.to_string())? {
-            match session.restore(&saved.data) {
+            #[cfg(feature = "rqbit")]
+            let restored = session.restore(&saved);
+            #[cfg(not(feature = "rqbit"))]
+            let restored = session.restore(&saved.data);
+            match restored {
                 Ok(handle) => entries.push(Transfer {
                     key: saved.key,
                     stopped: saved.stopped,

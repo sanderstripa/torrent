@@ -1727,6 +1727,38 @@ fn reveal(window: HWND, hidden: &mut bool) {
     }
 }
 
+#[cfg(feature = "rqbit")]
+fn migrate_preview_queue(profile: &std::path::Path) -> Result<(), String> {
+    use torrent_re_sort::profile::{load_resume_entries, save_queue_order};
+
+    let target = profile.join("session");
+    if target.exists() {
+        return Ok(());
+    }
+    let previous = profile
+        .parent()
+        .ok_or("Invalid profile location")?
+        .join("Torrent RE Development")
+        .join("session");
+    let entries = load_resume_entries(&previous).map_err(|error| error.to_string())?;
+    if entries.is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(profile).map_err(|error| error.to_string())?;
+    let staging = tempfile::tempdir_in(profile).map_err(|error| error.to_string())?;
+    for entry in &entries {
+        entry
+            .save(staging.path())
+            .map_err(|error| error.to_string())?;
+    }
+    let keys = entries
+        .iter()
+        .map(|entry| entry.key.as_str())
+        .collect::<Vec<_>>();
+    save_queue_order(staging.path(), &keys).map_err(|error| error.to_string())?;
+    std::fs::rename(staging.path(), target).map_err(|error| error.to_string())
+}
+
 pub fn run() -> Result<(), String> {
     let smoke = std::env::args_os().any(|argument| argument == "--smoke-test");
     let interaction = std::env::args_os().any(|argument| argument == "--interaction-test");
@@ -1789,6 +1821,10 @@ pub fn run() -> Result<(), String> {
                 }
             }
         }
+    }
+    #[cfg(feature = "rqbit")]
+    if !smoke && !interaction {
+        migrate_preview_queue(&profile)?;
     }
     let default_folder = downloads_folder().unwrap_or_else(|| profile.join("Downloads"));
     let mut prefs =

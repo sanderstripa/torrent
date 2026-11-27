@@ -1,5 +1,5 @@
 diff --git a/crates/librqbit/src/session.rs b/crates/librqbit/src/session.rs
-index 1d63605..34c8eca 100644
+index 1d63605..fe5d32c 100644
 --- a/crates/librqbit/src/session.rs
 +++ b/crates/librqbit/src/session.rs
 @@ -123,7 +123,7 @@ pub struct Session {
@@ -11,7 +11,17 @@ index 1d63605..34c8eca 100644
      disable_trackers: bool,
      disable_web_seeds: bool,
  
-@@ -636,6 +636,29 @@ impl Session {
+@@ -275,6 +275,9 @@ pub struct AddTorrentOptions {
+     pub list_only: bool,
+     /// The output folder for the torrent. If not set, the session's default one will be used.
+     pub output_folder: Option<String>,
++    /// Place multifile torrents below their root directory, using output_folder as a base.
++    #[serde(default)]
++    pub output_folder_is_base: bool,
+     /// Sub-folder within session's default output folder. Will error if "output_folder" if also set.
+     /// By default, multi-torrent files are downloaded to a sub-folder.
+     pub sub_folder: Option<String>,
+@@ -636,6 +639,29 @@ impl Session {
                  warn!("uploading disabled");
              }
  
@@ -41,7 +51,7 @@ index 1d63605..34c8eca 100644
              let bind_device = match opts.bind_device_name.as_ref() {
                  Some(name) => Some(
                      BindDevice::new_from_name(name)
-@@ -746,15 +769,6 @@ impl Session {
+@@ -746,15 +772,6 @@ impl Session {
                  .await
                  .context("error initializing session persistence store")?;
  
@@ -57,7 +67,7 @@ index 1d63605..34c8eca 100644
              let client_name_and_version = opts
                  .client_name_and_version
                  .unwrap_or_else(|| crate::client_name_and_version().to_owned());
-@@ -814,9 +828,15 @@ impl Session {
+@@ -814,9 +831,15 @@ impl Session {
                  None
              };
  
@@ -76,7 +86,33 @@ index 1d63605..34c8eca 100644
  
              let lsd = {
                  if opts.disable_local_service_discovery {
-@@ -1509,6 +1529,7 @@ impl Session {
+@@ -1426,6 +1449,25 @@ impl Session {
+                 self.get_default_subfolder_for_torrent(&metadata.info, name.as_deref())?
+                     .unwrap_or_default(),
+             ),
++            (Some(o), None) if opts.output_folder_is_base => {
++                let base = PathBuf::from(o);
++                let subfolder = if metadata.info.info().files.is_some() {
++                    let name = metadata
++                        .info
++                        .name()
++                        .context("multifile torrent has no name")?;
++                    let folder = PathBuf::from(name.as_ref());
++                    anyhow::ensure!(
++                        folder.components().count() == 1
++                            && matches!(folder.components().next(), Some(Component::Normal(_))),
++                        "invalid multifile torrent root folder"
++                    );
++                    Some(folder)
++                } else {
++                    self.get_default_subfolder_for_torrent(&metadata.info, name.as_deref())?
++                };
++                base.join(subfolder.unwrap_or_default())
++            }
+             (Some(o), None) => PathBuf::from(o),
+             (Some(_), Some(_)) => {
+                 bail!("you can't provide both output_folder and sub_folder")
+@@ -1509,6 +1551,7 @@ impl Session {
                  connector: self.connector.clone(),
                  session: Arc::downgrade(self),
                  magnet_name: name,
@@ -84,7 +120,7 @@ index 1d63605..34c8eca 100644
                  client_name_and_version: self.client_name_and_version.clone(),
                  web_seeds: WebSeeds::new(web_seeds, opts.disable_web_seeds, self.disable_web_seeds),
                  location: RwLock::new(StorageLocation {
-@@ -1762,6 +1783,10 @@ impl Session {
+@@ -1762,6 +1805,10 @@ impl Session {
              trackers.clear();
          }
  
@@ -95,7 +131,7 @@ index 1d63605..34c8eca 100644
          if is_private && trackers.len() > 1 {
              warn!(
                  ?info_hash,
-@@ -2275,6 +2300,18 @@ impl Session {
+@@ -2275,6 +2322,18 @@ impl Session {
          Ok(())
      }
  
@@ -114,7 +150,7 @@ index 1d63605..34c8eca 100644
      pub fn listen_addr(&self) -> Option<SocketAddr> {
          self.listen_addr
      }
-@@ -2488,6 +2525,214 @@ mod tests {
+@@ -2488,6 +2547,214 @@ mod tests {
  
      use super::{is_bare_info_hash, torrent_file_from_info_bytes};
  

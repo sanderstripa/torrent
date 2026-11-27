@@ -1,4 +1,5 @@
-use crate::queue_policy::QueuePolicy;
+use crate::{profile::ResumeEntry, queue_policy::QueuePolicy};
+use bencode::{raw_value::RawValue, BencodeValue, ByteBuf, WithRawBytes};
 use librqbit::{
     api::TorrentIdOrHash, AddTorrent, AddTorrentOptions, AddTorrentResponse, Magnet,
     ManagedTorrent, SessionOptions,
@@ -41,9 +42,111 @@ struct Checkpoint {
     key: String,
     source: Source,
     destination: String,
+    #[serde(default)]
+    destination_is_base: bool,
     paused: bool,
     selecting: bool,
     priorities: Option<Vec<u8>>,
+}
+
+#[derive(Deserialize)]
+#[serde(bound(deserialize = "'a: 'de"))]
+struct LegacyResume<'a> {
+    #[serde(rename = "file-format", borrow)]
+    format: ByteBuf<'a>,
+    #[serde(rename = "save_path", borrow)]
+    directory: ByteBuf<'a>,
+    #[serde(default)]
+    paused: u8,
+    #[serde(default)]
+    auto_managed: u8,
+    #[serde(rename = "file_priority", default)]
+    priorities: Option<Vec<u8>>,
+    #[serde(default, borrow)]
+    info: Option<WithRawBytes<BencodeValue<ByteBuf<'a>>, ByteBuf<'a>>>,
+    #[serde(rename = "piece layers", default, borrow)]
+    piece_layers: Option<WithRawBytes<BencodeValue<ByteBuf<'a>>, ByteBuf<'a>>>,
+    #[serde(default, borrow)]
+    trackers: Vec<Vec<ByteBuf<'a>>>,
+    #[serde(rename = "url-list", default, borrow)]
+    web_seeds: Vec<ByteBuf<'a>>,
+}
+
+#[derive(Serialize)]
+struct EmbeddedMetainfo<'a> {
+    #[serde(rename = "announce-list", skip_serializing_if = "<[_]>::is_empty")]
+    trackers: &'a [Vec<ByteBuf<'a>>],
+    info: RawValue<&'a [u8]>,
+    #[serde(rename = "piece layers", skip_serializing_if = "Option::is_none")]
+    piece_layers: Option<RawValue<&'a [u8]>>,
+    #[serde(rename = "url-list", skip_serializing_if = "<[_]>::is_empty")]
+    web_seeds: &'a [ByteBuf<'a>],
+}
+
+fn import_legacy(entry: &ResumeEntry) -> Result<Checkpoint, String> {
+    let legacy: LegacyResume<'_> = bencode::from_bytes(&entry.data)
+        .map_err(|error| format!("Invalid libtorrent checkpoint: {error}"))?;
+    if legacy.format.as_ref() != b"libtorrent resume file" {
+        return Err("Unsupported checkpoint format".into());
+    }
+    let destination = std::str::from_utf8(legacy.directory.as_ref())
+        .map_err(|error| error.to_string())?
+        .to_owned();
+    if destination.is_empty() {
+        return Err("Libtorrent checkpoint is missing its download folder".into());
+    }
+    let source = match legacy.info {
+        Some(info) => {
+            let mut bytes = Vec::new();
+            bencode::bencode_serialize_to_writer(
+                &EmbeddedMetainfo {
+                    trackers: &legacy.trackers,
+                    info: RawValue(info.raw_bytes.0),
+                    piece_layers: legacy.piece_layers.map(|raw| RawValue(raw.raw_bytes.0)),
+                    web_seeds: &legacy.web_seeds,
+                },
+                &mut bytes,
+            )
+            .map_err(|error| error.to_string())?;
+            let metadata =
+                librqbit::torrent_from_bytes(&bytes).map_err(|error| error.to_string())?;
+            let key = metadata
+                .info_hash_v2
+                .map(|hash| hash.as_string())
+                .unwrap_or_else(|| metadata.info_hash.as_string());
+            if !entry.key.eq_ignore_ascii_case(&key) {
+                return Err("Libtorrent checkpoint has a mismatched info hash".into());
+            }
+            Source::Metadata(bytes)
+        }
+        None => {
+            let topic = match entry.key.len() {
+                40 => format!("urn:btih:{}", entry.key),
+                64 => format!("urn:btmh:1220{}", entry.key),
+                _ => return Err("Libtorrent checkpoint is missing its info hash".into()),
+            };
+            let mut query = url::form_urlencoded::Serializer::new(String::new());
+            query.append_pair("xt", &topic);
+            for tracker in legacy.trackers.iter().flatten() {
+                if let Ok(tracker) = std::str::from_utf8(tracker.as_ref()) {
+                    query.append_pair("tr", tracker);
+                }
+            }
+            Source::Magnet(format!("magnet:?{}", query.finish()))
+        }
+    };
+    Ok(Checkpoint {
+        version: CHECKPOINT_FORMAT,
+        key: entry.key.clone(),
+        source,
+        destination,
+        destination_is_base: true,
+        paused: entry.stopped || legacy.paused != 0 && legacy.auto_managed == 0,
+        selecting: entry.selection_pending,
+        priorities: legacy
+            .priorities
+            .filter(|p| !p.is_empty() && !entry.selection_pending),
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -177,6 +280,7 @@ impl Session {
                 key,
                 source,
                 destination: destination.to_owned(),
+                destination_is_base: true,
                 selecting: select,
                 paused: false,
                 priorities: None,
@@ -185,10 +289,17 @@ impl Session {
         ))
     }
 
-    pub fn restore(&self, bytes: &[u8]) -> Result<Torrent<'_>, String> {
-        let saved: Checkpoint = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    pub fn restore(&self, entry: &ResumeEntry) -> Result<Torrent<'_>, String> {
+        let saved: Checkpoint = if entry.data.starts_with(b"d") {
+            import_legacy(entry)?
+        } else {
+            serde_json::from_slice(&entry.data).map_err(|error| error.to_string())?
+        };
         if saved.version != CHECKPOINT_FORMAT {
             return Err("Unsupported Rust Edition checkpoint version".into());
+        }
+        if !saved.key.eq_ignore_ascii_case(&entry.key) {
+            return Err("Rust Edition checkpoint has a mismatched info hash".into());
         }
         let label = saved.key.clone();
         Ok(self.start(saved, label))
@@ -221,6 +332,7 @@ impl Session {
                         paused: true,
                         overwrite: true,
                         output_folder: Some(pending.destination),
+                        output_folder_is_base: pending.destination_is_base,
                         only_files: pending.selecting.then(Vec::new),
                         ..Default::default()
                     }),
@@ -568,6 +680,44 @@ mod tests {
     }
 
     #[test]
+    fn imports_libtorrent_checkpoint_with_its_original_hash_and_priorities() -> Result<(), String> {
+        let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let (source, destination) = local_fixture(directory.path())?;
+        let bytes = std::fs::read(source).map_err(|error| error.to_string())?;
+        let metainfo = librqbit::torrent_from_bytes(&bytes).map_err(|error| error.to_string())?;
+        let key = metainfo.info_hash.as_string();
+        let destination = destination.to_str().unwrap();
+
+        // Use the same fields and nesting as libtorrent's write_resume_data_buf.
+        let mut legacy = b"d12:auto_managedi0e11:file-format22:libtorrent resume file13:file_priorityli7ee4:info".to_vec();
+        legacy.extend_from_slice(metainfo.info.raw_bytes.as_ref());
+        legacy.extend_from_slice(
+            format!("6:pausedi1e9:save_path{}:{destination}e", destination.len()).as_bytes(),
+        );
+        let saved = ResumeEntry {
+            key: key.clone(),
+            stopped: false,
+            selection_pending: false,
+            data: legacy,
+        };
+        let session = Session::open(PREVIEW_POLICY, true)?;
+        let transfer = session.restore(&saved)?;
+        wait_for_files(&transfer)?;
+        assert_eq!(transfer.key()?, key);
+        assert_eq!(transfer.file_priorities()?, [7]);
+        assert!(transfer.status()?.1.paused);
+        assert_eq!(
+            transfer
+                .handle()?
+                .ok_or("Torrent is missing")?
+                .output_folder(),
+            Path::new(destination)
+        );
+        assert!(transfer.checkpoint()?.starts_with(b"{"));
+        Ok(())
+    }
+
+    #[test]
     fn add_select_and_restore_a_local_torrent() -> Result<(), String> {
         let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
         let (source, destination) = local_fixture(directory.path())?;
@@ -593,7 +743,12 @@ mod tests {
         };
         std::fs::remove_file(source).map_err(|error| error.to_string())?;
         let session = Session::open(PREVIEW_POLICY, true)?;
-        let transfer = session.restore(&saved)?;
+        let transfer = session.restore(&ResumeEntry {
+            key: key.clone(),
+            stopped: false,
+            selection_pending: false,
+            data: saved,
+        })?;
         wait_for_files(&transfer)?;
         assert_eq!(transfer.key()?, key);
         assert_eq!(transfer.file_priorities()?, [7]);

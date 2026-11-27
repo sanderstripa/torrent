@@ -3009,6 +3009,7 @@ dependencies = [
  "base64 0.22.1",
  "hex",
  "librqbit",
+ "librqbit-bencode",
  "percent-encoding",
  "serde",
  "serde_json",

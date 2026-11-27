@@ -12,10 +12,11 @@ panic = "abort"
 [features]
 windows-app = []
 libtorrent = ["windows-app"]
-rqbit = ["windows-app", "dep:librqbit", "dep:tokio", "dep:serde", "dep:serde_json"]
+rqbit = ["windows-app", "dep:bencode", "dep:librqbit", "dep:tokio", "dep:serde", "dep:serde_json", "dep:tempfile", "dep:url"]
 vpn = ["dep:base64", "dep:hex", "dep:percent-encoding", "dep:serde_json", "dep:sha2", "dep:tempfile", "dep:url"]
 
 [dependencies]
+bencode = { package = "librqbit-bencode", path = "librqbit/vendor/crates/bencode", optional = true }
 librqbit = { path = "librqbit/vendor/crates/librqbit", default-features = false, features = ["rust-tls"], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "time"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }

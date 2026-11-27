@@ -275,6 +275,9 @@ pub struct AddTorrentOptions {
     pub list_only: bool,
     /// The output folder for the torrent. If not set, the session's default one will be used.
     pub output_folder: Option<String>,
+    /// Place multifile torrents below their root directory, using output_folder as a base.
+    #[serde(default)]
+    pub output_folder_is_base: bool,
     /// Sub-folder within session's default output folder. Will error if "output_folder" if also set.
     /// By default, multi-torrent files are downloaded to a sub-folder.
     pub sub_folder: Option<String>,
@@ -1446,6 +1449,25 @@ impl Session {
                 self.get_default_subfolder_for_torrent(&metadata.info, name.as_deref())?
                     .unwrap_or_default(),
             ),
+            (Some(o), None) if opts.output_folder_is_base => {
+                let base = PathBuf::from(o);
+                let subfolder = if metadata.info.info().files.is_some() {
+                    let name = metadata
+                        .info
+                        .name()
+                        .context("multifile torrent has no name")?;
+                    let folder = PathBuf::from(name.as_ref());
+                    anyhow::ensure!(
+                        folder.components().count() == 1
+                            && matches!(folder.components().next(), Some(Component::Normal(_))),
+                        "invalid multifile torrent root folder"
+                    );
+                    Some(folder)
+                } else {
+                    self.get_default_subfolder_for_torrent(&metadata.info, name.as_deref())?
+                };
+                base.join(subfolder.unwrap_or_default())
+            }
             (Some(o), None) => PathBuf::from(o),
             (Some(_), Some(_)) => {
                 bail!("you can't provide both output_folder and sub_folder")
