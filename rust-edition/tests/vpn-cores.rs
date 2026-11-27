@@ -274,6 +274,23 @@ fn check_active_transfer(port: u16, directory: &Path, helper: &mut Child) -> Res
             return Err(format!("The BitTorrent connection survived VPN loss: {error}").into())
         }
     }
+    let blocked = directory.join("while-vpn-is-down.torrent");
+    let mut second = torrent.clone();
+    let name = second
+        .windows(9)
+        .position(|value| value == b"7:fixture")
+        .ok_or("Expected torrent name is missing")?;
+    second[name + 2..name + 9].copy_from_slice(b"blocked");
+    std::fs::write(&blocked, second)?;
+    transfers.add(blocked.to_str().unwrap(), output.to_str().unwrap(), false)?;
+    let ongoing = &transfers.ordered()[0].handle;
+    let pending = &transfers.ordered()[1].handle;
+    wait_for(|| {
+        pending
+            .status()
+            .is_ok_and(|(_, status)| status.has_metadata)
+    })?;
+
     for _ in 0..20 {
         assert!(
             matches!(peer.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
@@ -281,7 +298,8 @@ fn check_active_transfer(port: u16, directory: &Path, helper: &mut Child) -> Res
         assert!(
             matches!(tracker.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
         );
-        assert_eq!(entry.status()?.1.wanted_done, 16384);
+        assert_eq!(ongoing.status()?.1.wanted_done, 16384);
+        assert_eq!(pending.status()?.1.wanted_done, 0);
         thread::sleep(Duration::from_millis(100));
     }
     transfers.change_network(Network::Blocked)?;

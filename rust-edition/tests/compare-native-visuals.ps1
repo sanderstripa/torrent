@@ -37,17 +37,21 @@ public static class TorrentVisual {
         }, IntPtr.Zero);
         return found;
     }
-    public static long[] Compare(int[] expected, int[] actual) {
+    public static long[] Compare(int[] expected, int[] actual, int width) {
         long changed = 0, sum = 0;
+        int left = width, top = expected.Length / width, right = -1, bottom = -1;
         for (int index = 0; index < expected.Length; ++index) {
             int a = expected[index] & 0xFFFFFF, b = actual[index] & 0xFFFFFF;
             if (a == b) continue;
             ++changed;
+            int x = index % width, y = index / width;
+            left = Math.Min(left, x); right = Math.Max(right, x);
+            top = Math.Min(top, y); bottom = Math.Max(bottom, y);
             for (int shift = 0; shift < 24; shift += 8) {
                 sum += Math.Abs(((a >> shift) & 255) - ((b >> shift) & 255));
             }
         }
-        return new long[] { changed, sum };
+        return new long[] { changed, sum, left, top, right, bottom };
     }
 }
 '@
@@ -137,7 +141,7 @@ $results = foreach ($theme in @('light', 'dark')) {
             $left = if ($view -eq 'settings') { [Math]::Floor(($referenceImage.Width - $width) / 2.0) } else { 0 }
             $oldPixels = Read-Pixels $referenceImage ([Drawing.Rectangle]::new($left, 0, $width, $height))
             $newPixels = Read-Pixels $actualImage ([Drawing.Rectangle]::new(0, 0, $width, $height))
-            $difference = [TorrentVisual]::Compare($oldPixels, $newPixels)
+            $difference = [TorrentVisual]::Compare($oldPixels, $newPixels, $width)
             [pscustomobject]@{
                 Theme = $theme
                 View = $view
@@ -145,6 +149,7 @@ $results = foreach ($theme in @('light', 'dark')) {
                 Rust = "$($actualImage.Width)x$($actualImage.Height)"
                 Compared = $width * $height
                 Changed = $difference[0]
+                Bounds = if ($difference[0] -gt 0) { "$($difference[2]),$($difference[3])–$($difference[4]),$($difference[5])" } else { '' }
                 MeanChannelError = [Math]::Round($difference[1] / (3.0 * $width * $height), 3)
             }
         } finally {
