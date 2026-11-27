@@ -39,19 +39,25 @@ fn wait_for(mut condition: impl FnMut() -> bool) -> Result<()> {
 #[ignore = "requires the pinned Xray and Sudoku Windows binaries"]
 fn pinned_cores_forward_and_stop_with_the_helper() -> Result<()> {
     let package = std::env::var_os("TORRENT_VPN_FIXTURE_BIN").ok_or("missing VPN package path")?;
-    for core in ["xray", "sudoku"] {
-        run_core(Path::new(&package), core)?;
+    for (core, transports) in [
+        ("xray", ["tcp", "ws", "xhttp", "grpc"]),
+        ("sudoku", ["raw", "ws", "stream", "poll"]),
+    ] {
+        for transport in transports {
+            run_core(Path::new(&package), core, transport)
+                .map_err(|error| format!("{core}/{transport}: {error}"))?;
+        }
     }
     Ok(())
 }
 
-fn run_core(package: &Path, core: &str) -> Result<()> {
+fn run_core(package: &Path, core: &str, transport: &str) -> Result<()> {
     let workspace = tempfile::tempdir()?;
     let server_port = unused_port()?;
     let id = "12345678-1234-1234-1234-123456789abc";
     let secret = "ab".repeat(32);
 
-    let (server, link, arguments) = if core == "xray" {
+    let (mut server, mut link, arguments) = if core == "xray" {
         (
             json!({
                 "inbounds": [{
@@ -79,6 +85,35 @@ fn run_core(package: &Path, core: &str) -> Result<()> {
             &["-c"][..],
         )
     };
+    if core == "xray" && transport != "tcp" {
+        let stream = match transport {
+            "ws" => json!({"network": transport, "wsSettings": {"path": "/sona"}}),
+            "xhttp" => json!({"network": transport, "xhttpSettings": {"path": "/sona"}}),
+            "grpc" => json!({"network": transport, "grpcSettings": {"serviceName": "sona"}}),
+            _ => return Err("unexpected Xray transport".into()),
+        };
+        server["inbounds"][0]["streamSettings"] = stream;
+        link = format!(
+            "vless://{id}@127.0.0.1:{server_port}?security=none&type={transport}&path=%2Fsona&serviceName=sona"
+        );
+        if transport == "xhttp" {
+            link.push_str("&mode=packet-up");
+        }
+    }
+    if core == "sudoku" && transport != "raw" {
+        let multiplex = if transport == "ws" { "on" } else { "auto" };
+        server["httpmask"] = json!({
+            "disable": false, "mode": transport, "multiplex": multiplex, "path_root": "/sona"
+        });
+        server["enable_pure_downlink"] = json!(false);
+        server["ascii"] = json!("up_ascii_down_entropy");
+        server["aead"] = json!("chacha20-poly1305");
+        let key = json!({
+            "h": "127.0.0.1", "p": server_port, "k": secret, "e": "chacha20-poly1305",
+            "a": "up_ascii_down_entropy", "x": true, "hm": transport, "hx": multiplex, "hy": "/sona"
+        });
+        link = format!("sudoku://{}", URL_SAFE_NO_PAD.encode(key.to_string()));
+    }
     let configuration = workspace.path().join("server.json");
     std::fs::write(&configuration, serde_json::to_vec(&server)?)?;
     let core_directory = package.join(core);
@@ -118,7 +153,7 @@ fn run_core(package: &Path, core: &str) -> Result<()> {
     let target = TcpListener::bind("127.0.0.1:0")?;
     let destination_port = target.local_addr()?.port();
     let proxy = SocketAddr::from(([127, 0, 0, 1], port));
-    let duration = Duration::from_secs(5);
+    let duration = Duration::from_secs(15);
     let mut stream = TcpStream::connect_timeout(&proxy, duration)?;
     stream.set_read_timeout(Some(duration))?;
     stream.set_write_timeout(Some(duration))?;
@@ -161,9 +196,10 @@ fn run_core(package: &Path, core: &str) -> Result<()> {
 
     // Terminating the helper also terminates the core and closes live tunnel sockets.
     #[cfg(feature = "rqbit")]
-    check_active_transfer(port, workspace.path(), &mut helper.0)?;
-    #[cfg(not(feature = "rqbit"))]
-    {
+    if matches!(transport, "tcp" | "raw") {
+        check_active_transfer(port, workspace.path(), &mut helper.0)?;
+    }
+    if helper.0.try_wait()?.is_none() {
         helper.0.kill()?;
         helper.0.wait()?;
     }
