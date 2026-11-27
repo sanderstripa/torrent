@@ -201,6 +201,13 @@ $results = foreach ($theme in @('light', 'dark')) {
         }
     }
 }
+function Set-SetupPath([IntPtr]$Window, [string]$Path) {
+    if (![TorrentVisual]::ClickSetup($Window, 180, 202)) { throw 'Could not focus the installer path field' }
+    Start-Sleep -Milliseconds 100
+    [System.Windows.Forms.SendKeys]::SendWait('^a')
+    [System.Windows.Forms.SendKeys]::SendWait($Path)
+}
+
 $referenceSetup = Join-Path $work.FullName 'Torrent-1.4.4-Release-x64.exe'
 Invoke-WebRequest -Uri 'https://github.com/sanderstripa/torrent/releases/download/v1.4.4/Torrent-1.4.4-Release-x64.exe' -OutFile $referenceSetup
 if ((Get-FileHash -LiteralPath $referenceSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ne '9a8f7aba2084b181814229688487840f334299a944333ec04ace8f3eb0f89b8d') {
@@ -220,6 +227,9 @@ foreach ($installerCapture in @(
         Save-VisibleCapture $window $welcome
         if (![TorrentVisual]::ClickSetup($window, 105, 366)) { throw 'Could not open the installer settings for capture' }
         Start-Sleep -Milliseconds 400
+        Set-SetupPath $window (Join-Path $work.FullName 'visual-destination')
+        if (![TorrentVisual]::ClickSetup($window, 359, 130)) { throw 'Could not focus the installer theme selector' }
+        Start-Sleep -Milliseconds 300
         Save-VisibleCapture $window $settingsPage
         if ((Get-FileHash $welcome).Hash -eq (Get-FileHash $settingsPage).Hash) {
             throw "The $kind installer did not open its settings"
@@ -238,14 +248,13 @@ foreach ($installerCapture in @(
         if ((Get-FileHash $darkWelcome).Hash -eq (Get-FileHash $darkSettings).Hash) {
             throw "The $kind installer did not return to the welcome page"
         }
-        if (![TorrentVisual]::ClickSetup($window, 105, 366) -or
-            ![TorrentVisual]::ClickSetup($window, 359, 130) -or
-            ![TorrentVisual]::ClickSetup($window, 180, 202)) {
+        if (![TorrentVisual]::ClickSetup($window, 105, 366)) {
             throw 'Could not prepare the isolated installer destination'
         }
+        Start-Sleep -Milliseconds 250
+        if (![TorrentVisual]::ClickSetup($window, 359, 130)) { throw 'Could not select the light installer theme' }
         $installed = Join-Path $work.FullName "installed-$kind"
-        [System.Windows.Forms.SendKeys]::SendWait('^a')
-        [System.Windows.Forms.SendKeys]::SendWait($installed)
+        Set-SetupPath $window $installed
         Start-Sleep -Milliseconds 200
         if (![TorrentVisual]::ClickSetup($window, 160, 410)) {
             throw 'Could not start the isolated visual installation'

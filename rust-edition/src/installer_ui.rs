@@ -399,6 +399,7 @@ unsafe extern "system" fn window_proc(
             return 0;
         }
         WM_LBUTTONUP => {
+            unsafe { SetFocus(window) };
             let (x, y) = point;
             if hit(CAPTION_CLOSE, x, y) {
                 close = state.page != Page::Installing;
