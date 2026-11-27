@@ -142,6 +142,7 @@ $results = foreach ($theme in @('light', 'dark')) {
         $settings = Wait-Window $process 'Настройки'
         Start-Sleep -Milliseconds 300
         Save-Capture $settings (Join-Path $out "$theme-rust-settings.png")
+        Save-VisibleCapture $main (Join-Path $out "$theme-rust-settings-window.png")
         [TorrentVisual]::PostMessage($settings, 0x111, [IntPtr]111, [IntPtr]::Zero) | Out-Null
         for ($attempt = 0; $attempt -lt 100 -and [TorrentVisual]::IsWindowVisible($settings); $attempt++) {
             Start-Sleep -Milliseconds 50
@@ -158,8 +159,9 @@ $results = foreach ($theme in @('light', 'dark')) {
         $process.Dispose()
     }
 
-    foreach ($view in @('main', 'settings', 'files')) {
-        $referenceImage = [Drawing.Bitmap]::new((Join-Path $out "$theme-reference-$view.png"))
+    foreach ($view in @('main', 'settings', 'settings-window', 'files')) {
+        $referenceView = if ($view -eq 'settings-window') { 'settings' } else { $view }
+        $referenceImage = [Drawing.Bitmap]::new((Join-Path $out "$theme-reference-$referenceView.png"))
         $actualImage = [Drawing.Bitmap]::new((Join-Path $out "$theme-rust-$view.png"))
         try {
             $width = [Math]::Min($referenceImage.Width, $actualImage.Width)
