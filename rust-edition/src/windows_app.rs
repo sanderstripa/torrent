@@ -1725,6 +1725,26 @@ fn product_prompt(
     Ok(accepted)
 }
 
+fn show_window_error(window: HWND, english: bool, error: &str) {
+    #[cfg(feature = "rqbit")]
+    if unsafe { IsWindowVisible(window) } != 0
+        && product_prompt(
+            window,
+            tr(english, "Ошибка", "Error"),
+            error,
+            english,
+            None,
+            |_, _| true,
+        )
+        .is_ok()
+    {
+        return;
+    }
+    #[cfg(not(feature = "rqbit"))]
+    let _ = (window, english);
+    show_error(error);
+}
+
 #[cfg(feature = "rqbit")]
 fn magnet_input(owner: HWND, en: bool) -> Result<Option<String>, String> {
     product_prompt(
@@ -1738,18 +1758,7 @@ fn magnet_input(owner: HWND, en: bool) -> Result<Option<String>, String> {
                 return true;
             }
             let error = tr(en, "Введите magnet-ссылку", "Enter a magnet link");
-            if product_prompt(
-                window,
-                tr(en, "Ошибка", "Error"),
-                error,
-                en,
-                None,
-                |_, _| true,
-            )
-            .is_err()
-            {
-                show_error(error);
-            }
+            show_window_error(window, en, error);
             false
         },
     )
@@ -2022,7 +2031,7 @@ fn settings_144(
             prefs.vpn_enabled = vpn_enabled;
         }
         if let Err(error) = result {
-            show_error(&error);
+            show_window_error(dialog.window, prefs.english, &error);
         }
         let dark = if persist {
             apply_title_theme(owner, prefs.theme)
@@ -2826,11 +2835,15 @@ pub fn run() -> Result<(), String> {
                             hidden_to_tray = true;
                             ShowWindow(window, SW_HIDE);
                         } else {
-                            show_error(tr(
+                            show_window_error(
+                                window,
                                 prefs.english,
-                                "Не удалось создать значок в трее.",
-                                "Could not create the notification area icon.",
-                            ));
+                                tr(
+                                    prefs.english,
+                                    "Не удалось создать значок в трее.",
+                                    "Could not create the notification area icon.",
+                                ),
+                            );
                         }
                     }
                 }
@@ -2840,7 +2853,7 @@ pub fn run() -> Result<(), String> {
                     }
                     if !smoke {
                         if let Err(error) = save_position(window, &profile) {
-                            show_error(&error.to_string());
+                            show_window_error(window, prefs.english, &error.to_string());
                         }
                     }
                     DestroyWindow(window);
@@ -2854,7 +2867,7 @@ pub fn run() -> Result<(), String> {
                     #[cfg(all(feature = "rqbit", feature = "vpn"))]
                     if let Err(error) = vpn.tick(&transfers) {
                         if !hidden_to_tray {
-                            show_error(&error);
+                            show_window_error(window, prefs.english, &error);
                         }
                     }
                     #[cfg(all(feature = "rqbit", feature = "vpn"))]
@@ -2863,7 +2876,7 @@ pub fn run() -> Result<(), String> {
                         if let Err(error) =
                             prompt_for_files(window, &mut transfers, &mut prompted, prefs.english)
                         {
-                            show_error(&error);
+                            show_window_error(window, prefs.english, &error);
                         }
                     }
                     if last_save.elapsed().as_secs() >= 30 && !transfers.ordered().is_empty() {
@@ -2884,7 +2897,7 @@ pub fn run() -> Result<(), String> {
                             &prefs.folder.to_string_lossy(),
                             prefs.select_files,
                         ) {
-                            show_error(&error);
+                            show_window_error(window, prefs.english, &error);
                         }
                     }
                     controls.refresh(&transfers);
@@ -2896,7 +2909,7 @@ pub fn run() -> Result<(), String> {
                             &prefs.folder.to_string_lossy(),
                             prefs.select_files,
                         ) {
-                            show_error(&error);
+                            show_window_error(window, prefs.english, &error);
                         }
                     }
                     controls.refresh(&transfers);
@@ -2983,7 +2996,7 @@ pub fn run() -> Result<(), String> {
                         _ => Ok(()),
                     };
                     match result {
-                        Err(error) => show_error(&error),
+                        Err(error) => show_window_error(window, prefs.english, &error),
                         Ok(())
                             if [
                                 ADD_MAGNET,
@@ -2999,7 +3012,7 @@ pub fn run() -> Result<(), String> {
                             .contains(&message.wParam) =>
                         {
                             if let Err(error) = transfers.save() {
-                                show_error(&error);
+                                show_window_error(window, prefs.english, &error);
                             }
                             last_save = std::time::Instant::now();
                         }
