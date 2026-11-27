@@ -721,7 +721,7 @@ fn label(
         variable.SetFontAxisValues(&axis, range)?;
         if tracking != 0.0 {
             let spaced: IDWriteTextLayout1 = layout.cast()?;
-            spaced.SetCharacterSpacing(tracking / 2.0, tracking / 2.0, 0.0, range)?;
+            spaced.SetCharacterSpacing(0.0, tracking, 0.0, range)?;
         }
         canvas.brush.SetColor(&rgb(color));
         canvas.target.DrawTextLayout(
@@ -814,7 +814,7 @@ fn draw(
                 &canvas,
                 font,
                 value,
-                r,
+                rect(r.left, r.top - 0.75, r.right, r.bottom - 0.75),
                 14.0,
                 inverse,
                 DWRITE_TEXT_ALIGNMENT_CENTER,
@@ -912,7 +912,7 @@ fn draw(
                     &canvas,
                     font,
                     tr("УСТАНОВКА", "INSTALLATION"),
-                    rect(45.0, 167.0, 380.0, 195.0),
+                    rect(45.0, 167.5, 380.0, 195.5),
                     12.0,
                     fg,
                     DWRITE_TEXT_ALIGNMENT_LEADING,
@@ -923,7 +923,7 @@ fn draw(
                     &canvas,
                     font,
                     "Torrent",
-                    rect(45.0, 203.0, 410.0, 259.0),
+                    rect(45.0, 202.0, 410.0, 258.0),
                     42.0,
                     fg,
                     DWRITE_TEXT_ALIGNMENT_LEADING,
@@ -933,7 +933,7 @@ fn draw(
                 primary(tr("Установить", "Install"), setup.primary())?;
                 text(
                     tr("Настройки установки", "Installation settings"),
-                    rect(45.0, 351.0, 330.0, 383.0),
+                    rect(45.0, 349.0, 330.0, 381.0),
                     13.0,
                     muted,
                 )?;
