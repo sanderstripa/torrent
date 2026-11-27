@@ -179,7 +179,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo test --locked --target x86_64-pc-windows-msvc --features vpn --manifest-path rust-edition/Cargo.toml
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo check --locked --target x86_64-pc-windows-msvc --features libtorrent --manifest-path rust-edition/Cargo.toml
+          cargo check --locked --target x86_64-pc-windows-msvc --features installer --manifest-path rust-edition/Cargo.toml --bin torrent-re-setup
       - name: Exercise the pinned VPN cores through the Rust helper
         shell: pwsh
         run: |

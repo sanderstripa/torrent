@@ -10,10 +10,8 @@ crate-type = ["staticlib", "rlib"]
 panic = "abort"
 
 [features]
-windows-app = []
 installer = ["dep:tempfile", "dep:windows", "dep:windows-numerics"]
-libtorrent = ["windows-app"]
-rqbit = ["windows-app", "dep:windows", "dep:windows-numerics", "dep:bencode", "dep:librqbit", "dep:tokio", "dep:serde", "dep:serde_json", "dep:tempfile", "dep:url"]
+rqbit = ["dep:windows", "dep:windows-numerics", "dep:bencode", "dep:librqbit", "dep:tokio", "dep:serde", "dep:serde_json", "dep:tempfile", "dep:url"]
 vpn = ["dep:base64", "dep:hex", "dep:percent-encoding", "dep:serde_json", "dep:sha2", "dep:tempfile", "dep:url"]
 
 [dependencies]
@@ -70,7 +68,7 @@ windows-sys = { version = "0.61", features = [
 [[bin]]
 name = "torrent-re-windows"
 path = "src/main.rs"
-required-features = ["windows-app"]
+required-features = ["rqbit", "vpn"]
 
 [[bin]]
 name = "TorrentVpnHost"

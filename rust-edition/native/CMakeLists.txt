@@ -1,7 +1,0 @@
-cmake_minimum_required(VERSION 3.24)
-project(TorrentLibtorrentBridge LANGUAGES CXX)
-find_package(LibtorrentRasterbar CONFIG REQUIRED)
-add_library(torrent_re_libtorrent SHARED libtorrent_bridge.cpp)
-target_compile_features(torrent_re_libtorrent PRIVATE cxx_std_17)
-target_link_libraries(torrent_re_libtorrent PRIVATE LibtorrentRasterbar::torrent-rasterbar)
-set_target_properties(torrent_re_libtorrent PROPERTIES CXX_VISIBILITY_PRESET hidden)

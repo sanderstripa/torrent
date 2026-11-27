@@ -29,12 +29,9 @@ pub mod install_payload;
 pub mod profile;
 pub mod queue_policy;
 
-#[cfg(all(feature = "libtorrent", not(feature = "rqbit")))]
-pub mod engine;
-
 #[cfg(feature = "rqbit")]
 #[path = "rqbit_engine.rs"]
 pub mod engine;
 
-#[cfg(any(feature = "libtorrent", feature = "rqbit"))]
+#[cfg(feature = "rqbit")]
 pub mod transfers;

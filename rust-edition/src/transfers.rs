@@ -164,7 +164,7 @@ impl<'session> Transfers<'session> {
     }
 }
 
-#[cfg(all(test, feature = "libtorrent", not(feature = "rqbit")))]
+#[cfg(test)]
 #[test]
 fn open_save_and_restore_deduplicated_ordered_queue() -> Result<(), Box<dyn std::error::Error>> {
     use crate::queue_policy::PREVIEW_POLICY;
