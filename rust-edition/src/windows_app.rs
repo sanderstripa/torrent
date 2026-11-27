@@ -134,6 +134,11 @@ unsafe extern "system" fn dispatch(
     {
         return result;
     }
+    #[cfg(feature = "rqbit")]
+    if let Some(result) = unsafe { crate::windows_files::dispatch(window, message, wparam, lparam) }
+    {
+        return result;
+    }
     match message {
         WM_COPYDATA if unsafe { GetWindow(window, GW_OWNER) }.is_null() => {
             let Some(packet) = (unsafe { (lparam as *const COPYDATASTRUCT).as_ref() }) else {
@@ -536,6 +541,10 @@ impl Dialog {
             if !GetPropW(self.window, crate::windows_settings::PROPERTY).is_null() {
                 windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus(self.window);
             }
+            #[cfg(feature = "rqbit")]
+            if !GetPropW(self.window, crate::windows_files::PROPERTY).is_null() {
+                windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus(self.window);
+            }
             let mut message = MSG::default();
             let mut deferred = Vec::new();
             while IsWindow(self.window) != 0 {
@@ -571,6 +580,13 @@ impl Dialog {
                     _ if message.hwnd == self.window
                         && message.message == WM_KEYDOWN
                         && !GetPropW(self.window, crate::windows_settings::PROPERTY).is_null() =>
+                    {
+                        DispatchMessageW(&message);
+                    }
+                    #[cfg(feature = "rqbit")]
+                    _ if message.hwnd == self.window
+                        && message.message == WM_KEYDOWN
+                        && !GetPropW(self.window, crate::windows_files::PROPERTY).is_null() =>
                     {
                         DispatchMessageW(&message);
                     }
@@ -859,7 +875,7 @@ fn settings(
     Ok(())
 }
 
-fn compare_names(a: &str, b: &str) -> std::cmp::Ordering {
+pub(crate) fn compare_names(a: &str, b: &str) -> std::cmp::Ordering {
     let (a, b) = (wide(a), wide(b));
     let order = unsafe {
         CompareStringEx(
@@ -881,6 +897,7 @@ fn compare_names(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
+#[cfg(not(feature = "rqbit"))]
 fn select_torrent_files(
     owner: HWND,
     transfer: &torrent_re_sort::transfers::Transfer<'_>,
@@ -1008,6 +1025,118 @@ fn select_torrent_files(
         _ => false,
     });
     Ok(accepted.then_some(priorities))
+}
+
+#[cfg(feature = "rqbit")]
+fn select_torrent_files(
+    owner: HWND,
+    transfer: &torrent_re_sort::transfers::Transfer<'_>,
+    english: bool,
+) -> Result<Option<Vec<u8>>, String> {
+    use crate::windows_files as files_ui;
+    let files = transfer.handle.files()?;
+    if files.is_empty() {
+        return Err(tr(
+            english,
+            "Файлы станут доступны после получения метаданных.",
+            "Files will become available when metadata arrives.",
+        )
+        .into());
+    }
+    let mut priorities = transfer.handle.file_priorities()?;
+    priorities.resize(files.len(), 4);
+    if transfer.selection_pending {
+        for priority in &mut priorities {
+            if *priority == 0 {
+                *priority = 4;
+            }
+        }
+    }
+    let (title, _) = transfer.handle.status()?;
+    let view = std::cell::RefCell::new(files_ui::FileView::new(
+        files,
+        priorities,
+        title,
+        english,
+        window_dark(owner),
+    ));
+    let (width, height) = view.borrow().size();
+    let dialog = Dialog::create(
+        owner,
+        tr(english, "Файлы торрента", "Torrent files"),
+        width,
+        height,
+    )?;
+    unsafe {
+        SetWindowLongPtrW(dialog.window, GWL_STYLE, (WS_POPUP | WS_SYSMENU) as isize);
+        if SetPropW(
+            dialog.window,
+            files_ui::PROPERTY,
+            (&view as *const _ as *mut std::ffi::c_void).cast(),
+        ) == 0
+        {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        SetWindowPos(
+            dialog.window,
+            null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+        );
+    }
+    let mut accepted = false;
+    dialog.run(|id| match id {
+        files_ui::APPLY => {
+            accepted = true;
+            true
+        }
+        files_ui::CANCEL => true,
+        id if id >= files_ui::PRIORITY => {
+            let index = id - files_ui::PRIORITY;
+            let (position, selected) = {
+                let view = view.borrow();
+                let Some(&current) = view.priorities.get(index) else {
+                    return false;
+                };
+                (view.menu_point(index), current)
+            };
+            let mut point = windows_sys::Win32::Foundation::POINT {
+                x: position.0,
+                y: position.1,
+            };
+            unsafe {
+                windows_sys::Win32::Graphics::Gdi::ClientToScreen(dialog.window, &mut point);
+            }
+            let options = [0u8, 1, 4, 7].map(|priority| crate::windows_popup::Item {
+                id: usize::from(priority) + 1,
+                title: files_ui::priority_label(priority, english),
+                checked: files_ui::priority_label(priority, english)
+                    == files_ui::priority_label(selected, english),
+                enabled: true,
+            });
+            if let Some(action) = crate::windows_popup::show(
+                dialog.window,
+                point.x,
+                point.y,
+                &options,
+                window_dark(owner),
+            ) {
+                view.borrow_mut().set_priority(index, (action - 1) as u8);
+                unsafe {
+                    windows_sys::Win32::Graphics::Gdi::InvalidateRect(dialog.window, null(), 0);
+                }
+            }
+            false
+        }
+        _ => false,
+    });
+    unsafe {
+        RemovePropW(dialog.window, files_ui::PROPERTY);
+    }
+    Ok(accepted.then(|| view.into_inner().priorities))
 }
 
 struct Controls {
@@ -1271,7 +1400,7 @@ impl Controls {
     }
 }
 
-fn formatted_size(bytes: i64, en: bool) -> String {
+pub(crate) fn formatted_size(bytes: i64, en: bool) -> String {
     let (divisor, unit) = if bytes >= 1024 * 1024 * 1024 {
         (1024 * 1024 * 1024, tr(en, "ГБ", "GB"))
     } else if bytes >= 1024 * 1024 {

@@ -66,6 +66,20 @@ try {
     Write-Host 'Main window appeared'
     $files = Wait-Visible 'Файлы торрента'
     Write-Host 'File-selection dialog appeared'
+    if ($NativeSettings) {
+        $position = [IntPtr](166 * 0x10000 + 477)
+        if (![RustTorrentUI]::PostMessage($files, 0x202, [IntPtr]::Zero, $position)) {
+            throw 'Could not open file priorities'
+        }
+        $priorityMenu = Wait-Visible 'TorrentRustStyledPopup' $true
+        if (![RustTorrentUI]::PostMessage($priorityMenu, 0x100, [IntPtr]0x23, [IntPtr]::Zero) -or
+            ![RustTorrentUI]::PostMessage($priorityMenu, 0x100, [IntPtr]0x0d, [IntPtr]::Zero)) {
+            throw 'Could not select High priority'
+        }
+        for ($attempt = 0; $attempt -lt 50 -and [RustTorrentUI]::IsWindowVisible($priorityMenu); $attempt++) {
+            Start-Sleep -Milliseconds 100
+        }
+    }
     Command $files 111
     $list = [RustTorrentUI]::GetDlgItem($main, 200)
     if ($list -eq [IntPtr]::Zero -or [RustTorrentUI]::SendMessage($list, 0x18B, [IntPtr]::Zero, [IntPtr]::Zero).ToInt32() -ne 1) {
@@ -133,6 +147,13 @@ try {
     $sidecars = @(Get-ChildItem (Join-Path $profile.FullName 'session') -Filter '*.state')
     if ($sidecars.Count -ne 1 -or (Get-Content $sidecars[0].FullName -Raw) -ne '1 0') {
         throw 'Stopping and accepting file selection did not reach the stored queue'
+    }
+    if ($NativeSettings) {
+        $checkpoint = Get-ChildItem (Join-Path $profile.FullName 'session') -Filter '*.resume' | Select-Object -First 1
+        $saved = Get-Content -LiteralPath $checkpoint.FullName -Raw | ConvertFrom-Json
+        if (@($saved.priorities).Count -ne 1 -or $saved.priorities[0] -ne 7) {
+            throw 'The file dialog did not preserve the selected priority'
+        }
     }
     if (!(Test-Path (Join-Path $profile.FullName 'window-position.txt'))) {
         throw 'Window position was not saved'
