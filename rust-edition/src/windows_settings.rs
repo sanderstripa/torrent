@@ -125,7 +125,15 @@ pub unsafe fn paint(window: HWND, view: &SettingsView) {
     unsafe {
         windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect(window, &mut bounds);
     }
-    let _ = draw(dc, bounds, window_dpi(window), view);
+    let backdrop = unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::GetPropW(
+            window,
+            windows_sys::w!("TorrentSettingsSnapshot"),
+        )
+        .cast::<crate::windows_paint::SettingsBackdrop>()
+        .as_ref()
+    };
+    let _ = draw(dc, bounds, window_dpi(window), view, backdrop);
     unsafe { EndPaint(window, &paint) };
 }
 
@@ -134,6 +142,7 @@ fn draw(
     bounds: RECT,
     dpi: f32,
     view: &SettingsView,
+    backdrop: Option<&crate::windows_paint::SettingsBackdrop>,
 ) -> windows::core::Result<()> {
     let (_, target) = open_target_at_dpi(dc, bounds, dpi)?;
     let surface = if view.dark { 0x202124 } else { 0xfcfcfd };
@@ -151,6 +160,16 @@ fn draw(
         target.BeginDraw();
         target.Clear(Some(&rgb(surface)));
     }
+    if let Some(backdrop) = backdrop {
+        backdrop.draw_under_panel(&target, view.width, view.height());
+    }
+    canvas.rounded(
+        rect(0.0, 0.0, view.width, view.height()),
+        14.0,
+        surface,
+        None,
+    );
+    canvas.rounded(rect(0.0, 0.0, view.width, 20.0), 0.0, surface, None);
     let result = use_fonts(|fonts| {
         let en = view.preferences.english;
         let text = |ru, en_text| if en { en_text } else { ru };

@@ -571,6 +571,18 @@ impl Dialog {
         } else {
             null_mut()
         };
+        #[cfg(all(feature = "rqbit", feature = "vpn"))]
+        if let Some(image) = snapshot.as_deref() {
+            unsafe {
+                SetPropW(
+                    window,
+                    windows_sys::w!("TorrentSettingsSnapshot"),
+                    (image as *const crate::windows_paint::SettingsBackdrop)
+                        .cast_mut()
+                        .cast(),
+                );
+            }
+        }
         Ok(Self {
             owner,
             window,
@@ -615,6 +627,11 @@ impl Dialog {
                     pointer,
                 ) != 0
                 {
+                    SetPropW(
+                        self.window,
+                        windows_sys::w!("TorrentSettingsSnapshot"),
+                        pointer,
+                    );
                     self.snapshot.replace(Some(image));
                     SetLayeredWindowAttributes(self.backdrop, 0, 255, LWA_ALPHA);
                 }
@@ -748,6 +765,7 @@ impl Drop for Dialog {
         unsafe {
             EnableWindow(self.owner, 1);
             if IsWindow(self.window) != 0 {
+                RemovePropW(self.window, windows_sys::w!("TorrentSettingsSnapshot"));
                 if self.sheet && IsWindowVisible(self.window) != 0 {
                     let mut motion = 0_i32;
                     SystemParametersInfoW(

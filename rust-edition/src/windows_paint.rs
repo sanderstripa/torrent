@@ -599,7 +599,54 @@ impl SettingsBackdrop {
     }
 
     pub unsafe fn paint(&self, destination: HDC, bounds: RECT, panel: Option<RECT>) {
-        use crate::windows_canvas::{open_target, rect, rgb, Canvas};
+        use crate::windows_canvas::{open_target, rect};
+        let Ok((_, target)) = open_target(destination, bounds) else {
+            return;
+        };
+        unsafe {
+            target.BeginDraw();
+        }
+        self.draw_into(
+            &target,
+            rect(0.0, 0.0, bounds.right as f32, bounds.bottom as f32),
+            panel.map(|p| rect(p.left as f32, p.top as f32, p.right as f32, p.bottom as f32)),
+            self.scale,
+        );
+        unsafe {
+            let _ = target.EndDraw(None, None);
+        }
+    }
+
+    pub fn draw_under_panel(
+        &self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1DCRenderTarget,
+        width: f32,
+        height: f32,
+    ) {
+        use crate::windows_canvas::rect;
+        let background_width = self.width as f32 / self.scale;
+        let left = (background_width - width) / 2.0;
+        self.draw_into(
+            target,
+            rect(
+                -left,
+                0.0,
+                background_width - left,
+                self.height as f32 / self.scale,
+            ),
+            Some(rect(0.0, 0.0, width, height)),
+            1.0,
+        );
+    }
+
+    fn draw_into(
+        &self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1DCRenderTarget,
+        destination: windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F,
+        shadow: Option<windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F>,
+        scale: f32,
+    ) {
+        use crate::windows_canvas::{rect, rgb, Canvas};
         use windows::Win32::Graphics::Direct2D::Common::{
             D2D1_ALPHA_MODE_IGNORE, D2D1_PIXEL_FORMAT, D2D_SIZE_U,
         };
@@ -607,9 +654,6 @@ impl SettingsBackdrop {
             D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, D2D1_BITMAP_PROPERTIES,
         };
         use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
-        let Ok((_, target)) = open_target(destination, bounds) else {
-            return;
-        };
         unsafe {
             let Ok(bitmap) = target.CreateBitmap(
                 D2D_SIZE_U {
@@ -629,38 +673,34 @@ impl SettingsBackdrop {
             ) else {
                 return;
             };
-            target.BeginDraw();
             target.DrawBitmap(
                 &bitmap,
-                Some(&rect(0.0, 0.0, bounds.right as f32, bounds.bottom as f32)),
+                Some(&destination),
                 1.0,
                 D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
                 None,
             );
-            if let (Some(panel), Ok(brush)) = (panel, target.CreateSolidColorBrush(&rgb(0), None)) {
-                let canvas = Canvas {
-                    target: &target,
-                    brush,
-                };
+            if let (Some(panel), Ok(brush)) = (shadow, target.CreateSolidColorBrush(&rgb(0), None))
+            {
+                let canvas = Canvas { target, brush };
                 canvas
                     .brush
                     .SetOpacity(if self.dark { 0.012 } else { 0.009 });
                 for layer in (1..=24).rev() {
-                    let layer = layer as f32 * self.scale;
+                    let layer = layer as f32 * scale;
                     canvas.rounded(
                         rect(
-                            panel.left as f32 - layer * 0.7,
-                            panel.top as f32 + 8.0 * self.scale,
-                            panel.right as f32 + layer * 0.7,
-                            panel.bottom as f32 + 6.0 * self.scale + layer,
+                            panel.left - layer * 0.7,
+                            panel.top + 8.0 * scale,
+                            panel.right + layer * 0.7,
+                            panel.bottom + 6.0 * scale + layer,
                         ),
-                        14.0 * self.scale,
+                        14.0 * scale,
                         0,
                         None,
                     );
                 }
             }
-            let _ = target.EndDraw(None, None);
         }
     }
 }
