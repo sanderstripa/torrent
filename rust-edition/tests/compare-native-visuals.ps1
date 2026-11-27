@@ -11,6 +11,7 @@ $out = (Resolve-Path -LiteralPath $Output).Path
 $work = New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP ('torrent-visual-' + [guid]::NewGuid()))
 
 Add-Type -AssemblyName System.Drawing.Common
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -237,15 +238,46 @@ foreach ($installerCapture in @(
         if ((Get-FileHash $darkWelcome).Hash -eq (Get-FileHash $darkSettings).Hash) {
             throw "The $kind installer did not return to the welcome page"
         }
+        if (![TorrentVisual]::ClickSetup($window, 105, 366) -or
+            ![TorrentVisual]::ClickSetup($window, 359, 130) -or
+            ![TorrentVisual]::ClickSetup($window, 180, 202)) {
+            throw 'Could not prepare the isolated installer destination'
+        }
+        $installed = Join-Path $work.FullName "installed-$kind"
+        [System.Windows.Forms.SendKeys]::SendWait('^a')
+        [System.Windows.Forms.SendKeys]::SendWait($installed)
+        Start-Sleep -Milliseconds 200
+        if (![TorrentVisual]::ClickSetup($window, 160, 410)) {
+            throw 'Could not start the isolated visual installation'
+        }
+        $clientName = if ($kind -eq 'reference') { 'Torrent.exe' } else { 'Torrent-RE.exe' }
+        for ($attempt = 0; $attempt -lt 150 -and !(Test-Path (Join-Path $installed $clientName)); $attempt++) {
+            if ($capture.HasExited) { throw 'Installer closed before completing the isolated installation' }
+            Start-Sleep -Milliseconds 200
+        }
+        if (!(Test-Path (Join-Path $installed $clientName))) {
+            throw "The $kind installer did not install to its isolated destination"
+        }
+        Start-Sleep -Milliseconds 1200
+        Save-VisibleCapture $window (Join-Path $out "setup-light-$kind-finish.png")
         [TorrentVisual]::PostMessage($window, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
         if (!$capture.WaitForExit(5000)) { throw 'Installer did not close after the visual capture' }
+        $uninstaller = Join-Path $installed 'Uninstall.exe'
+        if ($kind -eq 'reference') {
+            $cleanup = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+        } else {
+            $cleanup = Start-Process -FilePath $uninstaller -ArgumentList @('--uninstall', "`"$installed`"") -Wait -PassThru
+        }
+        if ($cleanup.ExitCode) { throw "Isolated installation cleanup failed ($($cleanup.ExitCode))" }
+        $cleanup.Dispose()
     } finally {
         if (!$capture.HasExited) { $capture.Kill(); $capture.WaitForExit() }
         $capture.Dispose()
     }
 }
 foreach ($theme in @('light', 'dark')) {
-    foreach ($view in @('welcome', 'settings')) {
+    $views = if ($theme -eq 'light') { @('welcome', 'settings', 'finish') } else { @('welcome', 'settings') }
+    foreach ($view in $views) {
         $oldSetup = [Drawing.Bitmap]::new((Join-Path $out "setup-$theme-reference-$view.png"))
         $newSetup = [Drawing.Bitmap]::new((Join-Path $out "setup-$theme-rust-$view.png"))
         try {
