@@ -222,6 +222,10 @@ jobs:
         shell: pwsh
         run: |
           ./rust-edition/tests/windows-ui.ps1 -Executable "$PWD/rust-edition/target/x86_64-pc-windows-msvc/debug/torrent-re-windows.exe"
+      - name: Exercise the native Rust installer
+        shell: pwsh
+        run: |
+          ./rust-edition/installer/check-native-package.ps1 -Executable "$PWD/rust-edition/target/x86_64-pc-windows-msvc/debug/torrent-re-windows.exe"
   rust-libtorrent-integration:
     if: github.ref == 'refs/heads/rust-edition'
     permissions:
