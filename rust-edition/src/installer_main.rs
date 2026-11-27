@@ -1,7 +1,11 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(windows)]
+mod installer_ui;
+#[cfg(windows)]
 mod installer_windows;
+#[cfg(windows)]
+mod windows_canvas;
 
 #[cfg(windows)]
 fn main() {

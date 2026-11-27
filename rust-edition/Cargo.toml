@@ -11,7 +11,7 @@ panic = "abort"
 
 [features]
 windows-app = []
-installer = ["dep:tempfile", "dep:windows"]
+installer = ["dep:tempfile", "dep:windows", "dep:windows-numerics"]
 libtorrent = ["windows-app"]
 rqbit = ["windows-app", "dep:windows", "dep:windows-numerics", "dep:bencode", "dep:librqbit", "dep:tokio", "dep:serde", "dep:serde_json", "dep:tempfile", "dep:url"]
 vpn = ["dep:base64", "dep:hex", "dep:percent-encoding", "dep:serde_json", "dep:sha2", "dep:tempfile", "dep:url"]
@@ -40,6 +40,7 @@ windows = { version = "0.62", optional = true, features = [
     "Win32_Graphics_DirectWrite",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
+    "Win32_Graphics_Imaging",
 ] }
 windows-numerics = { version = "0.3", optional = true }
 windows-sys = { version = "0.61", features = [

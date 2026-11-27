@@ -2,6 +2,8 @@
 
 #[cfg(windows)]
 mod windows_app;
+#[cfg(all(windows, feature = "rqbit"))]
+mod windows_canvas;
 #[cfg(windows)]
 mod windows_paint;
 #[cfg(all(windows, feature = "rqbit"))]

@@ -51,14 +51,7 @@ pub fn run() -> io::Result<()> {
             let local = std::env::var_os("LOCALAPPDATA").ok_or_else(invalid_path)?;
             let directory = registered_directory()?
                 .unwrap_or_else(|| PathBuf::from(local).join("Programs").join(NAME));
-            if confirm(&format!(
-                "Install Torrent Rust Edition in {}?",
-                directory.display()
-            )) {
-                install(&directory)?;
-                message("Torrent Rust Edition was installed.", false);
-            }
-            Ok(())
+            crate::installer_ui::show(directory)
         }
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -68,6 +61,14 @@ pub fn run() -> io::Result<()> {
 }
 
 fn install(directory: &Path) -> io::Result<()> {
+    install_with_options(directory, [true, true], |_| {})
+}
+
+pub(crate) fn install_with_options(
+    directory: &Path,
+    shortcuts: [bool; 2],
+    mut report: impl FnMut(u8),
+) -> io::Result<()> {
     validate_path(directory)?;
     if let Some(registered) = registered_directory()? {
         if registered.join(APP).is_file() && !same_path(directory, &registered) {
@@ -91,6 +92,7 @@ fn install(directory: &Path) -> io::Result<()> {
     if previous && fs::read_dir(directory)?.next().is_some() {
         validate_owned(directory)?;
     }
+    report(15);
     let work = tempfile::Builder::new()
         .prefix("TorrentSetup-")
         .tempdir_in(parent)?;
@@ -104,6 +106,7 @@ fn install(directory: &Path) -> io::Result<()> {
     payload.push((Path::new(SETUP), &exe));
     payload.push((Path::new(OWNER), NAME.as_bytes()));
     install_new(&staged, &payload)?;
+    report(65);
     if previous {
         fs::rename(directory, &backup)?;
     }
@@ -113,7 +116,7 @@ fn install(directory: &Path) -> io::Result<()> {
         }
         return Err(error);
     }
-    if let Err(error) = register(directory) {
+    if let Err(error) = register(directory, shortcuts) {
         if fs::rename(directory, &staged).is_err() {
             // Keep the old install available even if a new file became locked.
             let _ = work.keep();
@@ -126,6 +129,7 @@ fn install(directory: &Path) -> io::Result<()> {
         }
         return Err(error);
     }
+    report(100);
     Ok(())
 }
 
@@ -197,7 +201,7 @@ fn cleanup(directory: &Path, parent: &OsStr) -> io::Result<()> {
     fs::rename(directory, &backup)?;
     if let Err(error) = unregister() {
         restore_backup(staging, &backup, directory)?;
-        let _ = register(directory);
+        let _ = register(directory, [true, true]);
         return Err(error);
     }
     staging.close()?;
@@ -330,7 +334,7 @@ fn registered_directory() -> io::Result<Option<PathBuf>> {
     ))))
 }
 
-fn register(directory: &Path) -> io::Result<()> {
+fn register(directory: &Path, shortcuts: [bool; 2]) -> io::Result<()> {
     let path = directory.to_str().ok_or_else(invalid_path)?;
     let application = directory.join(APP);
     let uninstall = directory.join(SETUP);
@@ -362,19 +366,19 @@ fn register(directory: &Path) -> io::Result<()> {
         "magnet",
         "TorrentRustEdition.Magnet",
     )?;
-    for shortcut in shortcut_paths()? {
-        create_shortcut(&shortcut, &application, directory)?;
+    for (shortcut, enabled) in shortcut_paths()?.into_iter().zip(shortcuts) {
+        if enabled {
+            create_shortcut(&shortcut, &application, directory)?;
+        } else {
+            remove_shortcut(&shortcut)?;
+        }
     }
     Ok(())
 }
 
 fn unregister() -> io::Result<()> {
     for shortcut in shortcut_paths()? {
-        match fs::remove_file(shortcut) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
+        remove_shortcut(&shortcut)?;
     }
     for key in [
         UNINSTALL,
@@ -393,6 +397,14 @@ fn unregister() -> io::Result<()> {
         })?;
     }
     Ok(())
+}
+
+fn remove_shortcut(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn shortcut_paths() -> io::Result<[PathBuf; 2]> {
