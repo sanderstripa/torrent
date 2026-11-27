@@ -1670,6 +1670,13 @@ fn product_prompt(
 ) -> Result<Option<String>, String> {
     use crate::windows_prompt as prompt;
     let state = prompt::Prompt::new(title, help, en, window_dark(owner), initial.is_none());
+    let font = initial.map(|_| {
+        crate::windows_canvas::EditFont::new(
+            include_bytes!("../../assets/fonts/Montserrat.ttf"),
+            ui_scale(owner),
+            13.0,
+        )
+    });
     let dialog = Dialog::create(owner, title, prompt::WIDTH, prompt::HEIGHT)?;
     unsafe {
         SetWindowLongPtrW(
@@ -1706,6 +1713,9 @@ fn product_prompt(
             )
         })
         .transpose()?;
+    if let (Some(font), Some(edit)) = (font.as_ref(), edit) {
+        font.apply(edit);
+    }
     let mut accepted = None;
     dialog.run(|id| match id {
         prompt::CANCEL => true,

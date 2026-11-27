@@ -193,6 +193,71 @@ pub(crate) fn use_fonts<T>(
     })
 }
 
+pub(crate) struct EditFont {
+    font: windows_sys::Win32::Graphics::Gdi::HFONT,
+    resource: windows_sys::Win32::Foundation::HANDLE,
+}
+
+impl EditFont {
+    pub(crate) fn new(bytes: &'static [u8], scale: f32, size: f32) -> Self {
+        use windows_sys::Win32::Graphics::Gdi::*;
+        let mut count = 0u32;
+        let resource = unsafe {
+            AddFontMemResourceEx(
+                bytes.as_ptr().cast(),
+                bytes.len() as u32,
+                std::ptr::null(),
+                &mut count,
+            )
+        };
+        let family = if resource.is_null() {
+            windows_sys::w!("Segoe UI")
+        } else {
+            windows_sys::w!("Montserrat")
+        };
+        let font = unsafe {
+            CreateFontW(
+                -(size * scale).round() as i32,
+                0,
+                0,
+                0,
+                FW_NORMAL as i32,
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET.into(),
+                OUT_DEFAULT_PRECIS.into(),
+                CLIP_DEFAULT_PRECIS.into(),
+                CLEARTYPE_QUALITY.into(),
+                DEFAULT_PITCH.into(),
+                family,
+            )
+        };
+        Self { font, resource }
+    }
+
+    pub(crate) fn apply(&self, edit: windows_sys::Win32::Foundation::HWND) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_SETFONT};
+        if !self.font.is_null() {
+            unsafe { SendMessageW(edit, WM_SETFONT, self.font as usize, 1) };
+        }
+    }
+}
+
+impl Drop for EditFont {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Graphics::Gdi::{DeleteObject, RemoveFontMemResourceEx};
+        unsafe {
+            if !self.font.is_null() {
+                DeleteObject(self.font);
+            }
+            if !self.resource.is_null() {
+                RemoveFontMemResourceEx(self.resource);
+            }
+        }
+    }
+}
+
 pub(crate) fn rect(left: f32, top: f32, right: f32, bottom: f32) -> D2D_RECT_F {
     D2D_RECT_F {
         left,

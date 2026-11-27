@@ -1,7 +1,9 @@
 #[path = "installer_ui_geometry.rs"]
 mod geometry;
 
-use crate::windows_canvas::{dpi_scale, open_target_at_dpi, rect, rgb, window_dpi, Canvas, Fonts};
+use crate::windows_canvas::{
+    dpi_scale, open_target_at_dpi, rect, rgb, window_dpi, Canvas, EditFont, Fonts,
+};
 use std::cell::RefCell;
 use std::ffi::OsString;
 use std::io;
@@ -30,6 +32,7 @@ const TITLE: windows_sys::core::PCWSTR = windows_sys::w!("Torrent Setup");
 const PATH_ID: usize = 101;
 const WIDTH: i32 = 840;
 const HEIGHT: i32 = 540;
+const FONT: &[u8] = include_bytes!("../../installer/assets/Montserrat.ttf");
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -54,6 +57,7 @@ struct Setup {
     progress: u8,
     worker: Option<Receiver<Worker>>,
     edit: HWND,
+    edit_font: Option<EditFont>,
     fonts: Fonts,
     ribbon: Option<windows::Win32::Graphics::Imaging::IWICFormatConverter>,
 }
@@ -107,8 +111,7 @@ pub fn show(directory: PathBuf) -> io::Result<()> {
 }
 
 fn show_window(directory: PathBuf) -> io::Result<()> {
-    let fonts = Fonts::load(include_bytes!("../../installer/assets/Montserrat.ttf"))
-        .map_err(|error| io::Error::other(error.to_string()))?;
+    let fonts = Fonts::load(FONT).map_err(|error| io::Error::other(error.to_string()))?;
     let mut locale = [0u16; 85];
     let _ = unsafe {
         windows_sys::Win32::Globalization::GetUserDefaultLocaleName(
@@ -127,6 +130,7 @@ fn show_window(directory: PathBuf) -> io::Result<()> {
         progress: 0,
         worker: None,
         edit: null_mut(),
+        edit_font: None,
         fonts,
         ribbon: load_ribbon().ok(),
     });
@@ -179,7 +183,13 @@ fn show_window(directory: PathBuf) -> io::Result<()> {
             DestroyWindow(window);
             return Err(io::Error::last_os_error());
         }
-        setup.borrow_mut().edit = edit;
+        let edit_font = EditFont::new(FONT, dpi_scale(window), 12.0);
+        edit_font.apply(edit);
+        {
+            let mut state = setup.borrow_mut();
+            state.edit = edit;
+            state.edit_font = Some(edit_font);
+        }
         let corners = 2u32;
         windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(
             window,
@@ -281,7 +291,11 @@ unsafe extern "system" fn window_proc(
             }
             return 0;
         }
-        message if message == WM_APP + 1 => {}
+        message if message == WM_APP + 1 => {
+            let font = EditFont::new(FONT, scale, 12.0);
+            font.apply(state.edit);
+            state.edit_font = Some(font);
+        }
         WM_PAINT => {
             unsafe {
                 paint(window, &state);
