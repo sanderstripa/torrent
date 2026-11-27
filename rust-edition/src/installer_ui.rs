@@ -165,11 +165,33 @@ impl Setup {
 
 pub fn show(directory: PathBuf) -> io::Result<()> {
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
-    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
-        .ok()
-        .map_err(|error| io::Error::other(error.to_string()))?;
-    let result = show_window(directory);
-    unsafe { CoUninitialize() };
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+
+    let (instance, already_running) = unsafe {
+        let mutex = CreateMutexW(
+            null(),
+            0,
+            windows_sys::w!("Local\\Torrent.Rust.Edition.Setup"),
+        );
+        (mutex, GetLastError() == ERROR_ALREADY_EXISTS)
+    };
+    if instance.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let result = if already_running {
+        Ok(())
+    } else {
+        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
+            .ok()
+            .map_err(|error| io::Error::other(error.to_string()))
+            .and_then(|()| {
+                let result = show_window(directory);
+                unsafe { CoUninitialize() };
+                result
+            })
+    };
+    unsafe { CloseHandle(instance) };
     result
 }
 
