@@ -25,7 +25,9 @@ use windows_sys::Win32::Graphics::Gdi::{
     SetTextColor, DC_BRUSH, HDC, PAINTSTRUCT,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE, VK_RETURN, VK_SPACE};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    GetFocus, GetKeyState, SetFocus, VK_ESCAPE, VK_RETURN, VK_SHIFT, VK_SPACE, VK_TAB,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 const CLASS: windows_sys::core::PCWSTR = windows_sys::w!("TorrentRustEditionSetup");
@@ -61,6 +63,25 @@ enum Page {
     Settings,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Control {
+    Minimize,
+    Close,
+    Primary,
+    OpenSettings,
+    Back,
+    Russian,
+    English,
+    Light,
+    Dark,
+    Path,
+    Browse,
+    Desktop,
+    Menu,
+    Launch,
+    Retry,
+}
+
 enum Worker {
     Progress(u8),
     Done(Result<(), String>),
@@ -76,6 +97,8 @@ struct Setup {
     progress: u8,
     worker: Option<Receiver<Worker>>,
     error: Option<String>,
+    focus: Option<Control>,
+    keyboard_focus: bool,
     edit: HWND,
     edit_font: Option<EditFont>,
     fonts: Fonts,
@@ -106,28 +129,64 @@ impl Setup {
         rect(left, 376.25, right, 414.25)
     }
 
-    fn interactive(&self, x: f32, y: f32) -> bool {
-        let inside = |region| hit(region, x, y);
-        if inside(CAPTION_CLOSE)
-            || inside(CAPTION_MINIMIZE)
-            || (self.error.is_some() && inside(retry_button()))
-        {
-            return true;
+    fn controls(&self) -> impl DoubleEndedIterator<Item = Control> {
+        use Control::*;
+        let list: &[Control] = match self.page {
+            Page::Welcome => &[Minimize, Close, Primary, OpenSettings],
+            Page::Installing => &[Minimize],
+            Page::Finish => &[Minimize, Close, Primary, Launch],
+            Page::Settings => &[
+                Minimize, Close, Back, Russian, English, Light, Dark, Path, Browse, Desktop, Menu,
+                Primary,
+            ],
+        };
+        list.iter()
+            .copied()
+            .chain(self.error.is_some().then_some(Retry))
+    }
+
+    fn control_bounds(&self, control: Control) -> D2D_RECT_F {
+        let g = geometry::settings(self.english);
+        match control {
+            Control::Minimize => CAPTION_MINIMIZE,
+            Control::Close => CAPTION_CLOSE,
+            Control::Primary => self.primary(),
+            Control::OpenSettings => WELCOME_SETTINGS,
+            Control::Back => g.back,
+            Control::Russian => g.ru,
+            Control::English => g.en,
+            Control::Light => g.light,
+            Control::Dark => g.dark,
+            Control::Path => g.path,
+            Control::Browse => g.browse,
+            Control::Desktop => g.desktop,
+            Control::Menu => g.menu,
+            Control::Launch => self.launch_row(),
+            Control::Retry => retry_button(),
         }
-        match self.page {
-            Page::Welcome => inside(self.primary()) || inside(WELCOME_SETTINGS),
-            Page::Installing => false,
-            Page::Finish => inside(self.primary()) || inside(self.launch_row()),
-            Page::Settings => {
-                let g = geometry::settings(self.english);
-                [
-                    g.back, g.ru, g.en, g.light, g.dark, g.path, g.browse, g.desktop, g.menu,
-                    g.accept,
-                ]
-                .into_iter()
-                .any(inside)
-            }
-        }
+    }
+
+    fn control_at(&self, x: f32, y: f32) -> Option<Control> {
+        self.controls()
+            .find(|&control| hit(self.control_bounds(control), x, y))
+    }
+
+    fn change_focus(&mut self, backward: bool) {
+        let current = self.focus;
+        let next = if backward {
+            self.controls()
+                .rev()
+                .skip_while(|&control| Some(control) != current)
+                .nth(1)
+                .or_else(|| self.controls().next_back())
+        } else {
+            self.controls()
+                .skip_while(|&control| Some(control) != current)
+                .nth(1)
+                .or_else(|| self.controls().next())
+        };
+        self.focus = next;
+        self.keyboard_focus = true;
     }
 
     fn start(&mut self) {
@@ -215,6 +274,8 @@ fn show_window(directory: PathBuf) -> io::Result<()> {
         progress: 0,
         worker: None,
         error: None,
+        focus: None,
+        keyboard_focus: false,
         edit: null_mut(),
         edit_font: None,
         fonts,
@@ -307,9 +368,18 @@ fn show_window(directory: PathBuf) -> io::Result<()> {
                     return Err(io::Error::last_os_error());
                 }
                 0 => return Ok(()),
+                _ if message.hwnd == edit && message.message == WM_LBUTTONDOWN => {
+                    {
+                        let mut state = setup.borrow_mut();
+                        state.focus = Some(Control::Path);
+                        state.keyboard_focus = false;
+                    }
+                    InvalidateRect(window, null(), 0);
+                    DispatchMessageW(&message);
+                }
                 _ if message.hwnd == edit
                     && message.message == WM_KEYDOWN
-                    && matches!(message.wParam as u16, VK_ESCAPE | VK_RETURN) =>
+                    && matches!(message.wParam as u16, VK_ESCAPE | VK_RETURN | VK_TAB) =>
                 {
                     SendMessageW(window, message.message, message.wParam, message.lParam);
                 }
@@ -346,6 +416,7 @@ unsafe extern "system" fn window_proc(
     let raw_x = extra as u16 as i16 as i32;
     let raw_y = (extra >> 16) as u16 as i16 as i32;
     let point = (raw_x as f32 / scale, raw_y as f32 / scale);
+    let previous_page = state.page;
     let mut close = false;
     let mut launch = false;
     let mut browse = false;
@@ -360,7 +431,7 @@ unsafe extern "system" fn window_proc(
                 windows_sys::Win32::Graphics::Gdi::ScreenToClient(window, &mut point);
             }
             let (x, y) = (point.x as f32 / scale, point.y as f32 / scale);
-            return if state.interactive(x, y) {
+            return if state.control_at(x, y).is_some() {
                 HTCLIENT as isize
             } else {
                 HTCAPTION as isize
@@ -422,60 +493,49 @@ unsafe extern "system" fn window_proc(
             return 0;
         }
         WM_LBUTTONUP => {
-            unsafe { SetFocus(window) };
-            let (x, y) = point;
-            if hit(CAPTION_CLOSE, x, y) {
-                close = state.page != Page::Installing;
-            } else if hit(CAPTION_MINIMIZE, x, y) {
-                drop(state);
-                unsafe {
-                    ShowWindow(window, SW_MINIMIZE);
+            let control = state.control_at(point.0, point.1);
+            state.focus = control;
+            state.keyboard_focus = key == 0x10000;
+            let destination = if control == Some(Control::Path) {
+                state.edit
+            } else {
+                window
+            };
+            unsafe { SetFocus(destination) };
+            match control {
+                Some(Control::Close) => close = true,
+                Some(Control::Minimize) => {
+                    drop(state);
+                    unsafe { ShowWindow(window, SW_MINIMIZE) };
+                    return 0;
                 }
-                return 0;
-            } else if state.error.is_some() && hit(retry_button(), x, y) {
-                match state.page {
+                Some(Control::Primary | Control::Retry) => match state.page {
                     Page::Welcome => state.start(),
-                    Page::Settings => browse = true,
+                    Page::Settings if control == Some(Control::Retry) => browse = true,
+                    Page::Settings => state.start(),
                     Page::Finish => {
                         close = true;
                         launch = true;
                     }
                     Page::Installing => {}
+                },
+                Some(Control::OpenSettings) => {
+                    state.page = Page::Settings;
+                    state.error = None;
                 }
-            } else if hit(state.primary(), x, y) {
-                match state.page {
-                    Page::Welcome | Page::Settings => state.start(),
-                    Page::Finish => {
-                        close = true;
-                        launch = true;
-                    }
-                    _ => {}
-                }
-            } else if state.page == Page::Welcome && hit(WELCOME_SETTINGS, x, y) {
-                state.page = Page::Settings;
-                state.error = None;
-            } else if state.page == Page::Finish && hit(state.launch_row(), x, y) {
-                state.launch = !state.launch;
-            } else if state.page == Page::Settings {
-                let g = geometry::settings(state.english);
-                if hit(g.back, x, y) {
+                Some(Control::Back) => {
                     state.page = Page::Welcome;
                     state.error = None;
-                } else if hit(g.ru, x, y) {
-                    state.english = false;
-                } else if hit(g.en, x, y) {
-                    state.english = true;
-                } else if hit(g.light, x, y) {
-                    state.dark = false;
-                } else if hit(g.dark, x, y) {
-                    state.dark = true;
-                } else if hit(g.desktop, x, y) {
-                    state.shortcuts[0] = !state.shortcuts[0];
-                } else if hit(g.menu, x, y) {
-                    state.shortcuts[1] = !state.shortcuts[1];
-                } else if hit(g.browse, x, y) {
-                    browse = true;
                 }
+                Some(Control::Russian) => state.english = false,
+                Some(Control::English) => state.english = true,
+                Some(Control::Light) => state.dark = false,
+                Some(Control::Dark) => state.dark = true,
+                Some(Control::Browse) => browse = true,
+                Some(Control::Desktop) => state.shortcuts[0] = !state.shortcuts[0],
+                Some(Control::Menu) => state.shortcuts[1] = !state.shortcuts[1],
+                Some(Control::Launch) => state.launch = !state.launch,
+                Some(Control::Path) | None => {}
             }
         }
         WM_KEYDOWN => match key as u16 {
@@ -484,12 +544,30 @@ unsafe extern "system" fn window_proc(
                 state.error = None;
             }
             VK_ESCAPE => close = state.page != Page::Installing,
-            VK_RETURN if matches!(state.page, Page::Welcome | Page::Settings) => state.start(),
-            VK_RETURN if state.page == Page::Finish => {
-                close = true;
-                launch = true;
+            VK_TAB => {
+                if unsafe { GetFocus() } == state.edit {
+                    state.focus = Some(Control::Path);
+                }
+                state.change_focus(unsafe { GetKeyState(VK_SHIFT as i32) } < 0);
+                let target = if state.focus == Some(Control::Path) {
+                    state.edit
+                } else {
+                    window
+                };
+                unsafe { SetFocus(target) };
             }
-            VK_SPACE if state.page == Page::Finish => state.launch = !state.launch,
+            VK_RETURN if state.page == Page::Settings && unsafe { GetFocus() } == state.edit => {
+                state.start();
+            }
+            VK_RETURN | VK_SPACE => {
+                if let Some(control) = state.focus {
+                    let area = state.control_bounds(control);
+                    let x = ((area.left + area.right) * 0.5 * scale) as LPARAM;
+                    let y = ((area.top + area.bottom) * 0.5 * scale) as LPARAM;
+                    unsafe { PostMessageW(window, WM_LBUTTONUP, 0x10000, x | (y << 16)) };
+                }
+                return 0;
+            }
             _ => return 0,
         },
         WM_TIMER => {
@@ -526,6 +604,10 @@ unsafe extern "system" fn window_proc(
             return 0;
         }
         _ => return unsafe { DefWindowProcW(window, message, key, extra) },
+    }
+    if previous_page != state.page {
+        state.focus = None;
+        state.keyboard_focus = false;
     }
     if close && launch && state.finish().is_err() {
         state.error = Some(state.text(
@@ -1117,6 +1199,27 @@ fn draw(
                     fg,
                 )?;
                 primary(tr("Принять и установить", "Accept and install"), g.accept)?;
+            }
+        }
+        if setup.keyboard_focus {
+            if let Some(control) = setup.focus {
+                let mut area = setup.control_bounds(control);
+                if matches!(control, Control::Desktop | Control::Menu | Control::Launch) {
+                    area.right = area.left + 38.0;
+                    area.top += 8.0;
+                    area.bottom = area.top + 22.0;
+                }
+                canvas.outline(
+                    rect(
+                        area.left - 3.0,
+                        area.top - 3.0,
+                        area.right + 3.0,
+                        area.bottom + 3.0,
+                    ),
+                    6.0,
+                    button,
+                    2.0,
+                );
             }
         }
         if let Some(error) = &setup.error {

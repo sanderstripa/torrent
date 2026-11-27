@@ -97,8 +97,14 @@ try {
         if ($window -ne [IntPtr]::Zero) { break }
         Start-Sleep -Milliseconds 100
     }
-    if ($window -eq [IntPtr]::Zero -or ![NativeTorrentSetup]::Click($window, 105, 365)) {
-        throw 'Could not open installer settings'
+    if ($window -eq [IntPtr]::Zero) { throw 'The installer window did not appear' }
+    for ($tab = 0; $tab -lt 4; $tab++) {
+        if (![NativeTorrentSetup]::PostMessage($window, 0x100, [IntPtr]0x09, [IntPtr]::Zero)) {
+            throw 'Could not navigate to installer settings with Tab'
+        }
+    }
+    if (![NativeTorrentSetup]::PostMessage($window, 0x100, [IntPtr]0x0d, [IntPtr]::Zero)) {
+        throw 'Could not open installer settings with Enter'
     }
     $edit = [IntPtr]::Zero
     for ($attempt = 0; $attempt -lt 100; $attempt++) {
