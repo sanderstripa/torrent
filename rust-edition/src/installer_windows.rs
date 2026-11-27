@@ -92,7 +92,7 @@ pub(crate) fn install_with_options(
     if previous && fs::read_dir(directory)?.next().is_some() {
         validate_owned(directory)?;
     }
-    report(15);
+    report(10);
     let work = tempfile::Builder::new()
         .prefix("TorrentSetup-")
         .tempdir_in(parent)?;
@@ -106,7 +106,7 @@ pub(crate) fn install_with_options(
     payload.push((Path::new(SETUP), &exe));
     payload.push((Path::new(OWNER), NAME.as_bytes()));
     install_new(&staged, &payload)?;
-    report(65);
+    report(85);
     if previous {
         fs::rename(directory, &backup)?;
     }
