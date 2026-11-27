@@ -1,6 +1,6 @@
 [package]
 name = "torrent_re_sort"
-version = "0.1.0"
+version = "1.4.4-re"
 edition = "2021"
 
 [lib]
@@ -80,3 +80,6 @@ required-features = ["vpn"]
 name = "torrent-re-setup"
 path = "src/installer_main.rs"
 required-features = ["installer"]
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"

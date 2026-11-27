@@ -21,7 +21,66 @@ fn main() -> io::Result<()> {
         generated.push_str(&format!("    ({path:?}, include_bytes!({file:?})),\n"));
     }
     generated.push_str("];\n");
-    fs::write(PathBuf::from(out).join("installer_payload.rs"), generated)
+    let out = PathBuf::from(out);
+    fs::write(out.join("installer_payload.rs"), generated)?;
+    #[cfg(windows)]
+    {
+        if env::var_os("CARGO_FEATURE_WINDOWS_APP").is_some() {
+            write_resources(
+                &out,
+                "torrent-re-windows",
+                "../assets/app.ico",
+                "Torrent Rust Edition",
+            )?;
+        }
+        if env::var_os("CARGO_FEATURE_INSTALLER").is_some() {
+            write_resources(
+                &out,
+                "torrent-re-setup",
+                "../installer/assets/installer.ico",
+                "Torrent Rust Edition Setup",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn write_resources(out: &Path, binary: &str, icon: &str, description: &str) -> io::Result<()> {
+    let icon = fs::canonicalize(icon)?;
+    println!("cargo:rerun-if-changed={}", icon.display());
+    // The SDK resource compiler accepts forward slashes and does not interpret them as escapes.
+    let icon = icon.to_string_lossy().replace('\\', "/");
+    let icon = icon.strip_prefix("//?/").unwrap_or(&icon);
+    let script = format!(
+        r#"1 ICON "{icon}"
+1 VERSIONINFO
+ FILEVERSION 1,4,4,0
+ PRODUCTVERSION 1,4,4,0
+ FILETYPE 1
+BEGIN
+ BLOCK "StringFileInfo"
+ BEGIN
+  BLOCK "040904b0"
+  BEGIN
+   VALUE "FileDescription", "{description}\0"
+   VALUE "ProductName", "Torrent Rust Edition\0"
+   VALUE "FileVersion", "1.4.4 RE\0"
+   VALUE "ProductVersion", "1.4.4 RE\0"
+  END
+ END
+ BLOCK "VarFileInfo"
+ BEGIN
+  VALUE "Translation", 0x409, 1200
+ END
+END
+"#
+    );
+    let output = out.join(format!("{binary}.rc"));
+    fs::write(&output, script)?;
+    embed_resource::compile_for(&output, [binary], embed_resource::NONE)
+        .manifest_optional()
+        .map_err(|error| io::Error::other(error.to_string()))
 }
 
 fn collect(root: &Path, directory: &Path, entries: &mut Vec<(String, String)>) -> io::Result<()> {

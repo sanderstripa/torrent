@@ -38,6 +38,11 @@ function Run-Checked([string]$Path, [string[]]$Arguments, [int]$ExpectedCode = 0
 }
 
 $setup = Join-Path $crate 'target/x86_64-pc-windows-msvc/release/torrent-re-setup.exe'
+foreach ($binary in @($Executable, $setup)) {
+    if ([Diagnostics.FileVersionInfo]::GetVersionInfo($binary).ProductVersion -ne '1.4.4 RE') {
+        throw "Missing Windows version resource in $binary"
+    }
+}
 $installed = Join-Path $root.FullName 'installed edition'
 Run-Checked $setup @('--install', $installed)
 $application = Join-Path $installed 'Torrent-RE.exe'
