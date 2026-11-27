@@ -998,10 +998,10 @@ fn draw(
                 if let Some(source) = &setup.ribbon {
                     ribbon(&canvas, source, rect(185.0, 69.0, 655.0, 374.0), dpi)?;
                 }
-                canvas.rounded(rect(44.0, 435.0, w - 44.0, 439.0), 2.0, border, None);
+                canvas.rounded(rect(45.0, 436.0, w - 45.0, 440.0), 2.0, border, None);
                 if setup.progress > 0 {
-                    let end = 44.0 + (w - 88.0) * f32::from(setup.progress) / 100.0;
-                    canvas.rounded(rect(44.0, 435.0, end, 439.0), 2.0, button, None);
+                    let end = 45.0 + (w - 90.0) * f32::from(setup.progress) / 100.0;
+                    canvas.rounded(rect(45.0, 436.0, end, 440.0), 2.0, button, None);
                 }
                 centered(
                     tr("Установка…", "Installing…"),
