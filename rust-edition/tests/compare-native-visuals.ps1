@@ -254,3 +254,10 @@ foreach ($view in @('welcome', 'settings')) {
 }
 $results | ConvertTo-Json | Set-Content (Join-Path $out 'pixel-comparison.json') -Encoding utf8
 $results | Format-Table -AutoSize
+$applicationDifferences = @($results | Where-Object {
+    $_.View -notlike 'setup-*' -and ($_.Changed -ne 0 -or
+        ($_.View -ne 'settings' -and $_.Reference -ne $_.Rust))
+})
+if ($applicationDifferences.Count -ne 0) {
+    throw 'The application pixels differ from the published 1.4.4 visual fixtures'
+}

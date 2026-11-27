@@ -243,6 +243,7 @@ jobs:
         run: |
           ./rust-edition/tests/compare-native-visuals.ps1 -Executable "$PWD/rust-edition/target/x86_64-pc-windows-msvc/release/torrent-re-windows.exe" -Output "$PWD/rust-edition-ci/visual-comparison" -Installer "$PWD/rust-edition-ci/Torrent-RE-Setup-Windows-x64.exe"
       - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
         with:
           name: Torrent-1.4.4-Windows-Visual-Comparison
           path: rust-edition-ci/visual-comparison/
