@@ -22,7 +22,6 @@ use windows_sys::Win32::Graphics::Gdi::{
     SetTextColor, DC_BRUSH, HDC, PAINTSTRUCT,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE, VK_RETURN, VK_SPACE};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -110,24 +109,19 @@ pub fn show(directory: PathBuf) -> io::Result<()> {
 fn show_window(directory: PathBuf) -> io::Result<()> {
     let fonts = Fonts::load(include_bytes!("../../installer/assets/Montserrat.ttf"))
         .map_err(|error| io::Error::other(error.to_string()))?;
-    let mut light = 1u32;
-    let mut size = 4u32;
-    unsafe {
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            windows_sys::w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
-            windows_sys::w!("AppsUseLightTheme"),
-            RRF_RT_REG_DWORD,
-            null_mut(),
-            (&mut light as *mut u32).cast(),
-            &mut size,
-        );
-    }
+    let mut locale = [0u16; 85];
+    let _ = unsafe {
+        windows_sys::Win32::Globalization::GetUserDefaultLocaleName(
+            locale.as_mut_ptr(),
+            locale.len() as i32,
+        )
+    };
+    let english = !locale.starts_with(&[b'r' as u16, b'u' as u16]);
     let setup = RefCell::new(Setup {
         page: Page::Welcome,
         directory,
-        english: false,
-        dark: light == 0,
+        english,
+        dark: false,
         shortcuts: [true, true],
         launch: true,
         progress: 0,
@@ -203,6 +197,12 @@ fn show_window(directory: PathBuf) -> io::Result<()> {
                     return Err(io::Error::last_os_error());
                 }
                 0 => return Ok(()),
+                _ if message.hwnd == edit
+                    && message.message == WM_KEYDOWN
+                    && matches!(message.wParam as u16, VK_ESCAPE | VK_RETURN) =>
+                {
+                    SendMessageW(window, message.message, message.wParam, message.lParam);
+                }
                 _ => {
                     TranslateMessage(&message);
                     DispatchMessageW(&message);
@@ -237,6 +237,7 @@ unsafe extern "system" fn window_proc(
     let raw_y = (extra >> 16) as u16 as i16 as i32;
     let point = (raw_x as f32 / scale, raw_y as f32 / scale);
     let mut close = false;
+    let mut launch = false;
     let mut browse = false;
     let mut error = None;
     match message {
@@ -321,7 +322,10 @@ unsafe extern "system" fn window_proc(
             } else if hit(state.primary(), x, y) {
                 match state.page {
                     Page::Welcome | Page::Settings => state.start(),
-                    Page::Finish => close = true,
+                    Page::Finish => {
+                        close = true;
+                        launch = true;
+                    }
                     _ => {}
                 }
             } else if state.page == Page::Welcome && hit(rect(44.0, 350.0, 330.0, 382.0), x, y) {
@@ -350,9 +354,13 @@ unsafe extern "system" fn window_proc(
             }
         }
         WM_KEYDOWN => match key as u16 {
+            VK_ESCAPE if state.page == Page::Settings => state.page = Page::Welcome,
             VK_ESCAPE => close = state.page != Page::Installing,
             VK_RETURN if matches!(state.page, Page::Welcome | Page::Settings) => state.start(),
-            VK_RETURN if state.page == Page::Finish => close = true,
+            VK_RETURN if state.page == Page::Finish => {
+                close = true;
+                launch = true;
+            }
             VK_SPACE if state.page == Page::Finish => state.launch = !state.launch,
             _ => return 0,
         },
@@ -392,7 +400,9 @@ unsafe extern "system" fn window_proc(
         _ => return unsafe { DefWindowProcW(window, message, key, extra) },
     }
     if close {
-        state.finish();
+        if launch {
+            state.finish();
+        }
         drop(state);
         unsafe {
             DestroyWindow(window);
