@@ -189,21 +189,35 @@ fn show_window(directory: PathBuf) -> io::Result<()> {
             hInstance: module,
             lpszClassName: CLASS,
             hCursor: LoadCursorW(null_mut(), IDC_ARROW),
+            hIcon: LoadIconW(module, 1 as windows_sys::core::PCWSTR),
             ..Default::default()
         };
         if RegisterClassW(&class) == 0 {
             return Err(io::Error::last_os_error());
         }
         let scale = dpi_scale(null_mut());
+        let width = (WIDTH as f32 * scale).round() as i32;
+        let height = (HEIGHT as f32 * scale).round() as i32;
+        let mut work_area = RECT::default();
+        let have_work_area =
+            SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut work_area as *mut RECT).cast(), 0) != 0;
+        let (left, top) = if have_work_area {
+            (
+                work_area.left + ((work_area.right - work_area.left - width) / 2).max(0),
+                work_area.top + ((work_area.bottom - work_area.top - height) / 2).max(0),
+            )
+        } else {
+            (CW_USEDEFAULT, CW_USEDEFAULT)
+        };
         let window = CreateWindowExW(
             0,
             CLASS,
             TITLE,
             WS_POPUP | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            (WIDTH as f32 * scale).round() as i32,
-            (HEIGHT as f32 * scale).round() as i32,
+            left,
+            top,
+            width,
+            height,
             null_mut(),
             null_mut(),
             module,
