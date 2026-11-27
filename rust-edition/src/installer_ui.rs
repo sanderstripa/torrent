@@ -17,6 +17,7 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_DRAW_TEXT_OPTIONS_CLIP, D2D1_DRAW_TEXT_OPTIONS_NO_SNAP, D2D1_STROKE_STYLE_PROPERTIES,
 };
 use windows::Win32::Graphics::DirectWrite::*;
+use windows::Win32::Graphics::Imaging::IWICBitmapSource;
 use windows_numerics::Vector2;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
@@ -78,7 +79,7 @@ struct Setup {
     edit: HWND,
     edit_font: Option<EditFont>,
     fonts: Fonts,
-    ribbon: Option<windows::Win32::Graphics::Imaging::IWICFormatConverter>,
+    ribbon: Option<Ribbon>,
 }
 
 impl Setup {
@@ -618,7 +619,14 @@ fn wide(value: &std::ffi::OsStr) -> Vec<u16> {
     value.encode_wide().chain(Some(0)).collect()
 }
 
-fn load_ribbon() -> windows::core::Result<windows::Win32::Graphics::Imaging::IWICFormatConverter> {
+struct Ribbon {
+    original: IWICBitmapSource,
+    half: Option<IWICBitmapSource>,
+    width: u32,
+    height: u32,
+}
+
+fn load_ribbon() -> windows::core::Result<Ribbon> {
     use windows::Win32::Graphics::Imaging::*;
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
     // Torrent’s product ribbon in the CONNECT installer pinned by 1.4.4 (589669b4).
@@ -640,18 +648,41 @@ fn load_ribbon() -> windows::core::Result<windows::Win32::Graphics::Imaging::IWI
             0.0,
             WICBitmapPaletteTypeCustom,
         )?;
-        Ok(converter)
+        let mut width = 0;
+        let mut height = 0;
+        converter.GetSize(&mut width, &mut height)?;
+        let half = imaging
+            .CreateBitmapScaler()
+            .and_then(|scaler| {
+                scaler.Initialize(
+                    &converter,
+                    width / 2,
+                    height / 2,
+                    WICBitmapInterpolationModeFant,
+                )?;
+                scaler.cast()
+            })
+            .ok();
+        Ok(Ribbon {
+            original: converter.cast()?,
+            half,
+            width,
+            height,
+        })
     }
 }
 
 fn ribbon(
     canvas: &Canvas<'_>,
-    source: &windows::Win32::Graphics::Imaging::IWICFormatConverter,
+    source: &Ribbon,
     region: D2D_RECT_F,
+    dpi: f32,
 ) -> windows::core::Result<()> {
     unsafe {
-        let bitmap = canvas.target.CreateBitmapFromWicBitmap(source, None)?;
-        let size = bitmap.GetSize();
+        let size = windows::Win32::Graphics::Direct2D::Common::D2D_SIZE_F {
+            width: source.width as f32,
+            height: source.height as f32,
+        };
         let scale = ((region.right - region.left) / size.width)
             .min((region.bottom - region.top) / size.height);
         // CONNECT normalizes the visible artwork inside the transparent raster.
@@ -670,6 +701,17 @@ fn ribbon(
         );
         let left = (region.left + region.right - width) / 2.0 + delta_x;
         let top = (region.top + region.bottom - height) / 2.0 + delta_y;
+        let half = source
+            .half
+            .as_ref()
+            .filter(|_| scale * dpi / 96.0 < 0.5)
+            .and_then(|raster| canvas.target.CreateBitmapFromWicBitmap(raster, None).ok());
+        let bitmap = match half {
+            Some(bitmap) => bitmap,
+            None => canvas
+                .target
+                .CreateBitmapFromWicBitmap(&source.original, None)?,
+        };
         canvas.target.DrawBitmap(
             &bitmap,
             Some(&rect(left, top, left + width, top + height)),
@@ -906,7 +948,7 @@ fn draw(
         match setup.page {
             Page::Welcome => {
                 if let Some(source) = &setup.ribbon {
-                    ribbon(&canvas, source, rect(377.0, 61.0, 817.0, 426.0))?;
+                    ribbon(&canvas, source, rect(377.0, 61.0, 817.0, 426.0), dpi)?;
                 }
                 label(
                     &canvas,
@@ -940,7 +982,7 @@ fn draw(
             }
             Page::Installing => {
                 if let Some(source) = &setup.ribbon {
-                    ribbon(&canvas, source, rect(185.0, 69.0, 655.0, 374.0))?;
+                    ribbon(&canvas, source, rect(185.0, 69.0, 655.0, 374.0), dpi)?;
                 }
                 canvas.rounded(rect(44.0, 435.0, w - 44.0, 439.0), 2.0, border, None);
                 if setup.progress > 0 {
