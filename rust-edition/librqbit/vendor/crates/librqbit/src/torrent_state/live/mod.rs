@@ -395,6 +395,16 @@ impl TorrentStateLive {
             }
         };
 
+        let session_slot = match self.shared.session.upgrade() {
+            Some(session) => match &session.session_peer_slots {
+                Some(slots) => match slots.clone().try_acquire_owned() {
+                    Ok(permit) => Some(permit),
+                    Err(_) => return Ok(AddIncomingPeerResult::ConcurrencyLimitReached),
+                },
+                None => None,
+            },
+            None => return Ok(AddIncomingPeerResult::ConcurrencyLimitReached),
+        };
         let counters = match self.peers.states.entry(checked_peer.addr) {
             Entry::Occupied(mut occ) => {
                 let peer = occ.get_mut();
@@ -443,10 +453,15 @@ impl TorrentStateLive {
                 "[{}][addr={}]manage_incoming_peer",
                 self.shared.id, checked_peer.addr
             ),
-            aframe!(
-                self.clone()
-                    .task_manage_incoming_peer(checked_peer, counters, tx, rx, permit)
-            ),
+            aframe!({
+                let state = self.clone();
+                async move {
+                    let _session_slot = session_slot;
+                    state
+                        .task_manage_incoming_peer(checked_peer, counters, tx, rx, permit)
+                        .await
+                }
+            }),
         );
         Ok(AddIncomingPeerResult::Added)
     }
@@ -676,10 +691,20 @@ impl TorrentStateLive {
             }
 
             let permit = state.peer_semaphore.clone().acquire_owned().await?;
+            let session_slot = match &session.session_peer_slots {
+                Some(slots) => Some(slots.clone().acquire_owned().await?),
+                None => None,
+            };
             state.spawn(
                 debug_span!(parent: state.shared.span.clone(), "manage_peer", peer = ?addr),
                 format!("[{}][addr={addr}]manage_peer", state.shared.id),
-                aframe!(state.clone().task_manage_outgoing_peer(addr, permit)),
+                aframe!({
+                    let state = state.clone();
+                    async move {
+                        let _session_slot = session_slot;
+                        state.task_manage_outgoing_peer(addr, permit).await
+                    }
+                }),
             );
         }
     }

@@ -1,5 +1,5 @@
 diff --git a/crates/librqbit/src/session.rs b/crates/librqbit/src/session.rs
-index 1d63605..fe5d32c 100644
+index 1d63605..9712b6d 100644
 --- a/crates/librqbit/src/session.rs
 +++ b/crates/librqbit/src/session.rs
 @@ -123,7 +123,7 @@ pub struct Session {
@@ -11,7 +11,15 @@ index 1d63605..fe5d32c 100644
      disable_trackers: bool,
      disable_web_seeds: bool,
  
-@@ -275,6 +275,9 @@ pub struct AddTorrentOptions {
+@@ -156,6 +156,7 @@ pub struct Session {
+     _disable_upload: bool,
+     pub ipv4_only: bool,
+     pub peer_limit: Option<usize>,
++    pub(crate) session_peer_slots: Option<Arc<tokio::sync::Semaphore>>,
+     client_name_and_version: String,
+ }
+ 
+@@ -275,6 +276,9 @@ pub struct AddTorrentOptions {
      pub list_only: bool,
      /// The output folder for the torrent. If not set, the session's default one will be used.
      pub output_folder: Option<String>,
@@ -21,7 +29,24 @@ index 1d63605..fe5d32c 100644
      /// Sub-folder within session's default output folder. Will error if "output_folder" if also set.
      /// By default, multi-torrent files are downloaded to a sub-folder.
      pub sub_folder: Option<String>,
-@@ -636,6 +639,29 @@ impl Session {
+@@ -518,6 +522,8 @@ pub struct SessionOptions {
+ 
+     /// Default peer limit per torrent.
+     pub peer_limit: Option<usize>,
++    /// Total number of active BitTorrent peer connections across all torrents.
++    pub session_peer_limit: Option<usize>,
+ 
+     #[cfg(feature = "disable-upload")]
+     pub disable_upload: bool,
+@@ -555,6 +561,7 @@ impl Default for SessionOptions {
+             allowlist_url: None,
+             trackers: HashSet::new(),
+             peer_limit: None,
++            session_peer_limit: None,
+             #[cfg(feature = "disable-upload")]
+             disable_upload: false,
+             disable_local_service_discovery: false,
+@@ -636,6 +643,29 @@ impl Session {
                  warn!("uploading disabled");
              }
  
@@ -51,7 +76,7 @@ index 1d63605..fe5d32c 100644
              let bind_device = match opts.bind_device_name.as_ref() {
                  Some(name) => Some(
                      BindDevice::new_from_name(name)
-@@ -746,15 +772,6 @@ impl Session {
+@@ -746,15 +776,6 @@ impl Session {
                  .await
                  .context("error initializing session persistence store")?;
  
@@ -67,7 +92,7 @@ index 1d63605..fe5d32c 100644
              let client_name_and_version = opts
                  .client_name_and_version
                  .unwrap_or_else(|| crate::client_name_and_version().to_owned());
-@@ -814,9 +831,15 @@ impl Session {
+@@ -814,9 +835,15 @@ impl Session {
                  None
              };
  
@@ -86,7 +111,15 @@ index 1d63605..fe5d32c 100644
  
              let lsd = {
                  if opts.disable_local_service_discovery {
-@@ -1426,6 +1449,25 @@ impl Session {
+@@ -862,6 +889,7 @@ impl Session {
+                 disable_trackers: opts.disable_trackers,
+                 disable_web_seeds: opts.disable_web_seeds,
+                 peer_limit: opts.peer_limit,
++                session_peer_slots: opts.session_peer_limit.map(|limit| Arc::new(tokio::sync::Semaphore::new(limit))),
+                 client_name_and_version,
+ 
+                 #[cfg(feature = "disable-upload")]
+@@ -1426,6 +1454,25 @@ impl Session {
                  self.get_default_subfolder_for_torrent(&metadata.info, name.as_deref())?
                      .unwrap_or_default(),
              ),
@@ -112,7 +145,7 @@ index 1d63605..fe5d32c 100644
              (Some(o), None) => PathBuf::from(o),
              (Some(_), Some(_)) => {
                  bail!("you can't provide both output_folder and sub_folder")
-@@ -1509,6 +1551,7 @@ impl Session {
+@@ -1509,6 +1556,7 @@ impl Session {
                  connector: self.connector.clone(),
                  session: Arc::downgrade(self),
                  magnet_name: name,
@@ -120,7 +153,7 @@ index 1d63605..fe5d32c 100644
                  client_name_and_version: self.client_name_and_version.clone(),
                  web_seeds: WebSeeds::new(web_seeds, opts.disable_web_seeds, self.disable_web_seeds),
                  location: RwLock::new(StorageLocation {
-@@ -1762,6 +1805,10 @@ impl Session {
+@@ -1762,6 +1810,10 @@ impl Session {
              trackers.clear();
          }
  
@@ -131,7 +164,7 @@ index 1d63605..fe5d32c 100644
          if is_private && trackers.len() > 1 {
              warn!(
                  ?info_hash,
-@@ -2275,6 +2322,18 @@ impl Session {
+@@ -2275,6 +2327,18 @@ impl Session {
          Ok(())
      }
  
@@ -150,7 +183,7 @@ index 1d63605..fe5d32c 100644
      pub fn listen_addr(&self) -> Option<SocketAddr> {
          self.listen_addr
      }
-@@ -2488,6 +2547,214 @@ mod tests {
+@@ -2488,6 +2552,214 @@ mod tests {
  
      use super::{is_bare_info_hash, torrent_file_from_info_bytes};
  
@@ -410,7 +443,7 @@ index 65c1f9d..9164658 100644
                  Recv::Msg(_) => {}
                  Recv::Closed => break,
 diff --git a/crates/librqbit/src/torrent_state/live/mod.rs b/crates/librqbit/src/torrent_state/live/mod.rs
-index 9d18798..839f143 100644
+index 9d18798..ee9bc2a 100644
 --- a/crates/librqbit/src/torrent_state/live/mod.rs
 +++ b/crates/librqbit/src/torrent_state/live/mod.rs
 @@ -248,8 +248,8 @@ impl TorrentStateLive {
@@ -433,7 +466,66 @@ index 9d18798..839f143 100644
  
          let (have_broadcast_tx, _) = tokio::sync::broadcast::channel(128);
  
-@@ -844,11 +844,25 @@ impl TorrentStateLive {
+@@ -395,6 +395,16 @@ impl TorrentStateLive {
+             }
+         };
+ 
++        let session_slot = match self.shared.session.upgrade() {
++            Some(session) => match &session.session_peer_slots {
++                Some(slots) => match slots.clone().try_acquire_owned() {
++                    Ok(permit) => Some(permit),
++                    Err(_) => return Ok(AddIncomingPeerResult::ConcurrencyLimitReached),
++                },
++                None => None,
++            },
++            None => return Ok(AddIncomingPeerResult::ConcurrencyLimitReached),
++        };
+         let counters = match self.peers.states.entry(checked_peer.addr) {
+             Entry::Occupied(mut occ) => {
+                 let peer = occ.get_mut();
+@@ -443,10 +453,15 @@ impl TorrentStateLive {
+                 "[{}][addr={}]manage_incoming_peer",
+                 self.shared.id, checked_peer.addr
+             ),
+-            aframe!(
+-                self.clone()
+-                    .task_manage_incoming_peer(checked_peer, counters, tx, rx, permit)
+-            ),
++            aframe!({
++                let state = self.clone();
++                async move {
++                    let _session_slot = session_slot;
++                    state
++                        .task_manage_incoming_peer(checked_peer, counters, tx, rx, permit)
++                        .await
++                }
++            }),
+         );
+         Ok(AddIncomingPeerResult::Added)
+     }
+@@ -676,10 +691,20 @@ impl TorrentStateLive {
+             }
+ 
+             let permit = state.peer_semaphore.clone().acquire_owned().await?;
++            let session_slot = match &session.session_peer_slots {
++                Some(slots) => Some(slots.clone().acquire_owned().await?),
++                None => None,
++            };
+             state.spawn(
+                 debug_span!(parent: state.shared.span.clone(), "manage_peer", peer = ?addr),
+                 format!("[{}][addr={addr}]manage_peer", state.shared.id),
+-                aframe!(state.clone().task_manage_outgoing_peer(addr, permit)),
++                aframe!({
++                    let state = state.clone();
++                    async move {
++                        let _session_slot = session_slot;
++                        state.task_manage_outgoing_peer(addr, permit).await
++                    }
++                }),
+             );
+         }
+     }
+@@ -844,11 +869,25 @@ impl TorrentStateLive {
          Err(res)
      }
  

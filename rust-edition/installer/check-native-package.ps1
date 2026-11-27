@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$Executable)
+param([Parameter(Mandatory)][string]$Executable, [string]$ArtifactDirectory)
 $ErrorActionPreference = 'Stop'
 $crate = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $root = New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP ('torrent-native-setup-' + [guid]::NewGuid()))
@@ -118,4 +118,20 @@ try {
 } finally {
     if (!$gui.HasExited) { $gui.Kill(); $gui.WaitForExit() }
     $gui.Dispose()
+}
+
+if ($ArtifactDirectory) {
+    New-Item -ItemType Directory -Path $ArtifactDirectory -Force | Out-Null
+    $installerName = 'Torrent-RE-Setup-Windows-x64.exe'
+    $portableName = 'Torrent-RE-Portable-Windows-x64.zip'
+    Copy-Item -LiteralPath $setup -Destination (Join-Path $ArtifactDirectory $installerName)
+    Compress-Archive -Path "$($stage.FullName)/*" -DestinationPath (Join-Path $ArtifactDirectory $portableName)
+    $portableCheck = Join-Path $root.FullName 'portable'
+    Expand-Archive -LiteralPath (Join-Path $ArtifactDirectory $portableName) -DestinationPath $portableCheck
+    Run-Checked (Join-Path $portableCheck 'Torrent-RE.exe') @('--smoke-test')
+    $sums = foreach ($name in @($installerName, $portableName)) {
+        $digest = (Get-FileHash -LiteralPath (Join-Path $ArtifactDirectory $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$digest  $name"
+    }
+    $sums | Set-Content -LiteralPath (Join-Path $ArtifactDirectory 'SHA256SUMS.txt') -Encoding ascii
 }

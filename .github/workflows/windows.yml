@@ -222,10 +222,19 @@ jobs:
         shell: pwsh
         run: |
           ./rust-edition/tests/windows-ui.ps1 -Executable "$PWD/rust-edition/target/x86_64-pc-windows-msvc/debug/torrent-re-windows.exe" -NativeSettings
-      - name: Exercise the native Rust installer
+      - name: Build the optimized Rust client
+        run: |
+          cargo build --locked --target x86_64-pc-windows-msvc --release --features rqbit,vpn --manifest-path rust-edition/Cargo.toml --bin torrent-re-windows
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Exercise the native Rust installer and stage the CI build
         shell: pwsh
         run: |
-          ./rust-edition/installer/check-native-package.ps1 -Executable "$PWD/rust-edition/target/x86_64-pc-windows-msvc/debug/torrent-re-windows.exe"
+          ./rust-edition/installer/check-native-package.ps1 -Executable "$PWD/rust-edition/target/x86_64-pc-windows-msvc/release/torrent-re-windows.exe" -ArtifactDirectory "$PWD/rust-edition-ci"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Torrent-Rust-Edition-Windows-x64-CI
+          path: rust-edition-ci/
+          if-no-files-found: error
   rust-libtorrent-integration:
     if: github.ref == 'refs/heads/rust-edition'
     permissions:

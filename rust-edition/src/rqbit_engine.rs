@@ -169,7 +169,7 @@ impl RunningSession {
             .build()
             .map_err(|error| error.to_string())?;
         let mut options = SessionOptions {
-            peer_limit: usize::try_from(policy.connections_limit).ok(),
+            session_peer_limit: usize::try_from(policy.connections_limit).ok(),
             ..SessionOptions::default()
         };
         match network {
@@ -609,33 +609,28 @@ mod tests {
     }
 
     fn local_fixture(directory: &Path) -> Result<(PathBuf, PathBuf), String> {
-        let source = directory.join("fixture.torrent");
-        let mut metadata =
-            b"d4:infod6:lengthi4e4:name7:fixture12:piece lengthi16384e6:pieces20:".to_vec();
+        local_fixture_named(directory, "fixture")
+    }
+
+    fn local_fixture_named(directory: &Path, name: &str) -> Result<(PathBuf, PathBuf), String> {
+        let source = directory.join(format!("{name}.torrent"));
+        let mut metadata = format!(
+            "d4:infod6:lengthi4e4:name{}:{name}12:piece lengthi16384e6:pieces20:",
+            name.len()
+        )
+        .into_bytes();
         metadata.extend_from_slice(&[0; 20]);
         metadata.extend_from_slice(b"ee");
         std::fs::write(&source, metadata).map_err(|error| error.to_string())?;
         Ok((source, directory.join("download")))
     }
 
-    #[test]
-    fn switching_to_proxy_closes_an_existing_direct_peer() -> Result<(), String> {
-        use crate::transfers::Transfers;
-        use std::io::{Read, Write};
-        use std::net::{Ipv6Addr, TcpListener, TcpStream};
-
-        let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
-        let (source, destination) = local_fixture(directory.path())?;
-        let session = Session::open(PREVIEW_POLICY, false)?;
-        let (mut queue, warnings) = Transfers::open(&session, &directory.path().join("queue"))?;
-        assert!(warnings.is_empty());
-        queue.add(
-            source.to_str().unwrap(),
-            destination.to_str().unwrap(),
-            false,
-        )?;
-        let transfer = &queue.ordered()[0].handle;
-        wait_for_files(transfer)?;
+    fn connect_local_peer(
+        session: &Session,
+        transfer: &Torrent<'_>,
+    ) -> Result<std::net::TcpStream, String> {
+        use std::io::Write;
+        use std::net::{Ipv6Addr, TcpStream};
         let port = session
             .running()?
             .backend
@@ -654,6 +649,66 @@ mod tests {
         handshake[48..].copy_from_slice(b"-XX0001-TESTFIXTURE1");
         peer.write_all(&handshake)
             .map_err(|error| error.to_string())?;
+        Ok(peer)
+    }
+
+    #[test]
+    fn caps_active_peers_across_multiple_torrents() -> Result<(), String> {
+        use std::io::Read;
+        let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let (first, destination) = local_fixture_named(directory.path(), "first")?;
+        let (second, _) = local_fixture_named(directory.path(), "second")?;
+        let policy = QueuePolicy {
+            connections_limit: 1,
+            ..PREVIEW_POLICY
+        };
+        let session = Session::open(policy, false)?;
+        let first = session.add(
+            first.to_str().unwrap(),
+            destination.to_str().unwrap(),
+            false,
+        )?;
+        let second = session.add(
+            second.to_str().unwrap(),
+            destination.to_str().unwrap(),
+            false,
+        )?;
+        wait_for_files(&first)?;
+        wait_for_files(&second)?;
+        let mut first_peer = connect_local_peer(&session, &first)?;
+        first_peer
+            .read_exact(&mut [0; 68])
+            .map_err(|error| error.to_string())?;
+        let mut second_peer = connect_local_peer(&session, &second)?;
+        match second_peer.read(&mut [0]) {
+            Ok(0) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => Ok(()),
+            outcome => Err(format!(
+                "A second torrent exceeded the session peer limit: {outcome:?}"
+            )),
+        }
+    }
+
+    #[test]
+    fn switching_to_proxy_closes_an_existing_direct_peer() -> Result<(), String> {
+        use crate::transfers::Transfers;
+        use std::io::Read;
+        use std::net::TcpListener;
+
+        let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let (source, destination) = local_fixture(directory.path())?;
+        let session = Session::open(PREVIEW_POLICY, false)?;
+        let (mut queue, warnings) = Transfers::open(&session, &directory.path().join("queue"))?;
+        assert!(warnings.is_empty());
+        queue.add(
+            source.to_str().unwrap(),
+            destination.to_str().unwrap(),
+            false,
+        )?;
+        let transfer = &queue.ordered()[0].handle;
+        wait_for_files(transfer)?;
+        let mut peer = connect_local_peer(&session, transfer)?;
+        let mut handshake = [0u8; 68];
         peer.read_exact(&mut handshake)
             .map_err(|error| error.to_string())?;
         assert_eq!(&handshake[1..20], b"BitTorrent protocol");

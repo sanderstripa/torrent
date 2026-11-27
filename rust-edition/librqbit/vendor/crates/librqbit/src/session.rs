@@ -156,6 +156,7 @@ pub struct Session {
     _disable_upload: bool,
     pub ipv4_only: bool,
     pub peer_limit: Option<usize>,
+    pub(crate) session_peer_slots: Option<Arc<tokio::sync::Semaphore>>,
     client_name_and_version: String,
 }
 
@@ -521,6 +522,8 @@ pub struct SessionOptions {
 
     /// Default peer limit per torrent.
     pub peer_limit: Option<usize>,
+    /// Total number of active BitTorrent peer connections across all torrents.
+    pub session_peer_limit: Option<usize>,
 
     #[cfg(feature = "disable-upload")]
     pub disable_upload: bool,
@@ -558,6 +561,7 @@ impl Default for SessionOptions {
             allowlist_url: None,
             trackers: HashSet::new(),
             peer_limit: None,
+            session_peer_limit: None,
             #[cfg(feature = "disable-upload")]
             disable_upload: false,
             disable_local_service_discovery: false,
@@ -885,6 +889,7 @@ impl Session {
                 disable_trackers: opts.disable_trackers,
                 disable_web_seeds: opts.disable_web_seeds,
                 peer_limit: opts.peer_limit,
+                session_peer_slots: opts.session_peer_limit.map(|limit| Arc::new(tokio::sync::Semaphore::new(limit))),
                 client_name_and_version,
 
                 #[cfg(feature = "disable-upload")]
