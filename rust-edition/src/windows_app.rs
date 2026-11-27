@@ -1456,7 +1456,24 @@ fn settings_144(
                         (2, tr(en, "Выбрать файлы", "Choose files")),
                     ]
                 };
-                if let Some(choice) = menu(dialog.window, point.x, point.y, &items) {
+                let checked = if id == page::LANGUAGE {
+                    prefs.english
+                } else {
+                    prefs.select_files
+                };
+                let entries = items.map(|(id, title)| crate::windows_popup::Item {
+                    id,
+                    title,
+                    checked: id == if checked { 2 } else { 1 },
+                    enabled: true,
+                });
+                if let Some(choice) = crate::windows_popup::show(
+                    dialog.window,
+                    point.x,
+                    point.y,
+                    &entries,
+                    window_dark(owner),
+                ) {
                     if id == page::LANGUAGE {
                         prefs.english = choice == 2;
                     } else {
@@ -1593,6 +1610,24 @@ fn toggle_vpn(
 }
 
 fn menu(owner: HWND, x: i32, y: i32, entries: &[(usize, &str)]) -> Option<usize> {
+    #[cfg(feature = "rqbit")]
+    {
+        let items: Vec<_> = entries
+            .iter()
+            .map(|&(id, title)| crate::windows_popup::Item {
+                id,
+                title,
+                checked: false,
+                enabled: true,
+            })
+            .collect();
+        return crate::windows_popup::show(owner, x, y, &items, window_dark(owner));
+    }
+    #[cfg(not(feature = "rqbit"))]
+    native_menu(owner, x, y, entries)
+}
+
+fn native_menu(owner: HWND, x: i32, y: i32, entries: &[(usize, &str)]) -> Option<usize> {
     unsafe {
         let menu = CreatePopupMenu();
         if menu.is_null() {
@@ -2245,7 +2280,7 @@ pub fn run() -> Result<(), String> {
                             let mut point = std::mem::zeroed();
                             if GetCursorPos(&mut point) != 0 {
                                 SetForegroundWindow(window);
-                                match menu(
+                                match native_menu(
                                     window,
                                     point.x,
                                     point.y,

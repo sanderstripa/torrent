@@ -11,18 +11,20 @@ public static class RustTorrentUI {
     [DllImport("user32.dll")] public static extern bool EnumWindows(Visitor visitor, IntPtr arg);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr window, StringBuilder text, int length);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int length);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr window, int id);
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
-    public static IntPtr Find(uint pid, string title) {
+    public static IntPtr Find(uint pid, string title, bool byClass) {
         IntPtr found = IntPtr.Zero;
         EnumWindows((window, _) => {
             uint process;
             GetWindowThreadProcessId(window, out process);
             if (process != pid || !IsWindowVisible(window)) return true;
             var caption = new StringBuilder(256);
-            GetWindowText(window, caption, caption.Capacity);
+            if (byClass) GetClassName(window, caption, caption.Capacity);
+            else GetWindowText(window, caption, caption.Capacity);
             if (caption.ToString() != title) return true;
             found = window;
             return false;
@@ -32,11 +34,11 @@ public static class RustTorrentUI {
 }
 '@
 
-function Wait-Visible([string]$Title) {
+function Wait-Visible([string]$Title, [bool]$ByClass = $false) {
     for ($attempt = 0; $attempt -lt 100; $attempt++) {
         $process.Refresh()
         if ($process.HasExited) { throw "Process exited early ($($process.ExitCode))" }
-        $window = [RustTorrentUI]::Find($process.Id, $Title)
+        $window = [RustTorrentUI]::Find($process.Id, $Title, $ByClass)
         if ($window -ne [IntPtr]::Zero) { return $window }
         Start-Sleep -Milliseconds 100
     }
@@ -71,7 +73,16 @@ try {
     }
     [RustTorrentUI]::SendMessage($list, 0x186, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     Command $main 105
-    Command $main 110
+    if ($NativeSettings) {
+        Command $main 118
+        $popup = Wait-Visible 'TorrentRustStyledPopup' $true
+        if (![RustTorrentUI]::PostMessage($popup, 0x100, [IntPtr]0x23, [IntPtr]::Zero) -or
+            ![RustTorrentUI]::PostMessage($popup, 0x100, [IntPtr]0x0d, [IntPtr]::Zero)) {
+            throw 'Could not select Settings from the native popup'
+        }
+    } else {
+        Command $main 110
+    }
     $settings = Wait-Visible 'Настройки'
     Write-Host 'Settings sheet appeared'
     $trace = Join-Path $folder.FullName 're-ui-trace.txt'
