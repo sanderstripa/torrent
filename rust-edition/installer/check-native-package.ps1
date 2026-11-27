@@ -9,6 +9,14 @@ Copy-Item -LiteralPath (Join-Path $crate '../assets/fonts/OFL.txt') -Destination
 Copy-Item -LiteralPath (Join-Path $crate 'librqbit/vendor/LICENSE') -Destination (Join-Path $licenses.FullName 'librqbit-NOTICE.txt')
 Copy-Item -LiteralPath (Join-Path $crate 'librqbit/vendor/LICENSE-APACHE') -Destination (Join-Path $licenses.FullName 'librqbit-Apache-2.0.txt')
 & (Join-Path $crate 'vpn/prepare.ps1') -Destination (Join-Path $stage.FullName 'vpn')
+$env:TORRENT_VPN_FIXTURE_BIN = Join-Path $stage.FullName 'vpn'
+try {
+    cargo test --locked --target x86_64-pc-windows-msvc --features rqbit,vpn --manifest-path "$crate/Cargo.toml" --test vpn-cores -- --ignored
+    if ($LASTEXITCODE -ne 0) { throw 'Active-transfer VPN kill switch tests failed' }
+} finally {
+    Remove-Item Env:TORRENT_VPN_FIXTURE_BIN
+}
+
 
 $env:TORRENT_INSTALL_PAYLOAD = $stage.FullName
 try {

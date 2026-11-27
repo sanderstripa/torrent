@@ -278,7 +278,6 @@ fn draw(
                 tile.left + if card { 26.0 } else { 17.0 },
                 y,
                 foreground,
-                surface,
             );
             let x = tile.left + if card { 49.0 } else { 34.0 };
             label(
@@ -510,12 +509,11 @@ fn chevron(canvas: &Canvas<'_>, r: D2D_RECT_F, color: u32) {
     canvas.line(x + 4.0, y + 4.0, x + 8.0, y, color, 1.5);
 }
 
-fn draw_icon(c: &Canvas<'_>, page: usize, x: f32, y: f32, ink: u32, surface: u32) {
+fn draw_icon(c: &Canvas<'_>, page: usize, x: f32, y: f32, ink: u32) {
     let line = |a, b, d, e| c.line(x + a, y + b, x + d, y + e, ink, 1.35);
     let circle = |dx, dy, r| c.circle(x + dx, y + dy, r, ink, false);
-    let outline = |l, t, r, b, radius| {
-        c.rounded(rect(x + l, y + t, x + r, y + b), radius, surface, Some(ink))
-    };
+    let outline =
+        |l, t, r, b, radius| c.outline(rect(x + l, y + t, x + r, y + b), radius, ink, 1.35);
     match page {
         1 => {
             line(-8.0, -5.0, 8.0, -5.0);

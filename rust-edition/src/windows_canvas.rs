@@ -188,6 +188,22 @@ impl Canvas<'_> {
         }
     }
 
+    pub(crate) fn outline(&self, rect: D2D_RECT_F, radius: f32, stroke: u32, width: f32) {
+        unsafe {
+            self.brush.SetColor(&rgb(stroke));
+            self.target.DrawRoundedRectangle(
+                &D2D1_ROUNDED_RECT {
+                    rect,
+                    radiusX: radius,
+                    radiusY: radius,
+                },
+                &self.brush,
+                width,
+                None,
+            );
+        }
+    }
+
     pub(crate) fn label(
         &self,
         fonts: &Fonts,

@@ -267,6 +267,12 @@ unsafe extern "system" fn dispatch(
             unsafe { PostMessageW(window, CONTEXT, wparam, lparam) };
             0
         }
+        #[cfg(feature = "rqbit")]
+        WM_NCCALCSIZE if wparam != 0 && unsafe { GetWindow(window, GW_OWNER) }.is_null() => 0,
+        #[cfg(feature = "rqbit")]
+        WM_NCPAINT if unsafe { GetWindow(window, GW_OWNER) }.is_null() => 0,
+        #[cfg(feature = "rqbit")]
+        WM_NCACTIVATE if unsafe { GetWindow(window, GW_OWNER) }.is_null() => 1,
         WM_NCHITTEST if unsafe { GetWindow(window, GW_OWNER) }.is_null() => {
             let hit = unsafe { DefWindowProcW(window, message, wparam, lparam) };
             if hit == HTCLIENT as isize {
@@ -1994,6 +2000,20 @@ fn apply_title_theme(window: HWND, theme: Theme) -> bool {
             (&dark as *const i32).cast(),
             std::mem::size_of_val(&dark) as u32,
         );
+        #[cfg(feature = "rqbit")]
+        {
+            use windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
+            use windows_sys::Win32::UI::Controls::MARGINS;
+            let caption = if dark != 0 {
+                0x000c0c0c_u32
+            } else {
+                0x00f4f5f5_u32
+            };
+            for (attribute, value) in [(33, 2_u32), (35, 0xfffffffe_u32), (36, caption)] {
+                DwmSetWindowAttribute(window, attribute, (&value as *const u32).cast(), 4);
+            }
+            DwmExtendFrameIntoClientArea(window, &MARGINS::default());
+        }
     }
     dark != 0
 }
