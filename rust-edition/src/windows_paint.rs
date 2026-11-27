@@ -492,6 +492,7 @@ pub struct SettingsBackdrop {
     width: usize,
     height: usize,
     dark: bool,
+    scale: f32,
 }
 
 #[cfg(feature = "rqbit")]
@@ -544,7 +545,8 @@ impl SettingsBackdrop {
             pixels?
         };
         let mut scratch = vec![0; length];
-        const RADIUS: usize = 7;
+        let scale = crate::windows_canvas::dpi_scale(window);
+        let radius = ((7.0 * scale) as usize).max(3);
         for _ in 0..3 {
             for vertical in [false, true] {
                 let (lines, size) = if vertical {
@@ -562,14 +564,14 @@ impl SettingsBackdrop {
                             };
                             (y * width_pixels + x) * 4 + channel
                         };
-                        let mut sum = u32::from(pixels[index(0)]) * (RADIUS as u32 + 1);
-                        for i in 1..=RADIUS {
+                        let mut sum = u32::from(pixels[index(0)]) * (radius as u32 + 1);
+                        for i in 1..=radius {
                             sum += u32::from(pixels[index(i.min(size - 1))]);
                         }
                         for position in 0..size {
-                            scratch[index(position)] = (sum / (RADIUS as u32 * 2 + 1)) as u8;
-                            sum -= u32::from(pixels[index(position.saturating_sub(RADIUS))]);
-                            sum += u32::from(pixels[index((position + RADIUS + 1).min(size - 1))]);
+                            scratch[index(position)] = (sum / (radius as u32 * 2 + 1)) as u8;
+                            sum -= u32::from(pixels[index(position.saturating_sub(radius))]);
+                            sum += u32::from(pixels[index((position + radius + 1).min(size - 1))]);
                         }
                     }
                 }
@@ -592,6 +594,7 @@ impl SettingsBackdrop {
             width: width_pixels,
             height: height_pixels,
             dark,
+            scale,
         })
     }
 
@@ -643,15 +646,15 @@ impl SettingsBackdrop {
                     .brush
                     .SetOpacity(if self.dark { 0.012 } else { 0.009 });
                 for layer in (1..=24).rev() {
-                    let layer = layer as f32;
+                    let layer = layer as f32 * self.scale;
                     canvas.rounded(
                         rect(
                             panel.left as f32 - layer * 0.7,
-                            panel.top as f32 + 8.0,
+                            panel.top as f32 + 8.0 * self.scale,
                             panel.right as f32 + layer * 0.7,
-                            panel.bottom as f32 + 6.0 + layer,
+                            panel.bottom as f32 + 6.0 * self.scale + layer,
                         ),
-                        14.0,
+                        14.0 * self.scale,
                         0,
                         None,
                     );

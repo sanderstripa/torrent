@@ -1,4 +1,6 @@
-use crate::windows_canvas::{open_target, rect, rgb, use_fonts, Canvas};
+use crate::windows_canvas::{
+    dpi_scale, open_target_at_dpi, rect, rgb, use_fonts, window_dpi, Canvas,
+};
 use torrent_re_sort::engine::TorrentFile;
 use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
 use windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_PER_PRIMITIVE;
@@ -235,8 +237,11 @@ pub unsafe fn dispatch(window: HWND, message: u32, key: usize, extra: isize) -> 
             .as_ref()
     }?;
     let mut state = cell.try_borrow_mut().ok()?;
-    let x = (extra as u16 as i16) as f32;
-    let y = ((extra >> 16) as u16 as i16) as f32;
+    let scale = dpi_scale(window);
+    let raw_x = extra as u16 as i16 as i32;
+    let raw_y = (extra >> 16) as u16 as i16 as i32;
+    let x = raw_x as f32 / scale;
+    let y = raw_y as f32 / scale;
     let command = |id| unsafe { PostMessageW(window, crate::windows_app::ACTION, id, 0) };
     match message {
         WM_PAINT => {
@@ -249,14 +254,13 @@ pub unsafe fn dispatch(window: HWND, message: u32, key: usize, extra: isize) -> 
         WM_NCPAINT => return Some(0),
         WM_NCCALCSIZE if key != 0 => return Some(0),
         WM_NCHITTEST => {
-            let mut point = windows_sys::Win32::Foundation::POINT {
-                x: x as i32,
-                y: y as i32,
-            };
+            let mut point = windows_sys::Win32::Foundation::POINT { x: raw_x, y: raw_y };
             unsafe {
                 windows_sys::Win32::Graphics::Gdi::ScreenToClient(window, &mut point);
             }
-            return Some(if point.y < 52 && point.x < WIDTH as i32 - 50 {
+            return Some(if (point.y as f32) < 52.0 * scale
+                && (point.x as f32) < (WIDTH - 50.0) * scale
+            {
                 HTCAPTION
             } else {
                 HTCLIENT
@@ -385,17 +389,11 @@ pub unsafe fn dispatch(window: HWND, message: u32, key: usize, extra: isize) -> 
 unsafe fn paint(window: HWND, view: &FileView) {
     let mut data = PAINTSTRUCT::default();
     let dc = unsafe { BeginPaint(window, &mut data) };
-    let (width, height) = view.size();
-    let _ = draw(
-        dc,
-        RECT {
-            left: 0,
-            top: 0,
-            right: width,
-            bottom: height,
-        },
-        view,
-    );
+    let mut bounds = RECT::default();
+    unsafe {
+        GetClientRect(window, &mut bounds);
+    }
+    let _ = draw(dc, bounds, window_dpi(window), view);
     unsafe {
         EndPaint(window, &data);
     }
@@ -404,9 +402,10 @@ unsafe fn paint(window: HWND, view: &FileView) {
 fn draw(
     dc: windows_sys::Win32::Graphics::Gdi::HDC,
     bounds: RECT,
+    dpi: f32,
     view: &FileView,
 ) -> windows::core::Result<()> {
-    let (_, target) = open_target(dc, bounds)?;
+    let (_, target) = open_target_at_dpi(dc, bounds, dpi)?;
     let (bg, fg, muted, card, line, selected, track, heading) = if view.dark {
         (
             0x08090b, 0xeeeeef, 0x96979d, 0x111215, 0x292a2e, 0x202125, 0x303136, 0x191919,

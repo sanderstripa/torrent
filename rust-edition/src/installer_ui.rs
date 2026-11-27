@@ -1,7 +1,7 @@
 #[path = "installer_ui_geometry.rs"]
 mod geometry;
 
-use crate::windows_canvas::{open_target, rect, rgb, Canvas, Fonts};
+use crate::windows_canvas::{dpi_scale, open_target_at_dpi, rect, rgb, window_dpi, Canvas, Fonts};
 use std::cell::RefCell;
 use std::ffi::OsString;
 use std::io;
@@ -145,6 +145,7 @@ fn show_window(directory: PathBuf) -> io::Result<()> {
         if RegisterClassW(&class) == 0 {
             return Err(io::Error::last_os_error());
         }
+        let scale = dpi_scale(null_mut());
         let window = CreateWindowExW(
             0,
             CLASS,
@@ -152,8 +153,8 @@ fn show_window(directory: PathBuf) -> io::Result<()> {
             WS_POPUP | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            WIDTH,
-            HEIGHT,
+            (WIDTH as f32 * scale).round() as i32,
+            (HEIGHT as f32 * scale).round() as i32,
             null_mut(),
             null_mut(),
             module,
@@ -228,10 +229,10 @@ unsafe extern "system" fn window_proc(
     let Ok(mut state) = setup.try_borrow_mut() else {
         return unsafe { DefWindowProcW(window, message, key, extra) };
     };
-    let point = (
-        extra as u16 as i16 as f32,
-        (extra >> 16) as u16 as i16 as f32,
-    );
+    let scale = dpi_scale(window);
+    let raw_x = extra as u16 as i16 as i32;
+    let raw_y = (extra >> 16) as u16 as i16 as i32;
+    let point = (raw_x as f32 / scale, raw_y as f32 / scale);
     let mut close = false;
     let mut browse = false;
     let mut error = None;
@@ -241,19 +242,42 @@ unsafe extern "system" fn window_proc(
         WM_NCPAINT => return 0,
         WM_NCHITTEST => {
             use windows_sys::Win32::Foundation::POINT;
-            let mut point = POINT {
-                x: point.0 as i32,
-                y: point.1 as i32,
-            };
+            let mut point = POINT { x: raw_x, y: raw_y };
             unsafe {
                 windows_sys::Win32::Graphics::Gdi::ScreenToClient(window, &mut point);
             }
-            return if point.y < 55 && point.x < WIDTH - 130 {
+            return if (point.y as f32) < 55.0 * scale
+                && (point.x as f32) < (WIDTH - 130) as f32 * scale
+            {
                 HTCAPTION as isize
             } else {
                 HTCLIENT as isize
             };
         }
+        WM_DPICHANGED => {
+            let bounds = unsafe { &*(extra as *const RECT) };
+            let (x, y, w, h) = (
+                bounds.left,
+                bounds.top,
+                bounds.right - bounds.left,
+                bounds.bottom - bounds.top,
+            );
+            drop(state);
+            unsafe {
+                SetWindowPos(
+                    window,
+                    null_mut(),
+                    x,
+                    y,
+                    w,
+                    h,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+                PostMessageW(window, WM_APP + 1, 0, 0);
+            }
+            return 0;
+        }
+        message if message == WM_APP + 1 => {}
         WM_PAINT => {
             unsafe {
                 paint(window, &state);
@@ -374,10 +398,10 @@ unsafe extern "system" fn window_proc(
         if show_edit {
             MoveWindow(
                 edit,
-                path.left as i32 + 10,
-                path.top as i32 + 9,
-                (path.right - path.left) as i32 - 20,
-                19,
+                ((path.left + 10.0) * scale).round() as i32,
+                ((path.top + 9.0) * scale).round() as i32,
+                ((path.right - path.left - 20.0) * scale).round() as i32,
+                (19.0 * scale).round() as i32,
                 1,
             );
             ShowWindow(edit, SW_SHOW);
@@ -568,7 +592,7 @@ unsafe fn paint(window: HWND, setup: &Setup) {
     unsafe {
         GetClientRect(window, &mut bounds);
     }
-    let _ = draw(dc, bounds, setup);
+    let _ = draw(dc, bounds, window_dpi(window), setup);
     unsafe {
         EndPaint(window, &data);
     }
@@ -577,9 +601,10 @@ unsafe fn paint(window: HWND, setup: &Setup) {
 fn draw(
     dc: windows_sys::Win32::Graphics::Gdi::HDC,
     bounds: RECT,
+    dpi: f32,
     setup: &Setup,
 ) -> windows::core::Result<()> {
-    let (_, target) = open_target(dc, bounds)?;
+    let (_, target) = open_target_at_dpi(dc, bounds, dpi)?;
     let (bg, fg, muted, border, button, inverse, field) = if setup.dark {
         (
             0x202122, 0xedede9, 0xa3a6a5, 0x414344, 0xe3e4df, 0x202122, 0x292b2c,

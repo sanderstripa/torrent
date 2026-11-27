@@ -1,4 +1,6 @@
-use crate::windows_render::{open_target, rect, rgb, use_fonts, Canvas};
+use crate::windows_canvas::{
+    dpi_scale, open_target_at_dpi, rect, rgb, use_fonts, window_dpi, Canvas,
+};
 use torrent_re_sort::profile::{Preferences, Theme};
 use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
 use windows_sys::Win32::Foundation::{HWND, RECT};
@@ -119,22 +121,21 @@ impl SettingsView {
 pub unsafe fn paint(window: HWND, view: &SettingsView) {
     let mut paint = PAINTSTRUCT::default();
     let dc = unsafe { BeginPaint(window, &mut paint) };
-    let bounds = RECT {
-        left: 0,
-        top: 0,
-        right: view.width as i32,
-        bottom: view.height() as i32,
-    };
-    let _ = draw(dc, bounds, view);
+    let mut bounds = RECT::default();
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect(window, &mut bounds);
+    }
+    let _ = draw(dc, bounds, window_dpi(window), view);
     unsafe { EndPaint(window, &paint) };
 }
 
 fn draw(
     dc: windows_sys::Win32::Graphics::Gdi::HDC,
     bounds: RECT,
+    dpi: f32,
     view: &SettingsView,
 ) -> windows::core::Result<()> {
-    let (_, target) = open_target(dc, bounds)?;
+    let (_, target) = open_target_at_dpi(dc, bounds, dpi)?;
     let surface = if view.dark { 0x202124 } else { 0xfcfcfd };
     let field = if view.dark { 0x28292d } else { 0xf3f4f5 };
     let line = if view.dark { 0x35363b } else { 0xe6e7e9 };
@@ -583,8 +584,9 @@ pub unsafe fn dispatch(window: HWND, message: u32, wparam: usize, lparam: isize)
             .as_ref()
     }?;
     let mut view = cell.try_borrow_mut().ok()?;
-    let x = (lparam as u16 as i16) as f32;
-    let y = ((lparam >> 16) as u16 as i16) as f32;
+    let scale = dpi_scale(window);
+    let x = (lparam as u16 as i16) as f32 / scale;
+    let y = ((lparam >> 16) as u16 as i16) as f32 / scale;
     match message {
         WM_PAINT => unsafe {
             paint(window, &view);

@@ -288,6 +288,14 @@ unsafe extern "system" fn dispatch(
         WM_NCPAINT if unsafe { GetWindow(window, GW_OWNER) }.is_null() => 0,
         #[cfg(feature = "rqbit")]
         WM_NCACTIVATE if unsafe { GetWindow(window, GW_OWNER) }.is_null() => 1,
+        #[cfg(feature = "rqbit")]
+        WM_GETMINMAXINFO if unsafe { GetWindow(window, GW_OWNER) }.is_null() => {
+            let scale = ui_scale(window);
+            let limits = unsafe { &mut *(lparam as *mut MINMAXINFO) };
+            limits.ptMinTrackSize.x = ui_px(740, scale);
+            limits.ptMinTrackSize.y = ui_px(640, scale);
+            0
+        }
         WM_NCHITTEST if unsafe { GetWindow(window, GW_OWNER) }.is_null() => {
             let hit = unsafe { DefWindowProcW(window, message, wparam, lparam) };
             if hit == HTCLIENT as isize {
@@ -296,7 +304,33 @@ unsafe extern "system" fn dispatch(
                     y: (lparam >> 16) as i16 as i32,
                 };
                 unsafe { windows_sys::Win32::Graphics::Gdi::ScreenToClient(window, &mut point) };
-                if (0..62).contains(&point.y) {
+                #[cfg(feature = "rqbit")]
+                {
+                    let mut bounds = RECT::default();
+                    unsafe {
+                        GetClientRect(window, &mut bounds);
+                    }
+                    let edge = ui_px(6, ui_scale(window));
+                    let left = point.x < edge;
+                    let right = point.x >= bounds.right - edge;
+                    let top = point.y < edge;
+                    let bottom = point.y >= bounds.bottom - edge;
+                    let border = match (left, right, top, bottom) {
+                        (true, _, true, _) => HTTOPLEFT,
+                        (_, true, true, _) => HTTOPRIGHT,
+                        (true, _, _, true) => HTBOTTOMLEFT,
+                        (_, true, _, true) => HTBOTTOMRIGHT,
+                        (true, _, _, _) => HTLEFT,
+                        (_, true, _, _) => HTRIGHT,
+                        (_, _, true, _) => HTTOP,
+                        (_, _, _, true) => HTBOTTOM,
+                        _ => HTCLIENT,
+                    };
+                    if border != HTCLIENT {
+                        return border as isize;
+                    }
+                }
+                if (0..ui_px(62, ui_scale(window))).contains(&point.y) {
                     let child = unsafe { ChildWindowFromPoint(window, point) };
                     if child == window || child.is_null() || unsafe { GetDlgCtrlID(child) } == 190 {
                         return HTCAPTION as isize;
@@ -305,10 +339,29 @@ unsafe extern "system" fn dispatch(
             }
             hit
         }
+        #[cfg(feature = "rqbit")]
+        WM_DPICHANGED if unsafe { GetWindow(window, GW_OWNER) }.is_null() => {
+            let bounds = unsafe { &*(lparam as *const RECT) };
+            unsafe {
+                SetWindowPos(
+                    window,
+                    null_mut(),
+                    bounds.left,
+                    bounds.top,
+                    bounds.right - bounds.left,
+                    bounds.bottom - bounds.top,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+            0
+        }
         WM_NCLBUTTONDBLCLK if wparam == HTCAPTION as usize => 0,
         WM_SYSCOMMAND if wparam & 0xfff0 == SC_MAXIMIZE as usize => 0,
         WM_MEASUREITEM if wparam == 200 => {
-            unsafe { (*(lparam as *mut MEASUREITEMSTRUCT)).itemHeight = 136 };
+            unsafe {
+                (*(lparam as *mut MEASUREITEMSTRUCT)).itemHeight =
+                    ui_px(136, ui_scale(window)) as u32
+            };
             1
         }
         WM_DRAWITEM if wparam == 200 => {
@@ -352,6 +405,20 @@ unsafe extern "system" fn dispatch(
     }
 }
 
+fn ui_scale(window: HWND) -> f32 {
+    #[cfg(feature = "rqbit")]
+    return crate::windows_canvas::dpi_scale(window);
+    #[cfg(not(feature = "rqbit"))]
+    {
+        let _ = window;
+        1.0
+    }
+}
+
+fn ui_px(logical: i32, scale: f32) -> i32 {
+    (logical as f32 * scale).round() as i32
+}
+
 fn child(
     window: HWND,
     class: &str,
@@ -360,6 +427,8 @@ fn child(
     (x, y, width, height): (i32, i32, i32, i32),
     id: usize,
 ) -> Result<HWND, String> {
+    let scale = ui_scale(window);
+    let [x, y, width, height] = [x, y, width, height].map(|value| ui_px(value, scale));
     let handle = unsafe {
         CreateWindowExW(
             0,
@@ -410,6 +479,8 @@ impl Dialog {
         height: i32,
         sheet: bool,
     ) -> Result<Self, String> {
+        let scale = ui_scale(owner);
+        let [width, height] = [width, height].map(|value| ui_px(value, scale));
         let mut owner_rect = RECT::default();
         unsafe { GetWindowRect(owner, &mut owner_rect) };
         let x = owner_rect.left + (owner_rect.right - owner_rect.left - width) / 2;
@@ -1172,8 +1243,8 @@ fn select_torrent_files(
                 (view.menu_point(index), current)
             };
             let mut point = windows_sys::Win32::Foundation::POINT {
-                x: position.0,
-                y: position.1,
+                x: ui_px(position.0, ui_scale(dialog.window)),
+                y: ui_px(position.1, ui_scale(dialog.window)),
             };
             unsafe {
                 windows_sys::Win32::Graphics::Gdi::ClientToScreen(dialog.window, &mut point);
@@ -1332,6 +1403,12 @@ impl Controls {
         if unsafe { GetClientRect(self.window, &mut available) } == 0 {
             return;
         }
+        let scale = ui_scale(self.window);
+        let px = |value| ui_px(value, scale);
+        unsafe {
+            SendMessageW(self.list, LB_SETITEMHEIGHT, 0, px(136) as LPARAM);
+            MoveWindow(GetDlgItem(self.window, 190), px(24), 0, px(170), px(62), 1);
+        }
         #[cfg(not(feature = "rqbit"))]
         let button_order = [CLOSE, MINIMIZE, SETTINGS, OPEN_ADD];
         #[cfg(feature = "rqbit")]
@@ -1339,33 +1416,33 @@ impl Controls {
         for (index, id) in button_order.into_iter().enumerate() {
             let button = unsafe { GetDlgItem(self.window, id as i32) };
             if !button.is_null() {
-                let x = available.right - 46 - index as i32 * 40;
-                unsafe { MoveWindow(button, x, 16, 32, 32, 1) };
+                let x = available.right - px(46 + index as i32 * 40);
+                unsafe { MoveWindow(button, x, px(16), px(32), px(32), 1) };
             }
         }
         unsafe {
             MoveWindow(
                 self.empty,
-                16,
-                available.bottom / 2 - 32,
-                (available.right - 32).max(1),
-                30,
+                px(16),
+                available.bottom / 2 - px(32),
+                (available.right - px(32)).max(1),
+                px(30),
                 1,
             );
             MoveWindow(
                 self.empty_hint,
-                16,
+                px(16),
                 available.bottom / 2,
-                (available.right - 32).max(1),
-                30,
+                (available.right - px(32)).max(1),
+                px(30),
                 1,
             );
             MoveWindow(
                 self.list,
-                16,
-                84,
-                (available.right - 32).max(1),
-                (available.bottom - 100).max(1),
+                px(16),
+                px(84),
+                (available.right - px(32)).max(1),
+                (available.bottom - px(100)).max(1),
                 1,
             )
         };
@@ -1609,7 +1686,8 @@ fn settings_144(
     unsafe {
         GetClientRect(owner, &mut available);
     }
-    let width = (available.right - 96).min(720).max(520);
+    let scale = ui_scale(owner);
+    let width = ((available.right as f32 / scale) as i32 - 96).clamp(520, 720);
     let dialog = Dialog::open(
         owner,
         tr(prefs.english, "Настройки", "Settings"),
@@ -1661,8 +1739,8 @@ fn settings_144(
                         null_mut(),
                         0,
                         0,
-                        width,
-                        state.height() as i32,
+                        ui_px(width, scale),
+                        ui_px(state.height() as i32, scale),
                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
                     );
                 }
@@ -1683,8 +1761,8 @@ fn settings_144(
             page::LANGUAGE | page::ADD => {
                 let r = view.borrow().control(id);
                 let mut point = windows_sys::Win32::Foundation::POINT {
-                    x: r.left as i32,
-                    y: r.bottom as i32,
+                    x: ui_px(r.left as i32, scale),
+                    y: ui_px(r.bottom as i32, scale),
                 };
                 unsafe {
                     windows_sys::Win32::Graphics::Gdi::ClientToScreen(dialog.window, &mut point)
@@ -2481,8 +2559,8 @@ pub fn run() -> Result<(), String> {
             WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            940,
-            720,
+            ui_px(940, ui_scale(null_mut())),
+            ui_px(720, ui_scale(null_mut())),
             null_mut(),
             null_mut(),
             instance,

@@ -19,6 +19,8 @@ mod windows_vpn;
 
 #[cfg(windows)]
 fn main() {
+    #[cfg(feature = "rqbit")]
+    windows_canvas::enable_dpi_awareness();
     if std::env::args_os().any(|argument| argument == "--interaction-test") {
         std::panic::set_hook(Box::new(|info| {
             let detail = format!("{info}\n{}", std::backtrace::Backtrace::force_capture());

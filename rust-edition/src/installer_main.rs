@@ -9,6 +9,7 @@ mod windows_canvas;
 
 #[cfg(windows)]
 fn main() {
+    windows_canvas::enable_dpi_awareness();
     if let Err(error) = installer_windows::run() {
         if std::env::args_os().nth(1).is_none() {
             installer_windows::message(&error.to_string(), true);

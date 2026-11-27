@@ -10,6 +10,14 @@ pub(crate) fn open_target(
     dc: windows_sys::Win32::Graphics::Gdi::HDC,
     area: windows_sys::Win32::Foundation::RECT,
 ) -> windows::core::Result<(ID2D1Factory, ID2D1DCRenderTarget)> {
+    open_target_at_dpi(dc, area, 96.0)
+}
+
+pub(crate) fn open_target_at_dpi(
+    dc: windows_sys::Win32::Graphics::Gdi::HDC,
+    area: windows_sys::Win32::Foundation::RECT,
+    dpi: f32,
+) -> windows::core::Result<(ID2D1Factory, ID2D1DCRenderTarget)> {
     let rect = RECT {
         left: area.left,
         top: area.top,
@@ -23,13 +31,42 @@ pub(crate) fn open_target(
                 format: DXGI_FORMAT_B8G8R8A8_UNORM,
                 alphaMode: D2D1_ALPHA_MODE_IGNORE,
             },
-            dpiX: 96.0,
-            dpiY: 96.0,
+            dpiX: dpi,
+            dpiY: dpi,
             ..Default::default()
         })?;
         target.BindDC(HDC(dc), &rect)?;
         Ok((factory, target))
     }
+}
+
+pub(crate) fn enable_dpi_awareness() {
+    use windows_sys::Win32::UI::HiDpi::{
+        SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    unsafe {
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+}
+
+pub(crate) fn window_dpi(window: windows_sys::Win32::Foundation::HWND) -> f32 {
+    use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow};
+    let dpi = unsafe {
+        if window.is_null() {
+            GetDpiForSystem()
+        } else {
+            GetDpiForWindow(window)
+        }
+    };
+    if dpi == 0 {
+        96.0
+    } else {
+        dpi as f32
+    }
+}
+
+pub(crate) fn dpi_scale(window: windows_sys::Win32::Foundation::HWND) -> f32 {
+    window_dpi(window) / 96.0
 }
 
 pub(crate) struct Fonts {

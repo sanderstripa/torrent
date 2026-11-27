@@ -1,4 +1,6 @@
-use crate::windows_render::{open_target, rect, rgb, use_fonts, Canvas};
+use crate::windows_canvas::{
+    dpi_scale, open_target_at_dpi, rect, rgb, use_fonts, window_dpi, Canvas,
+};
 use std::ffi::c_void;
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -73,8 +75,9 @@ unsafe extern "system" fn dispatch(
     let Ok(mut popup) = cell.try_borrow_mut() else {
         return unsafe { DefWindowProcW(window, message, key, extra) };
     };
-    let left = extra as u16 as i16 as i32;
-    let top = (extra >> 16) as u16 as i16 as i32;
+    let scale = dpi_scale(window);
+    let left = ((extra as u16 as i16) as f32 / scale).floor() as i32;
+    let top = (((extra >> 16) as u16 as i16) as f32 / scale).floor() as i32;
     match message {
         WM_ERASEBKGND | WM_NCACTIVATE => return 1,
         WM_NCCALCSIZE if key != 0 => return 0,
@@ -182,7 +185,8 @@ unsafe fn paint(window: HWND, popup: &Popup<'_>) {
     unsafe {
         GetClientRect(window, &mut bounds);
     }
-    if let Ok((_, target)) = open_target(dc, bounds) {
+    let dpi = window_dpi(window);
+    if let Ok((_, target)) = open_target_at_dpi(dc, bounds, dpi) {
         let (bg, fg, muted, card, line, selected) = if popup.dark {
             (0x08090b, 0xeeeeef, 0x96979d, 0x111215, 0x292a2e, 0x202125)
         } else {
@@ -197,9 +201,14 @@ unsafe fn paint(window: HWND, popup: &Popup<'_>) {
                 target.BeginDraw();
                 target.Clear(Some(&rgb(bg)));
             }
-            let width = bounds.right as f32;
+            let width = bounds.right as f32 * 96.0 / dpi;
             canvas.rounded(
-                rect(0.5, 0.5, width - 0.5, bounds.bottom as f32 - 0.5),
+                rect(
+                    0.5,
+                    0.5,
+                    width - 0.5,
+                    bounds.bottom as f32 * 96.0 / dpi - 0.5,
+                ),
                 9.0,
                 card,
                 Some(line),
@@ -251,8 +260,9 @@ pub fn show(owner: HWND, x: i32, y: i32, items: &[Item<'_>], dark: bool) -> Opti
         chosen: None,
         done: false,
     });
-    let width = 260;
-    let height = 12 + 34 * items.len() as i32;
+    let scale = dpi_scale(owner);
+    let width = (260.0 * scale).round() as i32;
+    let height = ((12 + 34 * items.len()) as f32 * scale).round() as i32;
     let point = POINT { x, y };
     unsafe {
         let module = GetModuleHandleW(null());
@@ -309,7 +319,10 @@ pub fn show(owner: HWND, x: i32, y: i32, items: &[Item<'_>], dark: bool) -> Opti
         let mut mouse = POINT::default();
         GetCursorPos(&mut mouse);
         ScreenToClient(window, &mut mouse);
-        popup.borrow_mut().last_mouse = mouse;
+        popup.borrow_mut().last_mouse = POINT {
+            x: (mouse.x as f32 / scale).floor() as i32,
+            y: (mouse.y as f32 / scale).floor() as i32,
+        };
         ShowWindow(window, SW_SHOW);
         SetFocus(window);
         SetCapture(window);

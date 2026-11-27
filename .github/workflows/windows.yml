@@ -237,5 +237,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Torrent-Rust-Edition-Windows-x64-CI
-          path: rust-edition-ci/
+          path: |
+            rust-edition-ci/*.exe
+            rust-edition-ci/*.zip
+            rust-edition-ci/SHA256SUMS.txt
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Torrent-1.4.4-Windows-Visual-Comparison
+          path: rust-edition-ci/visual-comparison/
           if-no-files-found: error

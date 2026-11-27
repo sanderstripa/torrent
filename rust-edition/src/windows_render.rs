@@ -1,4 +1,5 @@
 pub(crate) use crate::windows_canvas::{open_target, rect, rgb, use_fonts, Canvas};
+use crate::windows_canvas::{open_target_at_dpi, window_dpi};
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::DirectWrite::*;
@@ -129,7 +130,8 @@ pub fn card(
     row: &crate::windows_paint::TransferCard,
 ) -> windows::core::Result<()> {
     let area = draw.rcItem;
-    let width = (area.right - area.left) as f32;
+    let dpi = window_dpi(draw.hwndItem);
+    let width = (area.right - area.left) as f32 * 96.0 / dpi;
     let selected = draw.itemState & 1 != 0;
     let (background, foreground, muted, body, highlight, border, track) = if row.dark {
         (
@@ -140,7 +142,7 @@ pub fn card(
             0xffffff, 0x242628, 0x73767b, 0xfcfcfd, 0xededef, 0xe6e7e9, 0xe6e7e9,
         )
     };
-    let (_, target) = open_target(draw.hDC, area)?;
+    let (_, target) = open_target_at_dpi(draw.hDC, area, dpi)?;
     let brush = unsafe { target.CreateSolidColorBrush(&rgb(foreground), None)? };
     let canvas = Canvas {
         target: &target,
@@ -226,7 +228,8 @@ pub fn title(
     use windows::core::Interface;
 
     let area = draw.rcItem;
-    let (_, target) = open_target(draw.hDC, area)?;
+    let dpi = window_dpi(draw.hwndItem);
+    let (_, target) = open_target_at_dpi(draw.hDC, area, dpi)?;
     let background = rgb(if dark { 0x08090b } else { 0xffffff });
     let foreground = rgb(if dark { 0xeeeeef } else { 0x242628 });
     let brush = unsafe { target.CreateSolidColorBrush(&foreground, None)? };
@@ -242,8 +245,8 @@ pub fn title(
             let layout = fonts.factory.CreateTextLayout(
                 &text,
                 &format,
-                (area.right - area.left) as f32,
-                (area.bottom - area.top) as f32,
+                (area.right - area.left) as f32 * 96.0 / dpi,
+                (area.bottom - area.top) as f32 * 96.0 / dpi,
             )?;
             let spaced: IDWriteTextLayout1 = layout.cast()?;
             spaced.SetCharacterSpacing(
