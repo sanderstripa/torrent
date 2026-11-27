@@ -25,7 +25,7 @@ fn main() -> io::Result<()> {
     fs::write(out.join("installer_payload.rs"), generated)?;
     #[cfg(windows)]
     {
-        if env::var_os("CARGO_FEATURE_WINDOWS_APP").is_some() {
+        if env::var_os("CARGO_FEATURE_RQBIT").is_some() {
             write_resources(
                 &out,
                 "torrent-re-windows",
