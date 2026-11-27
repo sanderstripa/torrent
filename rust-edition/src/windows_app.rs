@@ -140,6 +140,12 @@ unsafe extern "system" fn dispatch(
     {
         return result;
     }
+    #[cfg(feature = "rqbit")]
+    if let Some(result) =
+        unsafe { crate::windows_prompt::dispatch(window, message, wparam, lparam) }
+    {
+        return result;
+    }
     match message {
         WM_COPYDATA if unsafe { GetWindow(window, GW_OWNER) }.is_null() => {
             let Some(packet) = (unsafe { (lparam as *const COPYDATASTRUCT).as_ref() }) else {
@@ -701,6 +707,15 @@ impl Dialog {
             if !GetPropW(self.window, crate::windows_files::PROPERTY).is_null() {
                 windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus(self.window);
             }
+            #[cfg(feature = "rqbit")]
+            if !GetPropW(self.window, crate::windows_prompt::PROPERTY).is_null() {
+                let edit = GetDlgItem(self.window, crate::windows_prompt::EDIT as i32);
+                windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus(if edit.is_null() {
+                    self.window
+                } else {
+                    edit
+                });
+            }
             let mut message = MSG::default();
             let mut deferred = Vec::new();
             while IsWindow(self.window) != 0 {
@@ -745,6 +760,19 @@ impl Dialog {
                         && !GetPropW(self.window, crate::windows_files::PROPERTY).is_null() =>
                     {
                         DispatchMessageW(&message);
+                    }
+                    #[cfg(feature = "rqbit")]
+                    _ if message.message == WM_KEYDOWN
+                        && message.wParam
+                            == windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_RETURN
+                                as usize
+                        && (message.hwnd == self.window
+                            || IsChild(self.window, message.hwnd) != 0)
+                        && !GetPropW(self.window, crate::windows_prompt::PROPERTY).is_null() =>
+                    {
+                        if command(crate::windows_prompt::APPLY) {
+                            break;
+                        }
                     }
                     _ if IsDialogMessageW(self.window, &message) != 0 => {}
                     _ => {
@@ -1622,6 +1650,103 @@ pub(crate) fn formatted_size(bytes: i64, en: bool) -> String {
     format!("{value} {unit}")
 }
 
+#[cfg(feature = "rqbit")]
+fn product_prompt(
+    owner: HWND,
+    title: &str,
+    help: &str,
+    en: bool,
+    initial: Option<&str>,
+    mut validate: impl FnMut(HWND, &str) -> bool,
+) -> Result<Option<String>, String> {
+    use crate::windows_prompt as prompt;
+    let state = prompt::Prompt::new(title, help, en, window_dark(owner), initial.is_none());
+    let dialog = Dialog::create(owner, title, prompt::WIDTH, prompt::HEIGHT)?;
+    unsafe {
+        SetWindowLongPtrW(
+            dialog.window,
+            GWL_STYLE,
+            (WS_POPUP | WS_SYSMENU | WS_CLIPCHILDREN) as isize,
+        );
+        if SetPropW(
+            dialog.window,
+            prompt::PROPERTY,
+            (&state as *const prompt::Prompt<'_>).cast_mut().cast(),
+        ) == 0
+        {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        SetWindowPos(
+            dialog.window,
+            null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+        );
+    }
+    let edit = initial
+        .map(|value| {
+            dialog.control(
+                "EDIT",
+                value,
+                WS_TABSTOP | ES_AUTOHSCROLL as u32,
+                (34, 111, prompt::WIDTH - 68, 22),
+                prompt::EDIT,
+            )
+        })
+        .transpose()?;
+    let mut accepted = None;
+    dialog.run(|id| match id {
+        prompt::CANCEL => true,
+        prompt::APPLY => {
+            if let Some(edit) = edit {
+                let text = edit_text(edit).trim().to_owned();
+                if !validate(dialog.window, &text) {
+                    return false;
+                }
+                accepted = Some(text);
+            }
+            true
+        }
+        _ => false,
+    });
+    unsafe { RemovePropW(dialog.window, prompt::PROPERTY) };
+    Ok(accepted)
+}
+
+#[cfg(feature = "rqbit")]
+fn magnet_input(owner: HWND, en: bool) -> Result<Option<String>, String> {
+    product_prompt(
+        owner,
+        tr(en, "Magnet-ссылка", "Magnet link"),
+        tr(en, "Вставьте ссылку", "Paste a magnet link"),
+        en,
+        Some(""),
+        |window, value| {
+            if value.starts_with("magnet:") {
+                return true;
+            }
+            let error = tr(en, "Введите magnet-ссылку", "Enter a magnet link");
+            if product_prompt(
+                window,
+                tr(en, "Ошибка", "Error"),
+                error,
+                en,
+                None,
+                |_, _| true,
+            )
+            .is_err()
+            {
+                show_error(error);
+            }
+            false
+        },
+    )
+}
+
+#[cfg(not(feature = "rqbit"))]
 fn magnet_input(owner: HWND, en: bool) -> Result<Option<String>, String> {
     let dialog = Dialog::create(owner, "Magnet", 580, 150)?;
     let edit = dialog.control(
@@ -1668,30 +1793,18 @@ fn paint_vpn_title(window: HWND, vpn: &crate::windows_vpn::Vpn, enabled: bool) {
 
 #[cfg(all(feature = "rqbit", feature = "vpn"))]
 fn vpn_key_input(owner: HWND, current: &str, en: bool) -> Result<Option<String>, String> {
-    let dialog = Dialog::create(
+    product_prompt(
         owner,
         tr(en, "Ключ подключения", "Connection key"),
-        570,
-        150,
-    )?;
-    let edit = dialog.control(
-        "EDIT",
-        current,
-        WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL as u32,
-        (20, 18, 520, 28),
-        0,
-    )?;
-    dialog.buttons(62, en)?;
-    let mut selected = None;
-    dialog.run(|id| match id {
-        ACCEPT => {
-            selected = Some(edit_text(edit).trim().to_owned());
-            true
-        }
-        CANCEL => true,
-        _ => false,
-    });
-    Ok(selected)
+        tr(
+            en,
+            "Вставьте ключ vless:// или sudoku://",
+            "Paste a vless:// or sudoku:// key",
+        ),
+        en,
+        Some(current),
+        |_, _| true,
+    )
 }
 
 #[cfg(all(feature = "rqbit", feature = "vpn"))]

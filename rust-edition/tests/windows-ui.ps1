@@ -88,6 +88,23 @@ try {
     [RustTorrentUI]::SendMessage($list, 0x186, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     Command $main 105
     if ($NativeSettings) {
+        Command $main 101
+        $magnet = Wait-Visible 'Magnet-ссылка'
+        $input = [RustTorrentUI]::GetDlgItem($magnet, 10)
+        if ($input -eq [IntPtr]::Zero -or
+            ![RustTorrentUI]::PostMessage($input, 0x100, [IntPtr]0x0d, [IntPtr]::Zero)) {
+            throw 'Could not submit the magnet input'
+        }
+        $errorDialog = Wait-Visible 'Ошибка'
+        [RustTorrentUI]::PostMessage($errorDialog, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        for ($attempt = 0; $attempt -lt 50 -and [RustTorrentUI]::IsWindowVisible($errorDialog); $attempt++) {
+            Start-Sleep -Milliseconds 100
+        }
+        [RustTorrentUI]::PostMessage($magnet, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        for ($attempt = 0; $attempt -lt 50 -and [RustTorrentUI]::IsWindowVisible($magnet); $attempt++) {
+            Start-Sleep -Milliseconds 100
+        }
+        if ([RustTorrentUI]::IsWindowVisible($magnet)) { throw 'Magnet dialog did not close' }
         Command $main 118
         $popup = Wait-Visible 'TorrentRustStyledPopup' $true
         if (![RustTorrentUI]::PostMessage($popup, 0x100, [IntPtr]0x23, [IntPtr]::Zero) -or

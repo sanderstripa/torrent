@@ -11,6 +11,8 @@ mod windows_paint;
 #[cfg(all(windows, feature = "rqbit"))]
 mod windows_popup;
 #[cfg(all(windows, feature = "rqbit"))]
+mod windows_prompt;
+#[cfg(all(windows, feature = "rqbit"))]
 mod windows_render;
 #[cfg(all(windows, feature = "rqbit", feature = "vpn"))]
 mod windows_settings;
