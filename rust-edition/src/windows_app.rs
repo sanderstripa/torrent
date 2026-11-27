@@ -93,6 +93,7 @@ fn tr<'a>(english: bool, ru: &'a str, en: &'a str) -> &'a str {
 }
 
 static TRACE_UI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static VISUAL_FIXTURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub(crate) fn trace_ui(message: &str) {
     if TRACE_UI.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1313,7 +1314,8 @@ impl Controls {
     }
 
     fn refresh_selection(&self, transfers: &Transfers<'_>, selected: Option<usize>) {
-        let is_empty = transfers.ordered().is_empty();
+        let fixture = VISUAL_FIXTURE.load(std::sync::atomic::Ordering::Relaxed);
+        let is_empty = transfers.ordered().is_empty() && !fixture;
         unsafe {
             ShowWindow(self.list, if is_empty { SW_HIDE } else { SW_SHOWNA });
             ShowWindow(self.empty, if is_empty { SW_SHOWNA } else { SW_HIDE });
@@ -1378,8 +1380,48 @@ impl Controls {
             };
             cards.push(card);
         }
+        if fixture {
+            for (title, details, progress, mark, footer, paused) in [
+                (
+                    "Ubuntu Desktop.iso",
+                    "3,2 ГБ · Загрузка",
+                    720_000,
+                    "72%",
+                    "Осталось 1 мин 12 сек",
+                    false,
+                ),
+                (
+                    "Linux Mint.iso",
+                    "2,8 ГБ · Завершено · Раздача",
+                    1_000_000,
+                    "✓",
+                    "100%",
+                    false,
+                ),
+                (
+                    "The Witcher S01",
+                    "12,6 ГБ · Пауза",
+                    430_000,
+                    "43%",
+                    "Пауза",
+                    true,
+                ),
+            ] {
+                let mut card = crate::windows_paint::TransferCard::new();
+                card.attach_fonts(&self.fonts);
+                card.dark = self.dark.get();
+                card.title = title.into();
+                card.details = details.into();
+                card.progress = progress;
+                card.progress_label = mark.into();
+                card.footer = footer.into();
+                card.paused = paused;
+                cards.push(card);
+            }
+        }
+        let row_count = cards.len();
         CARD_ROWS.with(|rows| *rows.borrow_mut() = cards);
-        for _ in transfers.ordered() {
+        for _ in 0..row_count {
             unsafe {
                 SendMessageW(
                     self.list,
@@ -2217,7 +2259,11 @@ fn migrate_preview_queue(profile: &std::path::Path) -> Result<(), String> {
 
 pub fn run() -> Result<(), String> {
     let smoke = std::env::args_os().any(|argument| argument == "--smoke-test");
-    let interaction = std::env::args_os().any(|argument| argument == "--interaction-test");
+    let dark_preview = std::env::args_os().any(|argument| argument == "--visual-test-dark");
+    let visual = dark_preview || std::env::args_os().any(|argument| argument == "--visual-test");
+    let interaction =
+        visual || std::env::args_os().any(|argument| argument == "--interaction-test");
+    VISUAL_FIXTURE.store(visual, std::sync::atomic::Ordering::Relaxed);
     TRACE_UI.store(interaction, std::sync::atomic::Ordering::Relaxed);
     trace_ui("starting");
     let _lock = if smoke || interaction {
@@ -2285,6 +2331,16 @@ pub fn run() -> Result<(), String> {
     let default_folder = downloads_folder().unwrap_or_else(|| profile.join("Downloads"));
     let mut prefs =
         Preferences::load(&profile, default_folder).map_err(|error| error.to_string())?;
+    if visual {
+        prefs.theme = if dark_preview {
+            Theme::Dark
+        } else {
+            Theme::Light
+        };
+        prefs.english = false;
+        prefs.close_to_tray = false;
+        prefs.vpn_enabled = false;
+    }
     let session = Session::open(
         PREVIEW_POLICY,
         smoke || interaction || cfg!(feature = "rqbit") && prefs.vpn_enabled,
@@ -2354,7 +2410,7 @@ pub fn run() -> Result<(), String> {
         paint_vpn_title(window, &vpn, prefs.vpn_enabled);
         let mut prompted = std::collections::HashSet::new();
         let mut last_save = std::time::Instant::now();
-        if !smoke {
+        if !smoke && !visual {
             for source in std::env::args_os()
                 .skip(1)
                 .filter(|arg| arg != "--interaction-test")

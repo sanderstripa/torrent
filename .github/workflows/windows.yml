@@ -230,6 +230,10 @@ jobs:
         shell: pwsh
         run: |
           ./rust-edition/installer/check-native-package.ps1 -Executable "$PWD/rust-edition/target/x86_64-pc-windows-msvc/release/torrent-re-windows.exe" -ArtifactDirectory "$PWD/rust-edition-ci"
+      - name: Compare Rust screenshots with the published 1.4.4 Windows build
+        shell: pwsh
+        run: |
+          ./rust-edition/tests/compare-native-visuals.ps1 -Executable "$PWD/rust-edition/target/x86_64-pc-windows-msvc/release/torrent-re-windows.exe" -Output "$PWD/rust-edition-ci/visual-comparison"
       - uses: actions/upload-artifact@v4
         with:
           name: Torrent-Rust-Edition-Windows-x64-CI
