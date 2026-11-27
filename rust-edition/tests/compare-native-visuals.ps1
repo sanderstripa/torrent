@@ -1,9 +1,11 @@
 param(
     [Parameter(Mandatory)][string]$Executable,
-    [Parameter(Mandatory)][string]$Output
+    [Parameter(Mandatory)][string]$Output,
+    [Parameter(Mandatory)][string]$Installer
 )
 $ErrorActionPreference = 'Stop'
 $exe = (Resolve-Path -LiteralPath $Executable).Path
+$setup = (Resolve-Path -LiteralPath $Installer).Path
 New-Item -ItemType Directory -Path $Output -Force | Out-Null
 $out = (Resolve-Path -LiteralPath $Output).Path
 $work = New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP ('torrent-visual-' + [guid]::NewGuid()))
@@ -20,6 +22,8 @@ public static class TorrentVisual {
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
+    [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
+    [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int length);
@@ -78,6 +82,19 @@ function Save-Capture([IntPtr]$Window, [string]$Path) {
                 if (![TorrentVisual]::PrintWindow($Window, $dc, 3)) { throw 'PrintWindow failed' }
             } finally { $graphics.ReleaseHdc($dc) }
         } finally { $graphics.Dispose() }
+        $bitmap.Save($Path, [Drawing.Imaging.ImageFormat]::Png)
+    } finally { $bitmap.Dispose() }
+}
+function Save-VisibleCapture([IntPtr]$Window, [string]$Path) {
+    $bounds = [TorrentVisual+Rect]::new()
+    $origin = [TorrentVisual+Point]::new()
+    if (![TorrentVisual]::GetClientRect($Window, [ref]$bounds) -or
+        ![TorrentVisual]::ClientToScreen($Window, [ref]$origin)) { throw 'Could not locate the installer' }
+    $bitmap = [Drawing.Bitmap]::new($bounds.Right, $bounds.Bottom)
+    try {
+        $graphics = [Drawing.Graphics]::FromImage($bitmap)
+        try { $graphics.CopyFromScreen($origin.X, $origin.Y, 0, 0, $bitmap.Size) }
+        finally { $graphics.Dispose() }
         $bitmap.Save($Path, [Drawing.Imaging.ImageFormat]::Png)
     } finally { $bitmap.Dispose() }
 }
@@ -166,6 +183,48 @@ $results = foreach ($theme in @('light', 'dark')) {
             $actualImage.Dispose()
         }
     }
+}
+$referenceSetup = Join-Path $work.FullName 'Torrent-1.4.4-Release-x64.exe'
+Invoke-WebRequest -Uri 'https://github.com/sanderstripa/torrent/releases/download/v1.4.4/Torrent-1.4.4-Release-x64.exe' -OutFile $referenceSetup
+if ((Get-FileHash -LiteralPath $referenceSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ne '9a8f7aba2084b181814229688487840f334299a944333ec04ace8f3eb0f89b8d') {
+    throw 'Reference 1.4.4 installer SHA-256 differs from the published asset'
+}
+foreach ($installerCapture in @(
+    @{ Executable = $referenceSetup; Title = 'Torrent'; Kind = 'reference' },
+    @{ Executable = $setup; Title = 'Torrent Setup'; Kind = 'rust' }
+)) {
+    $capture = Start-Process -FilePath $installerCapture.Executable -WorkingDirectory $work.FullName -PassThru
+    try {
+        $window = Wait-Window $capture $installerCapture.Title
+        Start-Sleep -Milliseconds 1200
+        Save-VisibleCapture $window (Join-Path $out "setup-$($installerCapture.Kind)-welcome.png")
+        [TorrentVisual]::PostMessage($window, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        if (!$capture.WaitForExit(5000)) { throw 'Installer did not close from its welcome page' }
+    } finally {
+        if (!$capture.HasExited) { $capture.Kill(); $capture.WaitForExit() }
+        $capture.Dispose()
+    }
+}
+$oldSetup = [Drawing.Bitmap]::new((Join-Path $out 'setup-reference-welcome.png'))
+$newSetup = [Drawing.Bitmap]::new((Join-Path $out 'setup-rust-welcome.png'))
+try {
+    $width = [Math]::Min($oldSetup.Width, $newSetup.Width)
+    $height = [Math]::Min($oldSetup.Height, $newSetup.Height)
+    $region = [Drawing.Rectangle]::new(0, 0, $width, $height)
+    $difference = [TorrentVisual]::Compare((Read-Pixels $oldSetup $region), (Read-Pixels $newSetup $region), $width)
+    $results += [pscustomobject]@{
+        Theme = 'system'
+        View = 'setup-welcome'
+        Reference = "$($oldSetup.Width)x$($oldSetup.Height)"
+        Rust = "$($newSetup.Width)x$($newSetup.Height)"
+        Compared = $width * $height
+        Changed = $difference[0]
+        Bounds = if ($difference[0] -gt 0) { "$($difference[2]),$($difference[3])–$($difference[4]),$($difference[5])" } else { '' }
+        MeanChannelError = [Math]::Round($difference[1] / (3.0 * $width * $height), 3)
+    }
+} finally {
+    $oldSetup.Dispose()
+    $newSetup.Dispose()
 }
 $results | ConvertTo-Json | Set-Content (Join-Path $out 'pixel-comparison.json') -Encoding utf8
 $results | Format-Table -AutoSize
