@@ -24,6 +24,20 @@ public static class TorrentVisual {
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
     [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] private static extern void mouse_event(uint flags, int x, int y, uint data, UIntPtr extra);
+    public static bool OpenSetupSettings(IntPtr window) {
+        if (GetForegroundWindow() != window && !SetForegroundWindow(window)) return false;
+        if (GetForegroundWindow() != window || !GetClientRect(window, out Rect bounds)) return false;
+        Point settings = new Point { X = 105 * bounds.Right / 840, Y = 366 * bounds.Bottom / 540 };
+        if (!ClientToScreen(window, ref settings) || !SetCursorPos(settings.X, settings.Y)) return false;
+        mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+        Point blank = new Point { X = 25, Y = 32 };
+        return ClientToScreen(window, ref blank) && SetCursorPos(blank.X, blank.Y);
+    }
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int length);
@@ -199,34 +213,44 @@ foreach ($installerCapture in @(
     try {
         $window = Wait-Window $capture $installerCapture.Title
         Start-Sleep -Milliseconds 1200
-        Save-VisibleCapture $window (Join-Path $out "setup-$($installerCapture.Kind)-welcome.png")
+        $welcome = Join-Path $out "setup-$($installerCapture.Kind)-welcome.png"
+        $settingsPage = Join-Path $out "setup-$($installerCapture.Kind)-settings.png"
+        Save-VisibleCapture $window $welcome
+        if (![TorrentVisual]::OpenSetupSettings($window)) { throw 'Could not open the installer settings for capture' }
+        Start-Sleep -Milliseconds 400
+        Save-VisibleCapture $window $settingsPage
+        if ((Get-FileHash $welcome).Hash -eq (Get-FileHash $settingsPage).Hash) {
+            throw "The $($installerCapture.Kind) installer did not open its settings"
+        }
         [TorrentVisual]::PostMessage($window, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-        if (!$capture.WaitForExit(5000)) { throw 'Installer did not close from its welcome page' }
+        if (!$capture.WaitForExit(5000)) { throw 'Installer did not close after the visual capture' }
     } finally {
         if (!$capture.HasExited) { $capture.Kill(); $capture.WaitForExit() }
         $capture.Dispose()
     }
 }
-$oldSetup = [Drawing.Bitmap]::new((Join-Path $out 'setup-reference-welcome.png'))
-$newSetup = [Drawing.Bitmap]::new((Join-Path $out 'setup-rust-welcome.png'))
-try {
-    $width = [Math]::Min($oldSetup.Width, $newSetup.Width)
-    $height = [Math]::Min($oldSetup.Height, $newSetup.Height)
-    $region = [Drawing.Rectangle]::new(0, 0, $width, $height)
-    $difference = [TorrentVisual]::Compare((Read-Pixels $oldSetup $region), (Read-Pixels $newSetup $region), $width)
-    $results += [pscustomobject]@{
-        Theme = 'system'
-        View = 'setup-welcome'
-        Reference = "$($oldSetup.Width)x$($oldSetup.Height)"
-        Rust = "$($newSetup.Width)x$($newSetup.Height)"
-        Compared = $width * $height
-        Changed = $difference[0]
-        Bounds = if ($difference[0] -gt 0) { "$($difference[2]),$($difference[3])–$($difference[4]),$($difference[5])" } else { '' }
-        MeanChannelError = [Math]::Round($difference[1] / (3.0 * $width * $height), 3)
+foreach ($view in @('welcome', 'settings')) {
+    $oldSetup = [Drawing.Bitmap]::new((Join-Path $out "setup-reference-$view.png"))
+    $newSetup = [Drawing.Bitmap]::new((Join-Path $out "setup-rust-$view.png"))
+    try {
+        $width = [Math]::Min($oldSetup.Width, $newSetup.Width)
+        $height = [Math]::Min($oldSetup.Height, $newSetup.Height)
+        $region = [Drawing.Rectangle]::new(0, 0, $width, $height)
+        $difference = [TorrentVisual]::Compare((Read-Pixels $oldSetup $region), (Read-Pixels $newSetup $region), $width)
+        $results += [pscustomobject]@{
+            Theme = 'system'
+            View = "setup-$view"
+            Reference = "$($oldSetup.Width)x$($oldSetup.Height)"
+            Rust = "$($newSetup.Width)x$($newSetup.Height)"
+            Compared = $width * $height
+            Changed = $difference[0]
+            Bounds = if ($difference[0] -gt 0) { "$($difference[2]),$($difference[3])–$($difference[4]),$($difference[5])" } else { '' }
+            MeanChannelError = [Math]::Round($difference[1] / (3.0 * $width * $height), 3)
+        }
+    } finally {
+        $oldSetup.Dispose()
+        $newSetup.Dispose()
     }
-} finally {
-    $oldSetup.Dispose()
-    $newSetup.Dispose()
 }
 $results | ConvertTo-Json | Set-Content (Join-Path $out 'pixel-comparison.json') -Encoding utf8
 $results | Format-Table -AutoSize
