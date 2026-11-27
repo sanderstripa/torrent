@@ -122,6 +122,11 @@ try {
     if (!(Test-Path (Join-Path $guiTarget 'Torrent-RE.exe')) -or !(Test-Path $uninstallKey)) {
         throw 'The setup window did not install to the selected path'
     }
+    $guiDesktopShortcut = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)) 'Torrent Rust Edition.lnk'
+    $guiMenuShortcut = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)) 'Torrent Rust Edition.lnk'
+    if (!(Test-Path -LiteralPath $guiDesktopShortcut) -or (Test-Path -LiteralPath $guiMenuShortcut)) {
+        throw 'The installer did not preserve the selected shortcut options'
+    }
     Start-Sleep -Milliseconds 600
     if (![NativeTorrentSetup]::Click($window, 302, 390) -or ![NativeTorrentSetup]::Click($window, 420, 337)) {
         throw 'Could not finish native setup'
