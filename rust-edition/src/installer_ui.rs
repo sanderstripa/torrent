@@ -32,6 +32,24 @@ const TITLE: windows_sys::core::PCWSTR = windows_sys::w!("Torrent Setup");
 const PATH_ID: usize = 101;
 const WIDTH: i32 = 840;
 const HEIGHT: i32 = 540;
+const CAPTION_MINIMIZE: D2D_RECT_F = D2D_RECT_F {
+    left: 726.0,
+    top: 21.0,
+    right: 754.0,
+    bottom: 51.0,
+};
+const CAPTION_CLOSE: D2D_RECT_F = D2D_RECT_F {
+    left: 767.0,
+    top: 21.0,
+    right: 795.0,
+    bottom: 51.0,
+};
+const WELCOME_SETTINGS: D2D_RECT_F = D2D_RECT_F {
+    left: 45.0,
+    top: 351.0,
+    right: 208.0,
+    bottom: 383.0,
+};
 const FONT: &[u8] = include_bytes!("../../installer/assets/Montserrat.ttf");
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -77,6 +95,36 @@ impl Setup {
             _ => rect(306.0, 312.25, 534.0, 361.25),
         }
     }
+    fn launch_row(&self) -> D2D_RECT_F {
+        let (left, right) = if self.english {
+            (289.0, 551.0)
+        } else {
+            (279.0, 561.0)
+        };
+        rect(left, 376.25, right, 414.25)
+    }
+
+    fn interactive(&self, x: f32, y: f32) -> bool {
+        let inside = |region| hit(region, x, y);
+        if inside(CAPTION_CLOSE) || inside(CAPTION_MINIMIZE) {
+            return true;
+        }
+        match self.page {
+            Page::Welcome => inside(self.primary()) || inside(WELCOME_SETTINGS),
+            Page::Installing => false,
+            Page::Finish => inside(self.primary()) || inside(self.launch_row()),
+            Page::Settings => {
+                let g = geometry::settings(self.english);
+                [
+                    g.back, g.ru, g.en, g.light, g.dark, g.path, g.browse, g.desktop, g.menu,
+                    g.accept,
+                ]
+                .into_iter()
+                .any(inside)
+            }
+        }
+    }
+
     fn start(&mut self) {
         let directory = self.directory.clone();
         let shortcuts = self.shortcuts;
@@ -260,12 +308,11 @@ unsafe extern "system" fn window_proc(
             unsafe {
                 windows_sys::Win32::Graphics::Gdi::ScreenToClient(window, &mut point);
             }
-            return if (point.y as f32) < 55.0 * scale
-                && (point.x as f32) < (WIDTH - 130) as f32 * scale
-            {
-                HTCAPTION as isize
-            } else {
+            let (x, y) = (point.x as f32 / scale, point.y as f32 / scale);
+            return if state.interactive(x, y) {
                 HTCLIENT as isize
+            } else {
+                HTCAPTION as isize
             };
         }
         WM_DPICHANGED => {
@@ -325,9 +372,9 @@ unsafe extern "system" fn window_proc(
         }
         WM_LBUTTONUP => {
             let (x, y) = point;
-            if y < 55.0 && x > WIDTH as f32 - 78.0 {
+            if hit(CAPTION_CLOSE, x, y) {
                 close = state.page != Page::Installing;
-            } else if y < 55.0 && x > WIDTH as f32 - 120.0 {
+            } else if hit(CAPTION_MINIMIZE, x, y) {
                 drop(state);
                 unsafe {
                     ShowWindow(window, SW_MINIMIZE);
@@ -342,9 +389,9 @@ unsafe extern "system" fn window_proc(
                     }
                     _ => {}
                 }
-            } else if state.page == Page::Welcome && hit(rect(45.0, 351.0, 330.0, 383.0), x, y) {
+            } else if state.page == Page::Welcome && hit(WELCOME_SETTINGS, x, y) {
                 state.page = Page::Settings;
-            } else if state.page == Page::Finish && (376.25..414.25).contains(&y) {
+            } else if state.page == Page::Finish && hit(state.launch_row(), x, y) {
                 state.launch = !state.launch;
             } else if state.page == Page::Settings {
                 let g = geometry::settings(state.english);
