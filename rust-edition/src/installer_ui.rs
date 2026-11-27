@@ -13,8 +13,8 @@ use std::ptr::{null, null_mut};
 use std::sync::mpsc::{self, Receiver};
 use windows::core::Interface;
 use windows::Win32::Graphics::Direct2D::{
-    Common::D2D_RECT_F, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, D2D1_DRAW_TEXT_OPTIONS_CLIP,
-    D2D1_DRAW_TEXT_OPTIONS_NO_SNAP,
+    Common::D2D_RECT_F, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, D2D1_CAP_STYLE_ROUND,
+    D2D1_DRAW_TEXT_OPTIONS_CLIP, D2D1_DRAW_TEXT_OPTIONS_NO_SNAP, D2D1_STROKE_STYLE_PROPERTIES,
 };
 use windows::Win32::Graphics::DirectWrite::*;
 use windows_numerics::Vector2;
@@ -486,9 +486,9 @@ unsafe extern "system" fn window_proc(
         if show_edit {
             MoveWindow(
                 edit,
-                ((path.left + 10.0) * scale).round() as i32,
+                ((path.left + 12.0) * scale).round() as i32,
                 ((path.top + 9.0) * scale).round() as i32,
-                ((path.right - path.left - 20.0) * scale).round() as i32,
+                ((path.right - path.left - 24.0) * scale).round() as i32,
                 (19.0 * scale).round() as i32,
                 1,
             );
@@ -793,20 +793,43 @@ fn draw(
             }
             centered(value, r, 11.0, if chosen { inverse } else { fg })
         };
-        let caption_line = |x, y, a, b| {
-            canvas.line(x, y, a, b, fg, 1.25);
-            canvas.circle(x, y, 0.625, fg, true);
-            canvas.circle(a, b, 0.625, fg, true);
+        let factory = unsafe { target.GetFactory()? };
+        let stroke = unsafe {
+            factory.CreateStrokeStyle(
+                &D2D1_STROKE_STYLE_PROPERTIES {
+                    startCap: D2D1_CAP_STYLE_ROUND,
+                    endCap: D2D1_CAP_STYLE_ROUND,
+                    miterLimit: 10.0,
+                    ..Default::default()
+                },
+                None,
+            )?
+        };
+        let caption_line = |x, y, a, b| unsafe {
+            canvas.brush.SetColor(&rgb(fg));
+            target.DrawLine(
+                Vector2 { X: x, Y: y },
+                Vector2 { X: a, Y: b },
+                &canvas.brush,
+                1.25,
+                &stroke,
+            );
         };
         caption_line(w - 105.0, 36.0, w - 95.0, 36.0);
         caption_line(w - 63.0, 32.0, w - 55.0, 40.0);
         caption_line(w - 55.0, 32.0, w - 63.0, 40.0);
-        canvas.outline(
-            rect(0.5, 0.5, w - 0.5, HEIGHT as f32 - 0.5),
-            0.0,
-            border,
-            1.0,
-        );
+        let height = HEIGHT as f32;
+        unsafe {
+            canvas.brush.SetColor(&rgb(border));
+            for side in [
+                rect(0.0, 0.0, w, 1.0),
+                rect(0.0, height - 1.0, w, height),
+                rect(0.0, 1.0, 1.0, height - 1.0),
+                rect(w - 1.0, 1.0, w, height - 1.0),
+            ] {
+                target.FillRectangle(&side, &canvas.brush);
+            }
+        }
         canvas.line(45.0, 490.5, w - 45.0, 490.5, border, 1.0);
         label(
             &canvas,
