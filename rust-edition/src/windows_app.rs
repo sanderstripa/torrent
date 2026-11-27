@@ -1210,13 +1210,18 @@ fn select_torrent_files(
         }
     }
     let (title, _) = transfer.handle.status()?;
-    let view = std::cell::RefCell::new(files_ui::FileView::new(
-        files,
-        priorities,
-        title,
-        english,
-        window_dark(owner),
-    ));
+    let view = files_ui::FileView::new(files, priorities, title, english, window_dark(owner));
+    show_file_dialog(owner, english, view)
+}
+
+#[cfg(feature = "rqbit")]
+fn show_file_dialog(
+    owner: HWND,
+    english: bool,
+    view: crate::windows_files::FileView,
+) -> Result<Option<Vec<u8>>, String> {
+    use crate::windows_files as files_ui;
+    let view = std::cell::RefCell::new(view);
     let (width, height) = view.borrow().size();
     let dialog = Dialog::create(
         owner,
@@ -2773,6 +2778,11 @@ pub fn run() -> Result<(), String> {
                         }
                     }
                     controls.refresh(&transfers);
+                }
+                #[cfg(feature = "rqbit")]
+                _ if visual && message.hwnd == window && message.message == WM_APP + 13 => {
+                    let view = crate::windows_files::FileView::visual_fixture(window_dark(window));
+                    show_file_dialog(window, false, view)?;
                 }
                 _ if message.hwnd == window && message.message == ACTION => {
                     let destination = prefs.folder.to_string_lossy();

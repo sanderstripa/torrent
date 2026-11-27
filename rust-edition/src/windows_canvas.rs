@@ -299,6 +299,50 @@ impl Canvas<'_> {
             }
         }
     }
+    pub(crate) fn tracked_label(
+        &self,
+        fonts: &Fonts,
+        text: &str,
+        rect: D2D_RECT_F,
+        size: u16,
+        color: u32,
+        spacing: f32,
+    ) -> windows::core::Result<()> {
+        use windows::core::Interface;
+        let encoded = text.encode_utf16().collect::<Vec<_>>();
+        let format = fonts.format(size, false)?;
+        unsafe {
+            format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING)?;
+            let layout = fonts.factory.CreateTextLayout(
+                &encoded,
+                &format,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+            )?;
+            let spaced: IDWriteTextLayout1 = layout.cast()?;
+            spaced.SetCharacterSpacing(
+                spacing / 2.0,
+                spacing / 2.0,
+                0.0,
+                DWRITE_TEXT_RANGE {
+                    startPosition: 0,
+                    length: encoded.len() as u32,
+                },
+            )?;
+            self.brush.SetColor(&rgb(color));
+            self.target.DrawTextLayout(
+                Vector2 {
+                    X: rect.left,
+                    Y: rect.top,
+                },
+                &layout,
+                &self.brush,
+                D2D1_DRAW_TEXT_OPTIONS_CLIP,
+            );
+        }
+        Ok(())
+    }
+
     pub(crate) fn centered(
         &self,
         fonts: &Fonts,

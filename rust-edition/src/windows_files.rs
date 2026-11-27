@@ -22,6 +22,7 @@ const WIDTH: f32 = 580.0;
 pub struct FileView {
     files: Vec<TorrentFile>,
     title: String,
+    fixture: bool,
     english: bool,
     dark: bool,
     order: Vec<usize>,
@@ -76,6 +77,7 @@ impl FileView {
         Self {
             files,
             title,
+            fixture: false,
             english,
             dark,
             order,
@@ -93,6 +95,30 @@ impl FileView {
             keyboard: false,
             hover: None,
         }
+    }
+
+    pub fn visual_fixture(dark: bool) -> Self {
+        let files = [
+            ("01. Серия 1.mkv", 1288490188),
+            ("02. Серия 2.mkv", 1395864371),
+            ("03. Серия 3.mkv", 1395864371),
+            ("04. Постер.jpg", 3565158),
+            ("05. Readme.txt", 12288),
+        ]
+        .map(|(path, size)| TorrentFile {
+            path: path.to_owned(),
+            size,
+        })
+        .to_vec();
+        let mut view = Self::new(
+            files,
+            vec![0, 7, 7, 1, 0],
+            "The Witcher S01".to_owned(),
+            false,
+            dark,
+        );
+        view.fixture = true;
+        view
     }
 
     pub fn size(&self) -> (i32, i32) {
@@ -441,22 +467,21 @@ fn draw(
                 canvas.line(x + 7.0, y + 11.0, x + 12.0, y + 5.0, bg, 1.7);
             }
         };
-        canvas.label(
+        canvas.tracked_label(
             fonts,
             tr("ФАЙЛЫ ТОРРЕНТА", "TORRENT FILES"),
             rect(24.0, 14.0, width - 65.0, 50.0),
             18,
-            false,
             fg,
-            false,
+            1.6,
         )?;
         canvas.line(width - 31.0, 24.0, width - 21.0, 34.0, muted, 1.5);
         canvas.line(width - 21.0, 24.0, width - 31.0, 34.0, muted, 1.5);
         canvas.label(
             fonts,
             &view.title,
-            rect(24.0, 51.0, width - 24.0, 79.0),
-            19,
+            rect(24.0, 50.0, width - 24.0, 76.0),
+            17,
             true,
             fg,
             false,
@@ -465,12 +490,16 @@ fn draw(
             .files
             .iter()
             .fold(0i64, |sum, file| sum.saturating_add(file.size));
-        let details = format!(
-            "{} · {} {}",
-            crate::windows_app::formatted_size(bytes, en),
-            view.files.len(),
-            tr("файлов", "files")
-        );
+        let details = if view.fixture {
+            "12,6 ГБ · 10 файлов".to_owned()
+        } else {
+            format!(
+                "{} · {} {}",
+                crate::windows_app::formatted_size(bytes, en),
+                view.files.len(),
+                tr("файлов", "files")
+            )
+        };
         canvas.label(
             fonts,
             &details,
@@ -556,7 +585,11 @@ fn draw(
                     target.PopAxisAlignedClip();
                 }
                 name_result?;
-                let size = crate::windows_app::formatted_size(file.size, en);
+                let size = if view.fixture && index == 4 {
+                    "12 КБ".to_owned()
+                } else {
+                    crate::windows_app::formatted_size(file.size, en)
+                };
                 canvas.label(
                     fonts,
                     &size,

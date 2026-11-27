@@ -113,6 +113,7 @@ $results = foreach ($theme in @('light', 'dark')) {
     } finally { $reference.Dispose() }
     Copy-Item -LiteralPath (Join-Path $old.FullName 'main.png') -Destination (Join-Path $out "$theme-reference-main.png")
     Copy-Item -LiteralPath (Join-Path $old.FullName 'settings.png') -Destination (Join-Path $out "$theme-reference-settings.png")
+    Copy-Item -LiteralPath (Join-Path $old.FullName 'files.png') -Destination (Join-Path $out "$theme-reference-files.png")
 
     $new = New-Item -ItemType Directory (Join-Path $work.FullName "$theme-rust")
     $process = Start-Process -FilePath $exe -WorkingDirectory $new.FullName -ArgumentList $flag -PassThru
@@ -125,6 +126,14 @@ $results = foreach ($theme in @('light', 'dark')) {
         Start-Sleep -Milliseconds 300
         Save-Capture $settings (Join-Path $out "$theme-rust-settings.png")
         [TorrentVisual]::PostMessage($settings, 0x111, [IntPtr]111, [IntPtr]::Zero) | Out-Null
+        for ($attempt = 0; $attempt -lt 100 -and [TorrentVisual]::IsWindowVisible($settings); $attempt++) {
+            Start-Sleep -Milliseconds 50
+        }
+        [TorrentVisual]::PostMessage($main, 0x800d, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        $files = Wait-Window $process 'Файлы торрента'
+        Start-Sleep -Milliseconds 250
+        Save-Capture $files (Join-Path $out "$theme-rust-files.png")
+        [TorrentVisual]::PostMessage($files, 0x111, [IntPtr]112, [IntPtr]::Zero) | Out-Null
         [TorrentVisual]::PostMessage($main, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
         if (!$process.WaitForExit(10000) -or $process.ExitCode) { throw 'Rust visual fixture did not close cleanly' }
     } finally {
@@ -132,7 +141,7 @@ $results = foreach ($theme in @('light', 'dark')) {
         $process.Dispose()
     }
 
-    foreach ($view in @('main', 'settings')) {
+    foreach ($view in @('main', 'settings', 'files')) {
         $referenceImage = [Drawing.Bitmap]::new((Join-Path $out "$theme-reference-$view.png"))
         $actualImage = [Drawing.Bitmap]::new((Join-Path $out "$theme-rust-$view.png"))
         try {
