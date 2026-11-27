@@ -25,6 +25,18 @@ public static class TorrentVisual {
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
     [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
+    [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr window);
+    [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr window, IntPtr dc);
+    [DllImport("gdi32.dll")] private static extern uint GetPixel(IntPtr dc, int x, int y);
+    public static bool SetupFinished(IntPtr window) {
+        if (!GetClientRect(window, out Rect bounds)) return false;
+        var point = new Point { X = 335 * bounds.Right / 840, Y = 336 * bounds.Bottom / 540 };
+        if (!ClientToScreen(window, ref point)) return false;
+        IntPtr screen = GetDC(IntPtr.Zero);
+        if (screen == IntPtr.Zero) return false;
+        try { return GetPixel(screen, point.X, point.Y) == 0x00ff7106; }
+        finally { ReleaseDC(IntPtr.Zero, screen); }
+    }
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
@@ -267,10 +279,18 @@ foreach ($installerCapture in @(
         if (!(Test-Path (Join-Path $installed $clientName))) {
             throw "The $kind installer did not install to its isolated destination"
         }
-        Start-Sleep -Milliseconds 1200
+        if (![TorrentVisual]::SetupFinished($window)) {
+            Save-VisibleCapture $window (Join-Path $out "setup-light-$kind-installing.png")
+        }
+        for ($attempt = 0; $attempt -lt 300 -and ![TorrentVisual]::SetupFinished($window); $attempt++) {
+            if ($capture.HasExited) { throw "The $kind installer closed before showing its finish screen" }
+            Start-Sleep -Milliseconds 200
+        }
+        if (![TorrentVisual]::SetupFinished($window)) { throw "The $kind installer's finish screen did not appear" }
         Save-VisibleCapture $window (Join-Path $out "setup-light-$kind-finish.png")
-        [TorrentVisual]::PostMessage($window, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-        if (!$capture.WaitForExit(5000)) { throw 'Installer did not close after the visual capture' }
+        if (![TorrentVisual]::ClickSetup($window, 781, 36) -or !$capture.WaitForExit(10000)) {
+            throw "The $kind installer did not close after the visual capture"
+        }
         $uninstaller = Join-Path $installed 'Uninstall.exe'
         if ($kind -eq 'reference') {
             $cleanup = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
