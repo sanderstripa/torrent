@@ -105,11 +105,12 @@ impl FileView {
             ("04. Постер.jpg", 3565158),
             ("05. Readme.txt", 12288),
         ]
+        .into_iter()
         .map(|(path, size)| TorrentFile {
             path: path.to_owned(),
             size,
         })
-        .to_vec();
+        .collect();
         let mut view = Self::new(
             files,
             vec![0, 7, 7, 1, 0],
