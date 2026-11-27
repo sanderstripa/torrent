@@ -38,7 +38,7 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-const ACTION: u32 = WM_APP + 1;
+pub(crate) const ACTION: u32 = WM_APP + 1;
 const ADD_MAGNET: usize = 101;
 const ADD_TORRENT: usize = 102;
 const PAUSE: usize = 103;
@@ -128,6 +128,12 @@ unsafe extern "system" fn dispatch(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    #[cfg(all(feature = "rqbit", feature = "vpn"))]
+    if let Some(result) =
+        unsafe { crate::windows_settings::dispatch(window, message, wparam, lparam) }
+    {
+        return result;
+    }
     match message {
         WM_COPYDATA if unsafe { GetWindow(window, GW_OWNER) }.is_null() => {
             let Some(packet) = (unsafe { (lparam as *const COPYDATASTRUCT).as_ref() }) else {
@@ -199,6 +205,35 @@ unsafe extern "system" fn dispatch(
         WM_CTLCOLORSTATIC | WM_CTLCOLORLISTBOX | WM_CTLCOLORDLG => unsafe {
             crate::windows_paint::control_background(wparam as _, window_dark(window)) as LRESULT
         },
+        #[cfg(feature = "rqbit")]
+        WM_DRAWITEM if wparam == 190 => {
+            let draw = unsafe { &*(lparam as *const DRAWITEMSTRUCT) };
+            let _ = crate::windows_render::title(draw, window_dark(window));
+            1
+        }
+        #[cfg(feature = "rqbit")]
+        WM_DRAWITEM if [OPEN_ADD, MINIMIZE, CLOSE, VPN_COMMAND].contains(&wparam) => {
+            use crate::windows_render::Icon;
+            let draw = unsafe { &*(lparam as *const DRAWITEMSTRUCT) };
+            let icon = match wparam {
+                OPEN_ADD => Icon::Add,
+                MINIMIZE => Icon::Minimize,
+                VPN_COMMAND => Icon::Vpn(unsafe {
+                    GetPropW(window, windows_sys::w!("TorrentVpnVisual")) as u8
+                }),
+                _ => Icon::Close,
+            };
+            let active = draw.itemState & (0x0001 | 0x0040) != 0;
+            if crate::windows_render::draw(draw.hDC, draw.rcItem, window_dark(window), active, icon)
+                .is_err()
+            {
+                unsafe {
+                    crate::windows_paint::control_background(draw.hDC, window_dark(window));
+                }
+            }
+            1
+        }
+        #[cfg(not(feature = "rqbit"))]
         WM_DRAWITEM if [OPEN_ADD, SETTINGS, MINIMIZE, CLOSE].contains(&wparam) => {
             let draw = unsafe { &*(lparam as *const DRAWITEMSTRUCT) };
             let label = match wparam {
@@ -257,6 +292,10 @@ unsafe extern "system" fn dispatch(
             CARD_ROWS.with(|cards| {
                 if let Ok(cards) = cards.try_borrow() {
                     if let Some(row) = cards.get(draw.itemID as usize) {
+                        #[cfg(feature = "rqbit")]
+                        if crate::windows_render::card(draw, row).is_ok() {
+                            return;
+                        }
                         unsafe { crate::windows_paint::transfer(draw, row) };
                     }
                 }
@@ -493,6 +532,10 @@ impl Dialog {
             if self.sheet {
                 trace_ui("settings animation completed");
             }
+            #[cfg(all(feature = "rqbit", feature = "vpn"))]
+            if !GetPropW(self.window, crate::windows_settings::PROPERTY).is_null() {
+                windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus(self.window);
+            }
             let mut message = MSG::default();
             let mut deferred = Vec::new();
             while IsWindow(self.window) != 0 {
@@ -508,6 +551,14 @@ impl Dialog {
                     {
                         deferred.push((message.message, message.wParam, message.lParam));
                     }
+                    #[cfg(all(feature = "rqbit", feature = "vpn"))]
+                    _ if message.hwnd == self.owner
+                        && message.message == WM_TIMER
+                        && message.wParam == 1
+                        && !GetPropW(self.window, crate::windows_settings::PROPERTY).is_null() =>
+                    {
+                        command(crate::windows_settings::TICK);
+                    }
                     _ if message.hwnd == self.window && message.message == ACTION => {
                         if command(message.wParam) {
                             break;
@@ -515,6 +566,13 @@ impl Dialog {
                     }
                     _ if message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE as usize => {
                         break
+                    }
+                    #[cfg(all(feature = "rqbit", feature = "vpn"))]
+                    _ if message.hwnd == self.window
+                        && message.message == WM_KEYDOWN
+                        && !GetPropW(self.window, crate::windows_settings::PROPERTY).is_null() =>
+                    {
+                        DispatchMessageW(&message);
                     }
                     _ if IsDialogMessageW(self.window, &message) != 0 => {}
                     _ => {
@@ -622,6 +680,7 @@ fn open_url(owner: HWND, url: &str) -> bool {
     }
 }
 
+#[cfg(not(all(feature = "rqbit", feature = "vpn")))]
 fn settings(
     owner: HWND,
     prefs: &mut Preferences,
@@ -968,16 +1027,15 @@ impl Controls {
         child(
             "STATIC",
             "TORRENT.",
-            SS_CENTERIMAGE as u32,
+            if cfg!(feature = "rqbit") {
+                0x000d
+            } else {
+                SS_CENTERIMAGE as u32
+            },
             (24, 0, 170, 62),
             190,
         )?;
-        for (id, label) in [
-            (OPEN_ADD, "+"),
-            (SETTINGS, "⚙"),
-            (MINIMIZE, "−"),
-            (CLOSE, "×"),
-        ] {
+        for (id, label) in [(OPEN_ADD, "+"), (MINIMIZE, "−"), (CLOSE, "×")] {
             child(
                 "BUTTON",
                 label,
@@ -986,8 +1044,22 @@ impl Controls {
                 id,
             )?;
         }
+        #[cfg(not(feature = "rqbit"))]
+        child(
+            "BUTTON",
+            "⚙",
+            WS_TABSTOP | BS_OWNERDRAW as u32,
+            (0, 0, 32, 32),
+            SETTINGS,
+        )?;
         #[cfg(all(feature = "rqbit", feature = "vpn"))]
-        child("BUTTON", "VPN", WS_TABSTOP, (0, 16, 54, 32), VPN_COMMAND)?;
+        child(
+            "BUTTON",
+            "VPN",
+            WS_TABSTOP | BS_OWNERDRAW as u32,
+            (0, 0, 32, 32),
+            VPN_COMMAND,
+        )?;
         let list = child(
             "LISTBOX",
             "",
@@ -1063,18 +1135,16 @@ impl Controls {
         if unsafe { GetClientRect(self.window, &mut available) } == 0 {
             return;
         }
-        for (index, id) in [CLOSE, MINIMIZE, SETTINGS, OPEN_ADD]
-            .into_iter()
-            .enumerate()
-        {
+        #[cfg(not(feature = "rqbit"))]
+        let button_order = [CLOSE, MINIMIZE, SETTINGS, OPEN_ADD];
+        #[cfg(feature = "rqbit")]
+        let button_order = [CLOSE, MINIMIZE, OPEN_ADD, VPN_COMMAND];
+        for (index, id) in button_order.into_iter().enumerate() {
             let button = unsafe { GetDlgItem(self.window, id as i32) };
-            let x = available.right - 46 - index as i32 * 40;
-            unsafe { MoveWindow(button, x, 16, 32, 32, 1) };
-        }
-        #[cfg(all(feature = "rqbit", feature = "vpn"))]
-        unsafe {
-            let button = GetDlgItem(self.window, VPN_COMMAND as i32);
-            MoveWindow(button, available.right - 232, 16, 54, 32, 1);
+            if !button.is_null() {
+                let x = available.right - 46 - index as i32 * 40;
+                unsafe { MoveWindow(button, x, 16, 32, 32, 1) };
+            }
         }
         unsafe {
             MoveWindow(
@@ -1146,10 +1216,7 @@ impl Controls {
                     } else {
                         tr(en, "Загрузка", "Downloading")
                     };
-                    let size = status.wanted as f64 / (1024.0 * 1024.0);
-                    let size = format!("{size:.1}");
-                    let size = if en { size } else { size.replace('.', ",") };
-                    card.details = format!("{size} {} · {state}", tr(en, "МБ", "MB"));
+                    card.details = format!("{} · {state}", formatted_size(status.wanted, en));
                     if !entry.selection_pending {
                         card.progress = status.progress_ppm;
                         card.progress_label = if status.seeding {
@@ -1204,6 +1271,19 @@ impl Controls {
     }
 }
 
+fn formatted_size(bytes: i64, en: bool) -> String {
+    let (divisor, unit) = if bytes >= 1024 * 1024 * 1024 {
+        (1024 * 1024 * 1024, tr(en, "ГБ", "GB"))
+    } else if bytes >= 1024 * 1024 {
+        (1024 * 1024, tr(en, "МБ", "MB"))
+    } else {
+        (1024, tr(en, "КБ", "KB"))
+    };
+    let value = format!("{:.1}", bytes as f64 / f64::from(divisor));
+    let value = if en { value } else { value.replace('.', ",") };
+    format!("{value} {unit}")
+}
+
 fn magnet_input(owner: HWND, en: bool) -> Result<Option<String>, String> {
     let dialog = Dialog::create(owner, "Magnet", 580, 150)?;
     let edit = dialog.control(
@@ -1232,71 +1312,283 @@ fn magnet_input(owner: HWND, en: bool) -> Result<Option<String>, String> {
 }
 
 #[cfg(all(feature = "rqbit", feature = "vpn"))]
-fn vpn_command(
-    owner: HWND,
-    vpn: &mut crate::windows_vpn::Vpn,
-    queue: &Transfers<'_>,
-    prefs: &mut Preferences,
-    profile: &std::path::Path,
-) -> Result<(), String> {
-    let en = prefs.english;
-    let dialog = Dialog::create(owner, "VPN", 570, 150)?;
+fn paint_vpn_title(window: HWND, vpn: &crate::windows_vpn::Vpn, enabled: bool) {
+    unsafe {
+        let property = windows_sys::w!("TorrentVpnVisual");
+        let state = vpn.state(enabled);
+        if GetPropW(window, property) as u8 != state {
+            if state == 0 {
+                RemovePropW(window, property);
+            } else {
+                SetPropW(window, property, state as HANDLE);
+            }
+            let button = GetDlgItem(window, VPN_COMMAND as i32);
+            windows_sys::Win32::Graphics::Gdi::InvalidateRect(button, null(), 0);
+        }
+    }
+}
+
+#[cfg(all(feature = "rqbit", feature = "vpn"))]
+fn vpn_key_input(owner: HWND, current: &str, en: bool) -> Result<Option<String>, String> {
+    let dialog = Dialog::create(
+        owner,
+        tr(en, "Ключ подключения", "Connection key"),
+        570,
+        150,
+    )?;
     let edit = dialog.control(
         "EDIT",
-        &vpn.key()?,
-        WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL as u32 | ES_PASSWORD as u32,
+        current,
+        WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL as u32,
         (20, 18, 520, 28),
         0,
     )?;
-    dialog.control(
-        "BUTTON",
-        tr(en, "Подключить", "Connect"),
-        WS_TABSTOP,
-        (20, 65, 110, 30),
-        ACCEPT,
-    )?;
-    dialog.control(
-        "BUTTON",
-        tr(en, "Отключить", "Disconnect"),
-        WS_TABSTOP,
-        (140, 65, 110, 30),
-        VPN_COMMAND,
-    )?;
-    dialog.control(
-        "BUTTON",
-        tr(en, "Отмена", "Cancel"),
-        WS_TABSTOP,
-        (260, 65, 110, 30),
-        CANCEL,
-    )?;
-    let mut result = Ok(());
+    dialog.buttons(62, en)?;
+    let mut selected = None;
     dialog.run(|id| match id {
-        CANCEL => true,
         ACCEPT => {
-            let key = edit_text(edit);
-            prefs.vpn_enabled = true;
-            let connection = vpn.connect(queue, key.trim());
-            let preference = std::fs::create_dir_all(profile)
-                .and_then(|()| prefs.save(profile))
-                .map_err(|error| error.to_string());
-            let key = vpn.save_key(key.trim());
-            result = preference.and(key).and(connection);
+            selected = Some(edit_text(edit).trim().to_owned());
             true
         }
-        VPN_COMMAND => {
-            // Persist the explicit opt-out before enabling direct traffic.
-            prefs.vpn_enabled = false;
-            result = match prefs.save(profile) {
-                Ok(()) => vpn.disconnect(queue),
-                Err(error) => {
-                    prefs.vpn_enabled = true;
-                    Err(error.to_string())
-                }
-            };
-            true
-        }
+        CANCEL => true,
         _ => false,
     });
+    Ok(selected)
+}
+
+#[cfg(all(feature = "rqbit", feature = "vpn"))]
+fn settings_144(
+    owner: HWND,
+    prefs: &mut Preferences,
+    profile: &std::path::Path,
+    controls: &Controls,
+    vpn: &mut crate::windows_vpn::Vpn,
+    queue: &Transfers<'_>,
+    initial_page: usize,
+) -> Result<(), String> {
+    use crate::windows_settings as page;
+    let mut available = RECT::default();
+    unsafe {
+        GetClientRect(owner, &mut available);
+    }
+    let width = (available.right - 96).min(720).max(520);
+    let dialog = Dialog::open(
+        owner,
+        tr(prefs.english, "Настройки", "Settings"),
+        width,
+        if initial_page == 0 { 321 } else { 370 },
+        true,
+    )?;
+    let mut key = vpn.key()?;
+    let view = std::cell::RefCell::new(page::SettingsView {
+        preferences: prefs.clone(),
+        page: initial_page,
+        width: width as f32,
+        dark: window_dark(owner),
+        hover: None,
+        focus: None,
+        sudoku: key.starts_with("sudoku://"),
+        key_present: !key.is_empty(),
+        connected: vpn.state(prefs.vpn_enabled) == 2,
+        save_failed: false,
+    });
+    if unsafe {
+        SetPropW(
+            dialog.window,
+            page::PROPERTY,
+            (&view as *const _ as *mut std::ffi::c_void).cast(),
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+
+    dialog.run(|id| {
+        let previous = prefs.clone();
+        let en = prefs.english;
+        let mut result = Ok(());
+        let mut persist = true;
+        match id {
+            page::CLOSE | CANCEL => return true,
+            id if (page::NAV..=page::NAV + 4).contains(&id) => {
+                let mut state = view.borrow_mut();
+                state.page = id - page::NAV;
+                state.hover = None;
+                if state.focus.is_some() {
+                    state.focus = Some(if state.page == 0 { page::CLOSE } else { id });
+                }
+                unsafe {
+                    SetWindowPos(
+                        dialog.window,
+                        null_mut(),
+                        0,
+                        0,
+                        width,
+                        state.height() as i32,
+                        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
+                }
+                persist = false;
+            }
+            page::SYSTEM => prefs.theme = Theme::System,
+            page::LIGHT => prefs.theme = Theme::Light,
+            page::DARK => prefs.theme = Theme::Dark,
+            page::TRAY => prefs.close_to_tray = !prefs.close_to_tray,
+            page::FOLDER => {
+                if let Some(folder) = choose_folder(dialog.window, en) {
+                    prefs.folder = folder;
+                }
+            }
+            page::LANGUAGE | page::ADD => {
+                let r = view.borrow().control(id);
+                let mut point = windows_sys::Win32::Foundation::POINT {
+                    x: r.left as i32,
+                    y: r.bottom as i32,
+                };
+                unsafe {
+                    windows_sys::Win32::Graphics::Gdi::ClientToScreen(dialog.window, &mut point)
+                };
+                let items = if id == page::LANGUAGE {
+                    [(1, "Русский"), (2, "English")]
+                } else {
+                    [
+                        (1, tr(en, "Начать загрузку", "Start download")),
+                        (2, tr(en, "Выбрать файлы", "Choose files")),
+                    ]
+                };
+                if let Some(choice) = menu(dialog.window, point.x, point.y, &items) {
+                    if id == page::LANGUAGE {
+                        prefs.english = choice == 2;
+                    } else {
+                        prefs.select_files = choice == 2;
+                    }
+                }
+            }
+            page::XRAY | page::SUDOKU => {
+                view.borrow_mut().sudoku = id == page::SUDOKU;
+                persist = false;
+            }
+            page::KEY => {
+                match vpn_key_input(dialog.window, &key, en) {
+                    Ok(Some(value)) => {
+                        key = value;
+                        let mut state = view.borrow_mut();
+                        state.key_present = !key.is_empty();
+                        if key.starts_with("sudoku://") {
+                            state.sudoku = true;
+                        } else if key.starts_with("vless://") {
+                            state.sudoku = false;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => result = Err(error),
+                }
+                persist = false;
+            }
+            page::TEST | page::SAVE => {
+                let sudoku = view.borrow().sudoku;
+                let scheme = if sudoku { "sudoku://" } else { "vless://" };
+                if !key.starts_with(scheme) {
+                    result = Err(if sudoku {
+                        tr(
+                            en,
+                            "Для Sudoku вставьте ключ sudoku://",
+                            "Paste a sudoku:// key for Sudoku",
+                        )
+                    } else {
+                        tr(
+                            en,
+                            "Для Xray вставьте ключ vless://",
+                            "Paste a vless:// key for Xray",
+                        )
+                    }
+                    .to_owned());
+                } else {
+                    result = vpn.save_key(&key);
+                    if result.is_ok() && (id == page::TEST || prefs.vpn_enabled) {
+                        prefs.vpn_enabled = true;
+                        result = vpn.connect(queue, &key);
+                    }
+                }
+            }
+            page::UPDATE | page::CONNECT => {
+                let link = if id == page::UPDATE {
+                    "https://github.com/sanderstripa/torrent/releases/latest"
+                } else {
+                    "https://connect.sanderstripa.com/?utm_source=chatgpt.com"
+                };
+                open_url(dialog.window, link);
+                persist = false;
+            }
+            page::TICK => {
+                result = vpn.tick(queue);
+                persist = false;
+            }
+            _ => persist = false,
+        }
+
+        let save_failed = if persist {
+            std::fs::create_dir_all(profile)
+                .and_then(|()| prefs.save(profile))
+                .is_err()
+        } else {
+            false
+        };
+        if save_failed {
+            // A failed preference save must not reset an in-memory VPN isolation request.
+            let vpn_enabled = prefs.vpn_enabled;
+            *prefs = previous;
+            prefs.vpn_enabled = vpn_enabled;
+        }
+        if let Err(error) = result {
+            show_error(&error);
+        }
+        let mut state = view.borrow_mut();
+        state.preferences = prefs.clone();
+        state.dark = apply_title_theme(owner, prefs.theme);
+        state.connected = vpn.state(prefs.vpn_enabled) == 2;
+        if persist {
+            state.save_failed = save_failed;
+        }
+        controls.dark.set(state.dark);
+        controls.set_language(prefs.english);
+        paint_vpn_title(owner, vpn, prefs.vpn_enabled);
+        unsafe {
+            SetWindowTextW(dialog.window, wide(state.window_title()).as_ptr());
+            windows_sys::Win32::Graphics::Gdi::InvalidateRect(dialog.window, null(), 0);
+        }
+        false
+    });
+    unsafe { RemovePropW(dialog.window, page::PROPERTY) };
+    Ok(())
+}
+
+#[cfg(all(feature = "rqbit", feature = "vpn"))]
+fn toggle_vpn(
+    owner: HWND,
+    prefs: &mut Preferences,
+    profile: &std::path::Path,
+    controls: &Controls,
+    vpn: &mut crate::windows_vpn::Vpn,
+    queue: &Transfers<'_>,
+) -> Result<(), String> {
+    if prefs.vpn_enabled {
+        prefs.vpn_enabled = false;
+        if let Err(error) = prefs.save(profile) {
+            prefs.vpn_enabled = true;
+            return Err(error.to_string());
+        }
+        return vpn.disconnect(queue);
+    }
+    let key = vpn.key()?;
+    if key.is_empty() {
+        return settings_144(owner, prefs, profile, controls, vpn, queue, 3);
+    }
+    prefs.vpn_enabled = true;
+    let result = vpn.connect(queue, &key);
+    std::fs::create_dir_all(profile)
+        .and_then(|()| prefs.save(profile))
+        .map_err(|error| error.to_string())?;
     result
 }
 
@@ -1894,6 +2186,8 @@ pub fn run() -> Result<(), String> {
         controls.set_language(prefs.english);
         controls.dark.set(dark);
         controls.layout();
+        #[cfg(all(feature = "rqbit", feature = "vpn"))]
+        paint_vpn_title(window, &vpn, prefs.vpn_enabled);
         let mut prompted = std::collections::HashSet::new();
         let mut last_save = std::time::Instant::now();
         if !smoke {
@@ -2023,6 +2317,8 @@ pub fn run() -> Result<(), String> {
                             show_error(&error);
                         }
                     }
+                    #[cfg(all(feature = "rqbit", feature = "vpn"))]
+                    paint_vpn_title(window, &vpn, prefs.vpn_enabled);
                     if !hidden_to_tray {
                         if let Err(error) =
                             prompt_for_files(window, &mut transfers, &mut prompted, prefs.english)
@@ -2072,12 +2368,16 @@ pub fn run() -> Result<(), String> {
                         OPEN_ADD => {
                             let mut anchor = RECT::default();
                             GetWindowRect(GetDlgItem(window, OPEN_ADD as i32), &mut anchor);
-                            if let Some(action) = menu(
-                                window,
-                                anchor.left,
-                                anchor.bottom,
-                                &add_menu_entries(prefs.english),
-                            ) {
+                            let [open, magnet] = add_menu_entries(prefs.english);
+                            #[cfg(feature = "rqbit")]
+                            let items = [
+                                open,
+                                magnet,
+                                (SETTINGS, tr(prefs.english, "Настройки", "Settings")),
+                            ];
+                            #[cfg(not(feature = "rqbit"))]
+                            let items = [open, magnet];
+                            if let Some(action) = menu(window, anchor.left, anchor.bottom, &items) {
                                 PostMessageW(window, ACTION, action, 0);
                             }
                             Ok(())
@@ -2125,11 +2425,16 @@ pub fn run() -> Result<(), String> {
                             }
                             Ok(())
                         }),
+                        #[cfg(not(all(feature = "rqbit", feature = "vpn")))]
                         SETTINGS => settings(window, &mut prefs, &profile, &controls),
                         #[cfg(all(feature = "rqbit", feature = "vpn"))]
-                        VPN_COMMAND => {
-                            vpn_command(window, &mut vpn, &transfers, &mut prefs, &profile)
-                        }
+                        SETTINGS => settings_144(
+                            window, &mut prefs, &profile, &controls, &mut vpn, &transfers, 0,
+                        ),
+                        #[cfg(all(feature = "rqbit", feature = "vpn"))]
+                        VPN_COMMAND => toggle_vpn(
+                            window, &mut prefs, &profile, &controls, &mut vpn, &transfers,
+                        ),
                         _ => Ok(()),
                     };
                     match result {

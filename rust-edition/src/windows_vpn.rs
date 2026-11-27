@@ -128,6 +128,15 @@ impl Vpn {
         queue.change_network(Network::Direct)
     }
 
+    pub fn state(&self, enabled: bool) -> u8 {
+        match &self.worker {
+            Some(worker) if worker.connected => 2,
+            Some(_) => 1,
+            None if enabled => 3,
+            None => 0,
+        }
+    }
+
     pub fn tick(&mut self, queue: &Transfers<'_>) -> Result<(), String> {
         let Some(worker) = &mut self.worker else {
             return Ok(());

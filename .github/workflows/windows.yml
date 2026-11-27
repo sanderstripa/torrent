@@ -221,7 +221,7 @@ jobs:
       - name: Exercise the client window with librqbit
         shell: pwsh
         run: |
-          ./rust-edition/tests/windows-ui.ps1 -Executable "$PWD/rust-edition/target/x86_64-pc-windows-msvc/debug/torrent-re-windows.exe"
+          ./rust-edition/tests/windows-ui.ps1 -Executable "$PWD/rust-edition/target/x86_64-pc-windows-msvc/debug/torrent-re-windows.exe" -NativeSettings
       - name: Exercise the native Rust installer
         shell: pwsh
         run: |

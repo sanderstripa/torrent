@@ -254,11 +254,20 @@ pub unsafe fn transfer(draw: &DRAWITEMSTRUCT, row: &TransferCard) {
 }
 
 pub unsafe fn background(dc: HDC, area: RECT, dark: bool) {
+    #[cfg(feature = "rqbit")]
+    {
+        unsafe {
+            fill(dc, &area, if dark { 0x08090b } else { 0xffffff });
+        }
+        return;
+    }
+    #[cfg(not(feature = "rqbit"))]
     let (surface, border) = if dark {
         (0x202124, 0x303234)
     } else {
         (0xfcfcfd, 0xdadbd9)
     };
+    #[cfg(not(feature = "rqbit"))]
     unsafe {
         fill(dc, &area, surface);
         fill(
@@ -274,6 +283,13 @@ pub unsafe fn background(dc: HDC, area: RECT, dark: bool) {
 }
 
 pub unsafe fn control_background(dc: HDC, dark: bool) -> HBRUSH {
+    #[cfg(feature = "rqbit")]
+    let (surface, text) = if dark {
+        (0x08090b, 0xeeeeef)
+    } else {
+        (0xffffff, 0x242628)
+    };
+    #[cfg(not(feature = "rqbit"))]
     let (surface, text) = if dark {
         (0x202124, 0xe6e7e9)
     } else {
@@ -287,6 +303,7 @@ pub unsafe fn control_background(dc: HDC, dark: bool) -> HBRUSH {
     }
 }
 
+#[cfg(not(feature = "rqbit"))]
 pub unsafe fn caption_button(draw: &DRAWITEMSTRUCT, text: &str, dark: bool) {
     let (surface, ink, pressed) = if dark {
         (0x202124, 0x96979d, 0x303136)

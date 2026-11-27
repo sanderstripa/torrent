@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$Executable)
+param([Parameter(Mandatory)][string]$Executable, [switch]$NativeSettings)
 
 $ErrorActionPreference = 'Stop'
 $exe = (Resolve-Path $Executable).Path
@@ -84,6 +84,10 @@ try {
         Start-Sleep -Milliseconds 100
     }
     if (!$animationComplete) { throw 'Settings animation did not complete' }
+    if ($NativeSettings) {
+        Command $settings 141
+        $settings = Wait-Visible 'Общие'
+    }
     Command $settings 126
     for ($attempt = 0; $attempt -lt 50 -and (Get-Content $prefs)[1] -ne '1 1 0 0 0'; $attempt++) {
         Start-Sleep -Milliseconds 100
