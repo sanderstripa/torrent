@@ -53,6 +53,7 @@ public static class TorrentVisual {
     }
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string className, string title);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int length);
     public static IntPtr Find(uint pid, string title) {
         IntPtr found = IntPtr.Zero;
@@ -293,12 +294,27 @@ foreach ($installerCapture in @(
         }
         $uninstaller = Join-Path $installed 'Uninstall.exe'
         if ($kind -eq 'reference') {
-            $cleanup = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+            $cleanup = Start-Process -FilePath $uninstaller -PassThru
+            $uninstallWindow = [IntPtr]::Zero
+            for ($attempt = 0; $attempt -lt 50 -and $uninstallWindow -eq [IntPtr]::Zero; $attempt++) {
+                $uninstallWindow = [TorrentVisual]::FindWindow('#32770', 'Torrent Uninstall')
+                if ($uninstallWindow -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
+            }
+            if ($uninstallWindow -ne [IntPtr]::Zero) {
+                Start-Sleep -Milliseconds 300
+                Save-VisibleCapture $uninstallWindow (Join-Path $out 'setup-reference-uninstall.png')
+                [TorrentVisual]::PostMessage($uninstallWindow, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            }
         } else {
             $cleanup = Start-Process -FilePath $uninstaller -ArgumentList @('--uninstall', "`"$installed`"") -Wait -PassThru
         }
-        if ($cleanup.ExitCode) { throw "Isolated installation cleanup failed ($($cleanup.ExitCode))" }
-        $cleanup.Dispose()
+        try {
+            if (!$cleanup.WaitForExit(15000) -or $cleanup.ExitCode) { throw 'Isolated installation cleanup failed' }
+            for ($attempt = 0; $attempt -lt 100 -and (Test-Path (Join-Path $installed $clientName)); $attempt++) {
+                Start-Sleep -Milliseconds 100
+            }
+            if (Test-Path (Join-Path $installed $clientName)) { throw 'Isolated installation was not removed' }
+        } finally { $cleanup.Dispose() }
     } finally {
         if (!$capture.HasExited) { $capture.Kill(); $capture.WaitForExit() }
         $capture.Dispose()
