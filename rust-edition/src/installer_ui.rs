@@ -838,6 +838,19 @@ fn draw(
                 0.0,
             )
         };
+        let semibold = |value, r, size, ink| {
+            label(
+                &canvas,
+                font,
+                value,
+                r,
+                size,
+                ink,
+                DWRITE_TEXT_ALIGNMENT_LEADING,
+                DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                0.0,
+            )
+        };
         let centered = |value, r, size, ink| {
             label(
                 &canvas,
@@ -1041,11 +1054,21 @@ fn draw(
                     DWRITE_FONT_WEIGHT_MEDIUM,
                     0.0,
                 )?;
-                text(tr("Назад", "Back"), g.back, 13.0, muted)?;
-                text(tr("Язык", "Language"), g.language, 12.0, fg)?;
+                text(
+                    tr("Назад", "Back"),
+                    rect(
+                        g.back.left,
+                        g.back.top - 1.0,
+                        g.back.right,
+                        g.back.bottom - 1.0,
+                    ),
+                    13.0,
+                    muted,
+                )?;
+                semibold(tr("Язык", "Language"), g.language, 12.0, fg)?;
                 choice("RU", g.ru, !setup.english)?;
                 choice("EN", g.en, setup.english)?;
-                text(tr("Тема", "Theme"), g.theme, 12.0, fg)?;
+                semibold(tr("Тема", "Theme"), g.theme, 12.0, fg)?;
                 choice(tr("Светлая", "Light"), g.light, !setup.dark)?;
                 choice(tr("Тёмная", "Dark"), g.dark, setup.dark)?;
                 text(
@@ -1081,7 +1104,7 @@ fn draw(
             }
             canvas.line(45.0, 422.5, w - 45.0, 422.5, border, 1.0);
             text(error, rect(45.0, 431.0, w - 45.0, 453.0), 11.0, fg)?;
-            text(tr("Повторить", "Retry"), retry_button(), 13.0, muted)?;
+            semibold(tr("Повторить", "Retry"), retry_button(), 13.0, muted)?;
         }
         Ok(())
     })();
