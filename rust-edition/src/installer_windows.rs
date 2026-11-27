@@ -13,7 +13,7 @@ use windows_sys::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_SZ,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MB_YESNO,
+    MessageBoxW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK,
 };
 
 const NAME: &str = "Torrent Rust Edition";
@@ -42,10 +42,7 @@ pub fn run() -> io::Result<()> {
         [] if std::env::current_exe()?.file_name() == Some(OsStr::new(SETUP)) => {
             let executable = std::env::current_exe()?;
             let directory = executable.parent().ok_or_else(invalid_path)?;
-            if confirm("Remove Torrent Rust Edition?") {
-                launch_uninstaller(directory)?;
-            }
-            Ok(())
+            launch_uninstaller(directory)
         }
         [] => {
             let local = std::env::var_os("LOCALAPPDATA").ok_or_else(invalid_path)?;
@@ -509,17 +506,6 @@ fn check_registry(code: u32) -> io::Result<()> {
     match code {
         ERROR_SUCCESS | ERROR_FILE_NOT_FOUND => Ok(()),
         code => Err(io::Error::from_raw_os_error(code as i32)),
-    }
-}
-
-fn confirm(text: &str) -> bool {
-    unsafe {
-        MessageBoxW(
-            null_mut(),
-            wide(text).as_ptr(),
-            wide(NAME).as_ptr(),
-            MB_YESNO | MB_ICONINFORMATION,
-        ) == IDYES
     }
 }
 

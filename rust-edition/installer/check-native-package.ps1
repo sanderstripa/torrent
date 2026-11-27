@@ -67,7 +67,7 @@ Run-Checked $setup @('--install', $installed)
 Run-Checked $application @('--smoke-test')
 
 $uninstaller = Join-Path $installed 'Uninstall.exe'
-Run-Checked $uninstaller @('--uninstall', $installed)
+Run-Checked $uninstaller @()
 for ($attempt = 0; $attempt -lt 200 -and ((Test-Path -LiteralPath $installed) -or (Test-Path $uninstallKey)); $attempt++) {
     Start-Sleep -Milliseconds 100
 }
