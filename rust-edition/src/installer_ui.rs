@@ -524,8 +524,8 @@ fn wide(value: &std::ffi::OsStr) -> Vec<u16> {
 fn load_ribbon() -> windows::core::Result<windows::Win32::Graphics::Imaging::IWICFormatConverter> {
     use windows::Win32::Graphics::Imaging::*;
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
-    // Raster asset shipped by the CONNECT installer pinned by 1.4.4 (589669b4).
-    static RIBBON: &[u8] = include_bytes!("../installer/assets/connect-mobius.png");
+    // Torrent’s product ribbon in the CONNECT installer pinned by 1.4.4 (589669b4).
+    static RIBBON: &[u8] = include_bytes!("../../installer/assets/ribbon.png");
     unsafe {
         let imaging: IWICImagingFactory =
             CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
